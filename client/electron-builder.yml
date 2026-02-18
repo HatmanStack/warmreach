@@ -1,0 +1,70 @@
+appId: com.warmreach.agent
+productName: WarmReach Agent
+copyright: Copyright © 2025 WarmReach
+
+directories:
+  output: dist
+  buildResources: electron-resources
+
+files:
+  - electron-main.js
+  - src/**/*
+  - package.json
+  - "!src/**/*.test.*"
+  - "!src/**/__tests__/**"
+  - "!src/setupTests.*"
+  - "!vitest.config.*"
+  - "!eslint.config.*"
+  - "!tsconfig.json"
+  - "!nodemon.json"
+  - "!.env*"
+
+# Puppeteer's Chromium binary cannot run from inside an asar archive
+asarUnpack:
+  - "node_modules/puppeteer*/**"
+  - "node_modules/@puppeteer/**"
+
+extraMetadata:
+  main: electron-main.js
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  icon: electron-resources/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: electron-resources/entitlements.mac.plist
+  entitlementsInherit: electron-resources/entitlements.mac.plist
+
+dmg:
+  artifactName: WarmReach-Agent-${version}-${arch}.dmg
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: electron-resources/icon.ico
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  artifactName: WarmReach-Agent-Setup-${version}.exe
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  icon: electron-resources/icon.png
+  category: Network
+  artifactName: WarmReach-Agent-${version}.AppImage
+
+publish:
+  provider: github
+  owner: HatmanStack
+  repo: warmreach
+  releaseType: release

@@ -2,7 +2,7 @@
 
 This guide covers common issues encountered during development and deployment of the WarmReach tool.
 
-## Puppeteer & LinkedIn Issues
+## Client & LinkedIn Issues
 
 ### Authentication Failures
 -   **Symptom**: "Login failed" or "Security checkpoint encountered."
@@ -14,7 +14,7 @@ This guide covers common issues encountered during development and deployment of
 ### Element Not Found
 -   **Symptom**: Puppeteer fails to find a button or input field.
 -   **Solution**:
-    -   LinkedIn frequently updates its DOM. Check if the selectors in `puppeteer/src/domains/` need updating.
+    -   LinkedIn frequently updates its DOM. Check if the selectors in `client/src/domains/` need updating.
     -   Increase `ELEMENT_WAIT_TIMEOUT` in `.env`.
     -   Use `SCREENSHOT_ON_ERROR=true` to see the page state at the time of failure.
 
@@ -50,5 +50,5 @@ This guide covers common issues encountered during development and deployment of
 ### Missing Environment Variables
 -   **Symptom**: Application crashes or behaves unexpectedly.
 -   **Solution**:
-    -   Run `backend/get-env-vars.sh <stack-name> --update-env` to ensure your `.env` is up to date with AWS resources.
+    -   Run `bash scripts/deploy/get-env-vars.sh <stack-name> --update-env` to ensure your `.env` is up to date with AWS resources.
     -   Compare your `.env` with `.env.example`.

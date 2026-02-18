@@ -142,7 +142,7 @@ const log = (level: LogLevel, message: string, context?: LogContext): void => {
 /**
  * Logger API
  */
-export const logger = {
+const logger = {
   /**
    * Log debug information (dev only)
    */
@@ -188,5 +188,3 @@ export const createLogger = (module: string) => ({
   warn: (message: string, context?: LogContext) => logger.warn(`[${module}] ${message}`, context),
   error: (message: string, context?: LogContext) => logger.error(`[${module}] ${message}`, context),
 });
-
-export default logger;

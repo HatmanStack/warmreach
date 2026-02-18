@@ -13,7 +13,6 @@ const logger = createLogger('Validators');
 import type {
   Connection,
   Message,
-  ConnectionFilters,
   ConnectionStatus,
   MessageSender,
   ValidationResult,
@@ -23,14 +22,11 @@ import type {
 import {
   isConnection,
   isMessage,
-  isConnectionFilters,
   isConnectionStatus,
   isMessageSender,
-  isNonEmptyString,
   isValidNumber,
   isValidISODate,
   isValidUrl,
-  isPositiveInteger,
   isConversionLikelihood,
 } from './guards';
 
@@ -38,7 +34,7 @@ import {
 // VALIDATION CONSTANTS
 // =============================================================================
 
-export const MAX_TEXT_LENGTH = {
+const MAX_TEXT_LENGTH = {
   NAME: 100,
   POSITION: 200,
   COMPANY: 200,
@@ -49,19 +45,17 @@ export const MAX_TEXT_LENGTH = {
   TAG: 50,
 } as const;
 
-export const MIN_TEXT_LENGTH = {
+const MIN_TEXT_LENGTH = {
   NAME: 1,
   ID: 1,
   MESSAGE_CONTENT: 1,
 } as const;
 
-export const MAX_ARRAY_LENGTH = {
+const MAX_ARRAY_LENGTH = {
   TAGS: 20,
   COMMON_INTERESTS: 50,
   MESSAGES: 1000,
 } as const;
-
-export const VALID_CONVERSION_LIKELIHOODS = ['high', 'medium', 'low'] as const;
 
 // =============================================================================
 // BATCH VALIDATION RESULT
@@ -339,42 +333,6 @@ export function validateMessage(
   };
 }
 
-export function validateConnectionFilters(filters: unknown): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  if (!isConnectionFilters(filters)) {
-    errors.push('Invalid connection filters object structure');
-    return { isValid: false, errors, warnings };
-  }
-
-  const f = filters as ConnectionFilters;
-
-  if (f.status !== undefined && f.status !== 'all' && !isConnectionStatus(f.status)) {
-    errors.push('Invalid status filter value');
-  }
-
-  if (f.tags !== undefined) {
-    if (f.tags.length > MAX_ARRAY_LENGTH.TAGS)
-      warnings.push(`Too many tag filters (max ${MAX_ARRAY_LENGTH.TAGS})`);
-    f.tags.forEach((tag, index) => {
-      if (!isNonEmptyString(tag))
-        errors.push(`Tag filter at index ${index} must be a non-empty string`);
-      else if (tag.length > MAX_TEXT_LENGTH.TAG)
-        warnings.push(`Tag filter "${tag}" is too long (max ${MAX_TEXT_LENGTH.TAG} characters)`);
-    });
-  }
-
-  if (f.company && f.company.length > MAX_TEXT_LENGTH.COMPANY)
-    warnings.push(`Company filter is too long (max ${MAX_TEXT_LENGTH.COMPANY} characters)`);
-  if (f.location && f.location.length > MAX_TEXT_LENGTH.LOCATION)
-    warnings.push(`Location filter is too long (max ${MAX_TEXT_LENGTH.LOCATION} characters)`);
-  if (f.searchTerm && f.searchTerm.length > MAX_TEXT_LENGTH.SUMMARY)
-    warnings.push(`Search term is too long (max ${MAX_TEXT_LENGTH.SUMMARY} characters)`);
-
-  return { isValid: errors.length === 0, errors, warnings };
-}
-
 // =============================================================================
 // DATA SANITIZATION FUNCTIONS
 // =============================================================================
@@ -509,97 +467,4 @@ export function validateConnections(
   });
 
   return { validConnections, errors, warnings };
-}
-
-export function validateMessages(
-  messages: unknown[],
-  options: TransformOptions = {}
-): ValidationResult[] {
-  return messages.map((message, index) => {
-    const result = validateMessage(message, options);
-    if (!result.isValid) {
-      result.errors = result.errors.map((error) => `Message ${index}: ${error}`);
-    }
-    return result;
-  });
-}
-
-// =============================================================================
-// PARAMETER VALIDATION FUNCTIONS
-// =============================================================================
-
-export function validateConnectionQueryParams(params: unknown): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  if (typeof params !== 'object' || params === null) {
-    errors.push('Query parameters must be an object');
-    return { isValid: false, errors, warnings };
-  }
-
-  const p = params as Record<string, unknown>;
-
-  if (p.userId !== undefined && !isNonEmptyString(p.userId))
-    errors.push('User ID must be a non-empty string');
-  if (p.status !== undefined && !isConnectionStatus(p.status))
-    errors.push('Status must be a valid connection status');
-  if (p.limit !== undefined && !isPositiveInteger(p.limit))
-    errors.push('Limit must be a positive integer');
-  else if (p.limit && (p.limit as number) > 1000)
-    warnings.push('Limit is very high, consider using pagination');
-  if (p.offset !== undefined && !(typeof p.offset === 'string' || isValidNumber(p.offset)))
-    errors.push('Offset must be a string or number');
-  if (
-    p.sortBy !== undefined &&
-    !['date_added', 'name', 'company', 'status'].includes(p.sortBy as string)
-  )
-    errors.push('Sort by must be one of: date_added, name, company, status');
-  if (p.sortOrder !== undefined && !['asc', 'desc'].includes(p.sortOrder as string))
-    errors.push('Sort order must be either "asc" or "desc"');
-
-  return { isValid: errors.length === 0, errors, warnings };
-}
-
-export function validateUpdateConnectionParams(params: unknown): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  if (typeof params !== 'object' || params === null) {
-    errors.push('Update parameters must be an object');
-    return { isValid: false, errors, warnings };
-  }
-
-  const p = params as Record<string, unknown>;
-
-  if (!isNonEmptyString(p.connectionId))
-    errors.push('Connection ID is required and must be a non-empty string');
-
-  if (typeof p.updates !== 'object' || p.updates === null) {
-    errors.push('Updates must be an object');
-  } else {
-    const updates = p.updates as Record<string, unknown>;
-    if (Object.keys(updates).length === 0) warnings.push('No updates specified');
-    if (updates.status !== undefined && !isConnectionStatus(updates.status))
-      errors.push('Status update must be a valid connection status');
-    if (updates.tags !== undefined) {
-      if (!Array.isArray(updates.tags)) errors.push('Tags must be an array');
-      else if (!updates.tags.every((tag) => typeof tag === 'string'))
-        errors.push('All tags must be strings');
-    }
-    if (
-      updates.last_action_summary !== undefined &&
-      typeof updates.last_action_summary !== 'string'
-    )
-      errors.push('Last action summary must be a string');
-    if (
-      updates.conversion_likelihood !== undefined &&
-      !isConversionLikelihood(updates.conversion_likelihood)
-    )
-      errors.push('Conversion likelihood must be one of: high, medium, low');
-  }
-
-  if (p.updateTimestamp !== undefined && typeof p.updateTimestamp !== 'boolean')
-    errors.push('Update timestamp flag must be a boolean');
-
-  return { isValid: errors.length === 0, errors, warnings };
 }

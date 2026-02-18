@@ -32,15 +32,6 @@ class DynamoDBApiService(BaseService):
         super().__init__()
         self.table = table
 
-    def health_check(self) -> dict[str, Any]:
-        """Check service health by verifying table access."""
-        try:
-            self.table.reload()
-            status = self.table.table_status
-            return {'healthy': status == 'ACTIVE', 'details': {'table_status': status}}
-        except Exception as e:
-            return {'healthy': False, 'details': {'error': str(e)}}
-
     def get_user_profile(self, user_id: str) -> dict[str, Any]:
         """Fetch user profile.
         Reads from #SETTINGS first, falls back to legacy PROFILE SK.

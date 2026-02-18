@@ -198,7 +198,7 @@ class RAGStackClient:
                     error_messages = [e.get('message', str(e)) for e in result['errors']]
                     raise RAGStackGraphQLError(f'GraphQL errors: {", ".join(error_messages)}')
 
-                self._circuit_breaker._on_success()
+                self._circuit_breaker.on_success()
                 return result.get('data', {})
 
             except requests.exceptions.Timeout as e:
@@ -229,7 +229,7 @@ class RAGStackClient:
 
         # All retries exhausted - record failure in circuit breaker
         final_error = last_error or RAGStackNetworkError('Request failed after all retries')
-        self._circuit_breaker._on_failure(final_error)
+        self._circuit_breaker.on_failure(final_error)
         raise final_error
 
     def create_upload_url(self, filename: str) -> dict[str, Any]:

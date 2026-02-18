@@ -1,13 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { createWrapper } from '@/test-utils/queryWrapper';
 import useSearchResults from './useSearchResults';
 
-// Mock dependencies
-vi.mock('@/shared/services', () => ({
-  puppeteerApiService: {
-    performLinkedInSearch: vi.fn(),
-  },
+const mockExecute = vi.fn();
+const mockReset = vi.fn();
+let mockStatus = 'idle';
+let mockResult: unknown = null;
+let mockError: string | null = null;
+
+vi.mock('@/shared/hooks', () => ({
+  useCommand: () => ({
+    execute: mockExecute,
+    status: mockStatus,
+    result: mockResult,
+    error: mockError,
+    reset: mockReset,
+  }),
+  useToast: () => ({ toast: vi.fn() }),
+  useErrorHandler: vi.fn(),
 }));
 
 vi.mock('@/hooks/useLocalStorage', () => ({
@@ -26,15 +37,12 @@ vi.mock('@/hooks/useLocalStorage', () => ({
   }),
 }));
 
-import { puppeteerApiService } from '@/shared/services';
-
-const mockPerformLinkedInSearch = puppeteerApiService.performLinkedInSearch as ReturnType<
-  typeof vi.fn
->;
-
 describe('useSearchResults', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStatus = 'idle';
+    mockResult = null;
+    mockError = null;
   });
 
   describe('initial state', () => {
@@ -52,47 +60,7 @@ describe('useSearchResults', () => {
   });
 
   describe('searchLinkedIn', () => {
-    it('sets loading to true during search', async () => {
-      let resolveSearch: () => void;
-      mockPerformLinkedInSearch.mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            resolveSearch = () => resolve({ message: 'Done' });
-          })
-      );
-
-      const { result } = renderHook(() => useSearchResults(), {
-        wrapper: createWrapper(),
-      });
-
-      let searchPromise: Promise<void>;
-      act(() => {
-        searchPromise = result.current.searchLinkedIn({
-          companyName: 'Test',
-          companyRole: 'Engineer',
-          companyLocation: 'NYC',
-          searchName: '',
-          searchPassword: '',
-          userId: 'user-1',
-        });
-      });
-
-      // Wait for loading state to become true
-      await waitFor(() => {
-        expect(result.current.loading).toBe(true);
-      });
-
-      await act(async () => {
-        resolveSearch!();
-        await searchPromise!;
-      });
-
-      expect(result.current.loading).toBe(false);
-    });
-
-    it('sets infoMessage on success', async () => {
-      mockPerformLinkedInSearch.mockResolvedValue({ message: 'Found 5 profiles' });
-
+    it('calls execute with search data', async () => {
       const { result } = renderHook(() => useSearchResults(), {
         wrapper: createWrapper(),
       });
@@ -108,59 +76,39 @@ describe('useSearchResults', () => {
         });
       });
 
-      expect(result.current.infoMessage).toBe('Found 5 profiles');
+      expect(mockReset).toHaveBeenCalled();
+      expect(mockExecute).toHaveBeenCalledWith(expect.objectContaining({ companyName: 'Test' }));
     });
 
-    it('sets error on failure', async () => {
-      mockPerformLinkedInSearch.mockRejectedValue(new Error('Search failed'));
+    it('shows loading when dispatching', () => {
+      mockStatus = 'dispatching';
 
       const { result } = renderHook(() => useSearchResults(), {
         wrapper: createWrapper(),
       });
 
-      await act(async () => {
-        try {
-          await result.current.searchLinkedIn({
-            companyName: 'Test',
-            companyRole: 'Engineer',
-            companyLocation: 'NYC',
-            searchName: '',
-            searchPassword: '',
-            userId: 'user-1',
-          });
-        } catch {
-          // Expected to throw
-        }
-      });
-
-      await waitFor(() => {
-        expect(result.current.error).toBe('Search failed');
-      });
+      expect(result.current.loading).toBe(true);
     });
 
-    it('resets loading after error', async () => {
-      mockPerformLinkedInSearch.mockRejectedValue(new Error('Search failed'));
+    it('shows loading when executing', () => {
+      mockStatus = 'executing';
 
       const { result } = renderHook(() => useSearchResults(), {
         wrapper: createWrapper(),
       });
 
-      await act(async () => {
-        try {
-          await result.current.searchLinkedIn({
-            companyName: 'Test',
-            companyRole: 'Engineer',
-            companyLocation: 'NYC',
-            searchName: '',
-            searchPassword: '',
-            userId: 'user-1',
-          });
-        } catch {
-          // Expected to throw
-        }
+      expect(result.current.loading).toBe(true);
+    });
+
+    it('sets error from command failure', () => {
+      mockStatus = 'failed';
+      mockError = 'Search failed';
+
+      const { result } = renderHook(() => useSearchResults(), {
+        wrapper: createWrapper(),
       });
 
-      expect(result.current.loading).toBe(false);
+      expect(result.current.error).toBe('Search failed');
     });
   });
 
@@ -174,8 +122,6 @@ describe('useSearchResults', () => {
         result.current.markAsVisited('profile-1');
       });
 
-      // Note: Due to mock, we can't verify the actual state change
-      // but the function should be callable without error
       expect(typeof result.current.markAsVisited).toBe('function');
     });
   });

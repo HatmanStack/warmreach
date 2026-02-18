@@ -245,8 +245,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // Clear JWT token from session storage
-    // Note: clearAuthToken functionality moved to puppeteerApiService
-    // For now, we'll clear session storage directly
     sessionStorage.removeItem('jwt_token');
 
     if (isCognitoConfigured) {

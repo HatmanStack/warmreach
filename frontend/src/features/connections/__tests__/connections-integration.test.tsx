@@ -14,14 +14,15 @@ vi.mock('@/features/auth', () => ({
   useAuth: vi.fn(() => ({ user: { id: 'test-user' } })),
 }));
 
-// Mock puppeteer service
+// Mock services
 const mockGetConnections = vi.fn();
 vi.mock('@/shared/services', () => ({
-  puppeteerApiService: {
-    getConnections: (...args: unknown[]) => mockGetConnections(...args),
-    createConnection: vi.fn(),
-    updateConnection: vi.fn(),
+  lambdaApiService: {
+    getConnectionsByStatus: (...args: unknown[]) => mockGetConnections(...args),
+    updateConnectionStatus: vi.fn(),
   },
+  websocketService: { onMessage: vi.fn(() => vi.fn()), onStateChange: vi.fn(() => vi.fn()) },
+  commandService: {},
 }));
 
 // Mock logger

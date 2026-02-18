@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { User, Building, MapPin, Tag, X, Loader2, CheckCircle, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { lambdaApiService as dbConnector } from '@/services/lambdaApiService';
-import { puppeteerApiService } from '@/services/puppeteerApiService';
+import { commandService } from '@/shared/services/commandService';
 import { transformErrorForUser, getToastVariant, ERROR_MESSAGES } from '@/utils/errorHandling';
 import { createLogger } from '@/shared/utils/logger';
 
@@ -252,15 +252,12 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
     setIsConnecting(true);
 
     try {
-      // Call puppeteer backend to send the LinkedIn connection request
+      // Dispatch command to Electron agent to send the LinkedIn connection request
       const profileId = connection.linkedin_url || connection.id;
-      const resp = await puppeteerApiService.addLinkedInConnection({
+      await commandService.dispatch('linkedin:add-connection', {
         profileId,
         profileName: `${connection.first_name} ${connection.last_name}`,
       });
-      if (!resp.success) {
-        throw new Error(resp.error || 'Failed to send connection request');
-      }
 
       // Update status to 'outgoing' in DB for consistency
       try {

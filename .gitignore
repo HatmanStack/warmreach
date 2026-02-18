@@ -1,6 +1,19 @@
-# Logs
-.python-version
+# Dependencies
+node_modules
+
+# Environment
 .env
+.env.ragstack
+*.local
+
+# Build output
+build
+dist
+dist-ssr
+*.tsbuildinfo
+*.zip
+
+# Logs
 logs
 *.log
 npm-debug.log*
@@ -8,84 +21,38 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-mcp-servers.json
-node_modules
-dist
-dist-ssr
-*.local
 
-# Build output
-build
-dist
-backend/data
-*.tsbuildinfo
+# Python
+__pycache__/
+*.pyc
 
-# Lambda deployment packages
-*.zip
-
-# Editor directories and files
+# Editor / IDE
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 .kiro*
-BACKEND_IMPLEMENTATION_SUMMARY.md
-COGNITO_SETUP.md
-DYNAMODB_IMPLEMENTATION.md
-DYNAMODB_SCHEMA.md
-SUMMARY.md
-CLOUDFRONT_SETUP.md
-LINKEDIN*.md
-HEAL*.md
-test
-PINE*.md
-.*cpython-311.pyc
 
-lambda-deployments
-.crush
-CRUSH.md
-puppeteer-backend/.keys/*
+# OS
+.DS_Store
 
-REPAIR*.md
-TASK*.md
-user*.json
-repair*.json
-all*.json
-
-APP-enhanced.md
-APP.md
-INTERACTION_GUIDELINES.md
-app-documentation-enhancement/
-validation-report-7.1.md
-validation-report-7.2.md
-validation-report-7.3.md
-validation-report-7.4.md
-
-
-tests/__pycache__/
-tests/**/__pycache__/
-backend/**/__pycache__/
-__pycache__/
-*.pyc
-.deploy-config.json
-samconfig.toml
-backend/samconfig.toml
-
-# RAGStack configuration
-.ragstack-config.json
-.env.ragstack
-
-# Coverage reports
+# Testing / Coverage
 coverage/
 **/coverage/
-
-# Cleanup reports
 reports/
-puppeteer/.sealbox_private_key
-.serena/
-cl.md
+
+# AWS / Deployment
+backend/data
+samconfig.toml
+backend/samconfig.toml
+.deploy-config.json
+.ragstack-config.json
+
+# Secrets / Keys
+client/.keys/*
+client/.sealbox_private_key
+mcp-servers.json

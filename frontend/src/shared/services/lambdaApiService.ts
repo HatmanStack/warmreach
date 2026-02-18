@@ -190,10 +190,14 @@ class LambdaApiService {
         (responseData?.error as string) ||
         `HTTP ${status} error`;
 
+      // Prefer the application-level code from response body (e.g. QUOTA_EXCEEDED)
+      // over the Axios transport-level error code (e.g. ECONNABORTED)
+      const code = (responseData?.code as string) || error.code;
+
       return new ApiError({
         message,
         status,
-        code: error.code,
+        code,
       });
     } else if (error.request) {
       // Request was made but no response received
@@ -635,7 +639,13 @@ class LambdaApiService {
   async sendLLMRequest(
     operation: string,
     params: Record<string, unknown> = {}
-  ): Promise<{ success: boolean; data?: unknown; error?: string }> {
+  ): Promise<{
+    success: boolean;
+    data?: unknown;
+    error?: string;
+    code?: string;
+    operation?: string;
+  }> {
     try {
       const response = await this.makeLLMRequest<unknown>(operation, params);
       logger.debug('LLM response received', { hasResponse: response !== undefined });
@@ -644,7 +654,15 @@ class LambdaApiService {
       logger.error('LLM request failed', { error });
 
       if (error instanceof ApiError) {
-        return { success: false, error: error.message };
+        if (error.status === 429 || error.code === 'QUOTA_EXCEEDED') {
+          return {
+            success: false,
+            error: error.message || 'limit reached',
+            code: 'QUOTA_EXCEEDED',
+            operation,
+          };
+        }
+        return { success: false, error: error.message, code: error.code };
       }
 
       return { success: false, error: 'Failed to execute LLM operation' };
@@ -830,4 +848,3 @@ class ExtendedLambdaApiService extends LambdaApiService {
 
 // Export singleton instance
 export const lambdaApiService = new ExtendedLambdaApiService();
-export default lambdaApiService;

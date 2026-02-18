@@ -2,19 +2,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { createWrapper } from '@/test-utils/queryWrapper';
 
-const { mockInitializeProfileDatabase, mockToast } = vi.hoisted(() => ({
-  mockInitializeProfileDatabase: vi.fn(),
-  mockToast: vi.fn(),
-}));
-
-vi.mock('@/shared/services', () => ({
-  puppeteerApiService: {
-    initializeProfileDatabase: mockInitializeProfileDatabase,
-  },
-}));
+const mockExecute = vi.fn();
+const mockReset = vi.fn();
+const mockToast = vi.fn();
+let mockStatus = 'idle';
+let mockResult: unknown = null;
+let mockError: string | null = null;
 
 vi.mock('@/shared/hooks', () => ({
+  useCommand: () => ({
+    execute: mockExecute,
+    status: mockStatus,
+    result: mockResult,
+    error: mockError,
+    reset: mockReset,
+  }),
   useToast: () => ({ toast: mockToast }),
+  useErrorHandler: vi.fn(),
 }));
 
 import { useProfileInit } from './useProfileInit';
@@ -22,6 +26,9 @@ import { useProfileInit } from './useProfileInit';
 describe('useProfileInit', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStatus = 'idle';
+    mockResult = null;
+    mockError = null;
   });
 
   it('should initialize with default state', () => {
@@ -33,110 +40,50 @@ describe('useProfileInit', () => {
   });
 
   describe('initializeProfile', () => {
-    it('should handle success response', async () => {
-      const mockOnSuccess = vi.fn();
-      mockInitializeProfileDatabase.mockResolvedValue({
-        success: true,
-        data: { success: true, message: 'Profile initialized!' },
-      });
-
-      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
-
-      await act(async () => {
-        await result.current.initializeProfile(mockOnSuccess);
-      });
-
-      expect(result.current.isInitializing).toBe(false);
-      expect(result.current.initializationMessage).toBe('Profile initialized!');
-      expect(result.current.initializationError).toBe('');
-      expect(mockOnSuccess).toHaveBeenCalled();
-      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Success' }));
-    });
-
-    it('should handle healing response (202)', async () => {
-      mockInitializeProfileDatabase.mockResolvedValue({
-        success: true,
-        data: { healing: true, message: 'Healing in progress' },
-      });
-
+    it('should call execute on initializeProfile', async () => {
       const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
 
       await act(async () => {
         await result.current.initializeProfile();
       });
 
-      expect(result.current.initializationMessage).toBe('Healing in progress');
-      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Processing' }));
+      expect(mockReset).toHaveBeenCalled();
+      expect(mockExecute).toHaveBeenCalledWith({});
     });
 
-    it('should handle API error response', async () => {
-      mockInitializeProfileDatabase.mockResolvedValue({
-        success: false,
-        error: 'Service unavailable',
-      });
-
+    it('should show loading when dispatching', () => {
+      mockStatus = 'dispatching';
       const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
-
-      await act(async () => {
-        await result.current.initializeProfile();
-      });
-
-      expect(result.current.initializationError).toBe('Service unavailable');
-      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' }));
-    });
-
-    it('should handle thrown error', async () => {
-      mockInitializeProfileDatabase.mockRejectedValue(new Error('Network error'));
-
-      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
-
-      await act(async () => {
-        await result.current.initializeProfile();
-      });
-
-      expect(result.current.initializationError).toBe('Network error');
-      expect(result.current.isInitializing).toBe(false);
-    });
-
-    it('should set loading state during initialization', async () => {
-      let resolveInit: (v: unknown) => void;
-      mockInitializeProfileDatabase.mockReturnValue(
-        new Promise((resolve) => {
-          resolveInit = resolve;
-        })
-      );
-
-      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
-
-      let promise: Promise<void>;
-      act(() => {
-        promise = result.current.initializeProfile();
-      });
 
       expect(result.current.isInitializing).toBe(true);
+    });
 
-      await act(async () => {
-        resolveInit!({ success: true, data: { success: true } });
-        await promise!;
-      });
+    it('should show loading when executing', () => {
+      mockStatus = 'executing';
+      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
+
+      expect(result.current.isInitializing).toBe(true);
+    });
+
+    it('should not be loading when idle', () => {
+      mockStatus = 'idle';
+      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
+
+      expect(result.current.isInitializing).toBe(false);
+    });
+
+    it('should report error from command', () => {
+      mockStatus = 'failed';
+      mockError = 'Service unavailable';
+      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
 
       expect(result.current.isInitializing).toBe(false);
     });
   });
 
   describe('clearMessages', () => {
-    it('should reset message and error', async () => {
-      mockInitializeProfileDatabase.mockResolvedValue({
-        success: true,
-        data: { success: true, message: 'Done' },
-      });
-
+    it('should reset message and error', () => {
       const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
-
-      await act(async () => {
-        await result.current.initializeProfile();
-      });
-      expect(result.current.initializationMessage).toBe('Done');
 
       act(() => {
         result.current.clearMessages();

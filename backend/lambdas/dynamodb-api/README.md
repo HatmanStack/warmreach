@@ -1,6 +1,6 @@
 # DynamoDB API Lambda
 
-User settings, profile CRUD, and LinkedIn credential management.
+User settings, profile CRUD, tier management, and Stripe billing.
 
 ## Runtime
 
@@ -15,7 +15,7 @@ User settings, profile CRUD, and LinkedIn credential management.
 | Query Param | Description |
 |-------------|-------------|
 | (none) | Returns authenticated user's settings |
-| `profileId` | Returns profile metadata for given LinkedIn profile |
+| `profileId` | Returns profile metadata for given LinkedIn profile (no auth required) |
 
 ### POST (operations)
 
@@ -23,22 +23,24 @@ User settings, profile CRUD, and LinkedIn credential management.
 |-----------|-------------|
 | `create` | Create a bad-contact profile entry |
 | `update_user_settings` | Update user settings (linkedin_credentials, preferences) |
+| `update_profile_picture` | Update user profile picture |
+| `get_tier_info` | Get tier, feature flags, quotas, and rate limits for the user |
+| `create_checkout_session` | Create a Stripe checkout session (requires `priceId`, `successUrl`, `cancelUrl`) |
 
 ## `/profiles` Route
 
 | Method | Description |
 |--------|-------------|
 | `GET` | Get user profile data |
-| `PUT` | Update user profile fields |
-| `POST` | Operation-based: `get_research_result` (poll LLM results) |
+| `POST` | Update user settings (operation defaults to `update_user_settings`) |
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DYNAMODB_TABLE_NAME` | Yes | DynamoDB table name |
-| `COGNITO_USER_POOL_ID` | No | Cognito pool for user validation |
+| `ALLOWED_ORIGINS` | No | Comma-separated CORS origins (default: `http://localhost:5173`) |
 
 ## Authentication
 
-Same JWT extraction as other Lambdas. GET with `profileId` is allowed without auth (public profile lookup).
+JWT `sub` extracted from API Gateway authorizer claims. GET with `profileId` query param is allowed without auth (public profile lookup).

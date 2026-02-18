@@ -1,8 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { puppeteerApiService } from '@/shared/services';
+import { useCommand } from '@/shared/hooks';
 import { useToast } from '@/shared/hooks';
 import { queryKeys } from '@/shared/lib/queryKeys';
+
+interface ProfileInitResult {
+  success?: boolean;
+  healing?: boolean;
+  message?: string;
+}
 
 interface UseProfileInitReturn {
   isInitializing: boolean;
@@ -13,85 +19,80 @@ interface UseProfileInitReturn {
 }
 
 export const useProfileInit = (): UseProfileInitReturn => {
-  const [isInitializing, setIsInitializing] = useState(false);
   const [initializationMessage, setInitializationMessage] = useState<string>('');
   const [initializationError, setInitializationError] = useState<string>('');
+  const [onSuccessCallback, setOnSuccessCallback] = useState<(() => void) | null>(null);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const {
+    execute,
+    status,
+    result,
+    error: commandError,
+    reset,
+  } = useCommand<ProfileInitResult>('linkedin:profile-init');
+
+  // Handle command completion
+  useEffect(() => {
+    if (status === 'completed' && result) {
+      if (result.healing) {
+        const healingMessage =
+          result.message || 'Profile initialization is in progress with healing...';
+        setInitializationMessage(healingMessage);
+        toast({
+          title: 'Processing',
+          description: 'Profile initialization is in progress. This may take a few minutes.',
+        });
+      } else {
+        const successMessage = result.message || 'Profile database initialized successfully!';
+        setInitializationMessage(successMessage);
+        toast({
+          title: 'Success',
+          description: 'Profile database has been initialized successfully.',
+        });
+        queryClient.invalidateQueries({ queryKey: queryKeys.connections.all });
+        onSuccessCallback?.();
+      }
+      setOnSuccessCallback(null);
+    }
+  }, [status, result, queryClient, toast, onSuccessCallback]);
+
+  useEffect(() => {
+    if (status === 'failed' && commandError) {
+      setInitializationError(commandError);
+      toast({
+        title: 'Error',
+        description: commandError,
+        variant: 'destructive',
+      });
+      setOnSuccessCallback(null);
+    }
+  }, [status, commandError, toast]);
+
   const initializeProfile = useCallback(
     async (onSuccess?: () => void) => {
-      // We no longer require plaintext here; ciphertext is attached by the API service
-
-      setIsInitializing(true);
       setInitializationError('');
       setInitializationMessage('');
+      reset();
 
-      try {
-        // Prepare the request payload following the same structure as search
-        // Note: JWT token is automatically handled by apiService via Authorization header
-        // Payload can be empty; puppeteerApiService will attach ciphertext credentials
-
-        // Make API call using the apiService
-        const response = await puppeteerApiService.initializeProfileDatabase();
-
-        if (!response.success) {
-          throw new Error(response.error || 'Failed to initialize profile database');
-        }
-
-        // Handle successful response
-        if (response.data?.success) {
-          const successMessage =
-            response.data.message || 'Profile database initialized successfully!';
-          setInitializationMessage(successMessage);
-          toast({
-            title: 'Success',
-            description: 'Profile database has been initialized successfully.',
-          });
-          // Invalidate connections cache to trigger refetch
-          queryClient.invalidateQueries({ queryKey: queryKeys.connections.all });
-          // Call success callback if provided
-          onSuccess?.();
-        } else if (response.data?.healing) {
-          // Handle healing/recovery response (202 status)
-          const healingMessage =
-            response.data.message || 'Profile initialization is in progress with healing...';
-          setInitializationMessage(healingMessage);
-          toast({
-            title: 'Processing',
-            description: 'Profile initialization is in progress. This may take a few minutes.',
-          });
-        } else {
-          const successMessage = response.message || 'Profile database initialized successfully!';
-          setInitializationMessage(successMessage);
-          toast({
-            title: 'Success',
-            description: 'Profile database has been initialized successfully.',
-          });
-          // Call success callback if provided
-          onSuccess?.();
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Failed to initialize profile database';
-        setInitializationError(errorMessage);
-        toast({
-          title: 'Error',
-          description: errorMessage,
-          variant: 'destructive',
-        });
-      } finally {
-        setIsInitializing(false);
+      if (onSuccess) {
+        setOnSuccessCallback(() => onSuccess);
       }
+
+      // Payload can be empty; commandService attaches ciphertext credentials
+      await execute({});
     },
-    [toast, queryClient]
+    [execute, reset]
   );
 
   const clearMessages = useCallback(() => {
     setInitializationMessage('');
     setInitializationError('');
   }, []);
+
+  const isInitializing = status === 'dispatching' || status === 'executing';
 
   return {
     isInitializing,

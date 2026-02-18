@@ -1,6 +1,6 @@
 # LLM Lambda
 
-AI-powered content generation for LinkedIn posts via OpenAI APIs.
+AI-powered content generation for LinkedIn posts and personalized messaging.
 
 ## Runtime
 
@@ -12,10 +12,13 @@ AI-powered content generation for LinkedIn posts via OpenAI APIs.
 
 | Operation | Model | Mode | Description |
 |-----------|-------|------|-------------|
-| `generate_ideas` | gpt-4.1 | Synchronous | Generate LinkedIn post ideas from user profile + prompt |
+| `generate_ideas` | gpt-5.2 | Synchronous | Generate LinkedIn post ideas from user profile + prompt |
 | `research_selected_ideas` | o4-mini-deep-research | Async (background) | Deep research with web search; returns `job_id` for polling |
 | `get_research_result` | — | Poll | Check DynamoDB/OpenAI for completed research/ideas/synthesis |
 | `synthesize_research` | gpt-5.2 | Synchronous | Synthesize research + ideas into a ready-to-post LinkedIn post |
+| `generate_message` | gpt-5.2 | Synchronous | Generate personalized message for a connection |
+
+`research_selected_ideas` and `synthesize_research` are feature-gated behind `deep_research` (requires pro tier).
 
 ## Request Format
 
@@ -25,6 +28,19 @@ AI-powered content generation for LinkedIn posts via OpenAI APIs.
   "job_id": "uuid",
   "prompt": "optional seed text",
   "user_profile": { "name": "...", "title": "...", ... }
+}
+```
+
+### generate_message
+
+```json
+{
+  "operation": "generate_message",
+  "conversationTopic": "topic",
+  "connectionProfile": { "name": "...", ... },
+  "userProfile": { ... },
+  "messageHistory": [],
+  "connectionId": "optional"
 }
 ```
 
@@ -39,15 +55,15 @@ Extracts `sub` from JWT claims via API Gateway authorizer:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | Yes | OpenAI API key |
-| `DYNAMODB_TABLE_NAME` | Yes | DynamoDB table for result storage |
-| `BEDROCK_MODEL_ID` | No | Bedrock model ID (unused currently) |
+| `DYNAMODB_TABLE_NAME` | Yes | DynamoDB table for result storage and quota tracking |
+| `BEDROCK_MODEL_ID` | No | Bedrock model ID (for RAGStack embeddings) |
 
 ## Architecture
 
 ```
-lambda_function.py     → Route operations, extract user_id
+lambda_function.py     → Route operations, extract user_id, quota enforcement
 services/llm_service.py → LLMService class (business logic)
-prompts.py             → Prompt templates (ideas, research, synthesize)
+prompts.py             → Prompt templates (ideas, research, synthesize, message)
 ```
 
 ## Async Research Flow

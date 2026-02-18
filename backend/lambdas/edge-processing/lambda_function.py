@@ -7,6 +7,7 @@ import os
 import boto3
 from errors.exceptions import AuthorizationError, ExternalServiceError, NotFoundError, ServiceError, ValidationError
 from services.edge_service import EdgeService
+from shared_services.monetization import QuotaService, ensure_tier_exists
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -16,9 +17,10 @@ table = boto3.resource('dynamodb').Table(os.environ.get('DYNAMODB_TABLE_NAME', '
 RAGSTACK_GRAPHQL_ENDPOINT = os.environ.get('RAGSTACK_GRAPHQL_ENDPOINT', '')
 RAGSTACK_API_KEY = os.environ.get('RAGSTACK_API_KEY', '')
 
-# Module-level RAGStack clients for warm container reuse
+# Module-level clients for warm container reuse
 _ragstack_client = None
 _ingestion_service = None
+_quota_service = QuotaService(table) if table else None
 
 if RAGSTACK_GRAPHQL_ENDPOINT and RAGSTACK_API_KEY:
     from shared_services.ingestion_service import IngestionService
@@ -97,6 +99,17 @@ def _get_user_id(event):
     return None
 
 
+def _report_telemetry(user_id: str, operation: str, count: int = 1):
+    """Fire-and-forget usage telemetry. Never blocks the response."""
+    if not _quota_service or not user_id:
+        return
+    try:
+        ensure_tier_exists(table, user_id)
+        _quota_service.report_usage(user_id, operation, count=count)
+    except Exception as e:
+        logger.debug(f'Telemetry report failed for {operation}: {e}')
+
+
 def _handle_ragstack(body, user_id, svc, event=None):
     """Handle /ragstack route - thin dispatcher to EdgeService RAGStack methods."""
     if not svc.ragstack_client:
@@ -113,6 +126,7 @@ def _handle_ragstack(body, user_id, svc, event=None):
         except (TypeError, ValueError):
             return _resp(400, {'error': 'maxResults must be a number'}, event)
         result = svc.ragstack_search(query, max_results)
+        _report_telemetry(user_id, 'ragstack_search')
         return _resp(200, result, event)
 
     elif operation == 'ingest':
@@ -126,6 +140,7 @@ def _handle_ragstack(body, user_id, svc, event=None):
         if not markdown_content:
             return _resp(400, {'error': 'markdownContent is required'}, event)
         result = svc.ragstack_ingest(profile_id, markdown_content, metadata, user_id)
+        _report_telemetry(user_id, 'ragstack_ingest')
         return _resp(200, result, event)
 
     elif operation == 'status':
@@ -146,6 +161,7 @@ def _handle_ragstack(body, user_id, svc, event=None):
         if not isinstance(scrape_config, dict):
             return _resp(400, {'error': 'scrapeConfig must be a JSON object'}, event)
         result = svc.ragstack_scrape_start(profile_id, cookies, scrape_config)
+        _report_telemetry(user_id, 'ragstack_scrape')
         return _resp(200, result, event)
 
     elif operation == 'scrape_status':

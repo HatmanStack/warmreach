@@ -1,10 +1,11 @@
-import { useCallback, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import useLocalStorage from '@/hooks/useLocalStorage';
-import { puppeteerApiService } from '@/shared/services';
+import { useCommand } from '@/shared/hooks';
 import type { SearchFormData } from '@/shared/utils/validation';
 import { STORAGE_KEYS } from '@/config/appConfig';
 import { queryKeys } from '@/shared/lib/queryKeys';
+import type { Connection } from '@/shared/types';
 
 interface UseSearchResultsReturn {
   results: string[];
@@ -16,6 +17,15 @@ interface UseSearchResultsReturn {
   markAsVisited: (profileId: string) => void;
   clearResults: () => void;
   clearVisitedLinks: () => void;
+}
+
+interface SearchResult {
+  response?: Connection[];
+  metadata?: {
+    totalProfilesAnalyzed?: number;
+    goodContactsFound?: number;
+    successRate?: string;
+  };
 }
 
 function useSearchResults(): UseSearchResultsReturn {
@@ -32,34 +42,37 @@ function useSearchResults(): UseSearchResultsReturn {
   // State for informational message from search API
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Search mutation via React Query
-  const searchMutation = useMutation({
-    mutationFn: (searchData: SearchFormData) =>
-      puppeteerApiService.performLinkedInSearch(searchData),
-    onSuccess: (response) => {
-      if (response?.message) {
-        setInfoMessage(response.message);
-      }
+  const {
+    execute,
+    status,
+    result,
+    error: commandError,
+    reset,
+  } = useCommand<SearchResult>('linkedin:search');
+
+  // Handle command completion
+  useEffect(() => {
+    if (status === 'completed' && result) {
+      setInfoMessage(null);
       // Invalidate connections cache to refetch after search
       queryClient.invalidateQueries({ queryKey: queryKeys.connections.all });
-    },
-    onError: () => {
-      setInfoMessage(null);
-    },
-  });
+    }
+  }, [status, result, queryClient]);
 
-  // LinkedIn search via puppeteer backend
+  useEffect(() => {
+    if (status === 'failed' && commandError) {
+      setInfoMessage(`Search error: ${commandError}`);
+    }
+  }, [status, commandError]);
+
+  // LinkedIn search via command dispatch to Electron agent
   const searchLinkedIn = useCallback(
     async (searchFormData: SearchFormData) => {
       setInfoMessage(null);
-      try {
-        await searchMutation.mutateAsync(searchFormData);
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Search failed';
-        setInfoMessage(`Search error: ${errorMessage}`);
-      }
+      reset();
+      await execute(searchFormData as unknown as Record<string, unknown>);
     },
-    [searchMutation]
+    [execute, reset]
   );
 
   // Mark a profile as visited
@@ -83,11 +96,13 @@ function useSearchResults(): UseSearchResultsReturn {
     setVisitedLinks({});
   }, [setVisitedLinks]);
 
+  const loading = status === 'dispatching' || status === 'executing';
+
   return {
     results,
     visitedLinks,
-    loading: searchMutation.isPending,
-    error: searchMutation.error?.message ?? null,
+    loading,
+    error: commandError,
     infoMessage,
     searchLinkedIn,
     markAsVisited,

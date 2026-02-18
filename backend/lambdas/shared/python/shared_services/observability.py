@@ -31,11 +31,6 @@ class CorrelationContext:
     def set_lambda_name(cls, name: str) -> None:
         cls._lambda_name = name
 
-    @classmethod
-    def reset(cls) -> None:
-        cls._trace_id = None
-        cls._lambda_name = None
-
 
 class StructuredLogFilter(logging.Filter):
     """Injects correlation context into all log records."""

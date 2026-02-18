@@ -6,54 +6,57 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **This tool is NOT for spam, mass outreach, or scraping LinkedIn.**
 
-WarmReach helps users build more authentic professional relationships by:
+WarmReach helps users build more authentic professional relationships by surfacing buried interactions, identifying active connections, enabling thoughtful AI-assisted outreach, and providing network insight. All automation respects rate limits and mimics human interaction patterns.
 
-- **Surfacing buried interactions** - LinkedIn's algorithm often swallows engagement into a black hole. This tool helps users see who's actually active and engaging with their content.
-- **Identifying active connections** - Find people in your network who are genuinely engaged, helping users grow their network through interaction.
-- **Enabling thoughtful outreach** - AI-assisted messaging helps craft personalized, relevant messages rather than generic templates.
-- **Providing network insight** - Understand your professional network better through activity analysis and relationship mapping.
-
-The goal is to make LinkedIn more useful for genuine professional networking, not to automate spam or bypass LinkedIn's intended use. All automation respects rate limits and mimics human interaction patterns.
+This is the **Community Edition** — a free, self-deployable version of WarmReach. Billing and tier management are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
 
 ## Project Overview
 
 WarmReach is a monorepo with three main components:
 - **frontend/**: React 18 + TypeScript + Vite application
-- **puppeteer/**: Node.js Express backend with Puppeteer for LinkedIn automation
-- **backend/**: AWS SAM serverless stack (Python Lambdas + DynamoDB + Cognito)
+- **client/**: Electron tray app + Node.js Express backend with Puppeteer for LinkedIn automation
+- **backend/**: AWS SAM serverless stack (Python 3.13 Lambdas + DynamoDB + Cognito + WebSocket API)
 
 ## Build & Development Commands
 
 ```bash
-# Root-level commands (from repo root)
-npm run dev              # Start frontend (Vite)
-npm run dev:puppeteer    # Start puppeteer backend
-npm run build            # Build frontend
-npm run lint             # Lint all (frontend + puppeteer + backend)
-npm run test             # Run all tests (frontend + backend)
-npm run check            # lint + test
+# Full CI check (format + lint + typecheck + test)
+npm run check
 
-# Frontend (frontend/)
-npm run dev              # Vite dev server at localhost:5173
-npm run test             # Vitest
-npm run test:watch       # Vitest in watch mode
-npm run lint             # ESLint with --max-warnings 0
+# Development
+npm run dev              # Frontend Vite dev server (localhost:5173)
+npm run dev:client       # Client Express backend (localhost:3001)
+npm run electron:dev     # Electron tray app
 
-# Puppeteer backend (puppeteer/)
-npm start                # Start server at localhost:3001
-npm run dev              # Start with nodemon
-npm run test             # Vitest
-npm run lint             # ESLint
+# Testing (from repo root)
+npm run test             # All tests (frontend + client + backend)
+npm run test:frontend    # Frontend Vitest only
+npm run test:client      # Client Vitest only
+npm run test:backend     # Backend pytest only
 
-# Backend Python tests (tests/backend/)
-cd tests/backend && . .venv/bin/activate && python -m pytest unit/ -v --tb=short
+# Run a single frontend test file
+cd frontend && npx vitest run src/features/auth/components/AuthForm.test.tsx
 
-# Backend Lambda linting
-cd backend && uvx ruff check lambdas --exclude .aws-sam
+# Run a single backend test file
+cd tests/backend && . .venv/bin/activate && python -m pytest unit/test_llm.py -v --tb=short
 
-# AWS SAM deployment (backend/)
-cd backend && sam build && sam deploy
+# Run a single backend test function
+cd tests/backend && . .venv/bin/activate && python -m pytest unit/test_llm.py::test_generate_ideas_success -v
+
+# Linting
+npm run lint             # All (frontend ESLint + client ESLint + backend Ruff)
+npm run lint:backend     # Ruff check + format check
+npm run format           # Prettier write (frontend + client)
+
+# Type checking
+npm run typecheck:frontend
+npm run typecheck:client
+
+# Electron packaging
+npm run electron:build
 ```
+
+**Pre-commit hooks**: Husky + lint-staged auto-runs Prettier, ESLint, and Ruff on staged files.
 
 ## Architecture
 
@@ -65,76 +68,83 @@ Feature-based organization with barrel exports:
 - `features/posts/` - Post creation with AI
 - `features/profile/` - User profile management
 - `features/search/` - LinkedIn search
+- `features/tier/` - Community tier stub (all features enabled)
 - `features/workflow/` - Automation workflows
 - `shared/` - Reusable components, hooks, services, utils, types
+- `shared/services/websocketService.ts` - WebSocket connection manager
+- `shared/services/commandService.ts` - Command dispatch to Electron agent
 
-Path aliases configured in `vitest.config.ts`:
-- `@/components` → `src/shared/components`
-- `@/hooks` → `src/shared/hooks`
-- `@/services` → `src/shared/services`
-- `@/utils` → `src/shared/utils`
-- `@` → `src`
+Path aliases (configured in `tsconfig.json` and `vite.config.ts`):
+- `@/components` -> `src/shared/components`
+- `@/hooks` -> `src/shared/hooks`
+- `@/services` -> `src/shared/services`
+- `@/utils` -> `src/shared/utils`
+- `@` -> `src`
 
-### Puppeteer Backend (`puppeteer/src/`)
-Domain-driven architecture:
-- `domains/` - Business logic organized by domain
-- `shared/` - Shared utilities
-- `server.js` - Express server entry point
+### Client (`client/`)
+Electron tray app + Express backend with domain-driven architecture:
+- `electron-main.js` - Electron main process (tray-only, auto-updater)
+- `src/transport/` - WebSocket client + command router
+- `src/auth/` - Electron Cognito authentication (libsodium Sealbox encryption)
+- `src/credentials/` - LinkedIn credential store + settings window
+- `src/domains/` - Business logic by domain (automation, connections, linkedin, messaging, navigation, profile, ragstack, search, session, storage, workflow)
+- `src/shared/` - Config, middleware, services, utils
+- `src/server.js` - Express server entry point (local dev)
 
 Queue-based LinkedIn interaction processing with session preservation and heal/restore capabilities.
 
 ### AWS Backend (`backend/`)
 SAM template (`template.yaml`) defines:
-- **ProfilesTable**: DynamoDB single-table design with GSI1
-- **Lambda Functions**: Python 3.13 runtime
-  - `edge-processing/` - Edge data processing + RAGStack search/ingest (handles `/edges` and `/ragstack` routes)
-  - `dynamodb-api/` - User settings/profile CRUD (handles `/dynamodb` and `/profiles` routes)
-  - `llm/` - OpenAI/Bedrock LLM operations
+- **ProfilesTable**: DynamoDB single-table design (PK/SK + GSI1, TTL enabled)
+- **WebSocket API**: API Gateway V2 for real-time command dispatch
+- **HttpApi**: API Gateway V2 with Cognito JWT authorizer
 - **Cognito**: User pool with email-based auth
-- **HttpApi**: API Gateway with Cognito JWT authorizer
-
-### RAGStack-Lambda (separate stack)
-Deployed separately from [RAGStack-Lambda](https://github.com/HatmanStack/RAGStack-Lambda):
-- Vector embeddings + semantic search via Bedrock Knowledge Base
-- Connected via `RAGSTACK_GRAPHQL_ENDPOINT` and `RAGSTACK_API_KEY` env vars
-- Used by edge-processing (search/ingest)
+- **Lambda Functions** (Python 3.13):
+  - `websocket-connect/disconnect/default/` - WebSocket lifecycle + message routing
+  - `command-dispatch/` - Command creation and dispatch to agent
+  - `edge-processing/` - Edge data processing + RAGStack search/ingest
+  - `dynamodb-api/` - User settings/profile CRUD
+  - `llm/` - OpenAI/Bedrock LLM operations
 
 Lambdas share code via `lambdas/shared/python/`:
 - `shared_services/base_service.py` - Base class for all service layers
-- `shared_services/ragstack_client.py` - RAGStack GraphQL client
-- `shared_services/ingestion_service.py` - Document ingestion for RAGStack
-- `errors/` - Shared exception classes and error handlers
-- `utils/profile_markdown.py` - Profile markdown generation
+- `shared_services/websocket_service.py` - WebSocket @connections API helper
+- `shared_services/monetization.py` - Community edition stubs (all features enabled)
+- `shared_services/ragstack_client.py` - RAGStack GraphQL client with circuit breaker + retry
+- `shared_services/circuit_breaker.py` - Circuit breaker pattern (public API: `on_success()`/`on_failure()`)
+- `shared_services/ingestion_service.py` - Profile data ingestion
+- `shared_services/observability.py` - Correlation context and logging
+- `errors/` - Shared exception classes (`ServiceError`, `ValidationError`, etc.)
+
+### RAGStack-Lambda (separate nested stack)
+Optional nested stack from [RAGStack-Lambda](https://github.com/HatmanStack/RAGStack-Lambda):
+- Vector embeddings + semantic search via Bedrock Knowledge Base
+- Connected via `RAGSTACK_GRAPHQL_ENDPOINT` and `RAGSTACK_API_KEY` env vars
+- Conditional deployment via `DeployRAGStack` parameter
 
 ### Test Structure
-- `frontend/src/**/*.test.{ts,tsx}` - Frontend unit tests (Vitest + Testing Library)
-- `puppeteer/src/**/*.test.js` - Puppeteer backend tests (Vitest)
-- `tests/backend/unit/` - Lambda unit tests (pytest with moto)
-- `tests/backend/integration/` - Lambda integration tests
-- `tests/fixtures/` - Shared test fixtures
+- **Frontend**: `frontend/src/**/*.test.{ts,tsx}` - Vitest + Testing Library
+- **Client**: `client/src/**/*.test.js` - Vitest
+- **Backend**: `tests/backend/unit/` - pytest with moto (AWS mocking)
+  - Coverage target: 75% (fail-under in pytest.ini)
+  - `conftest.py` provides: DynamoDB table fixture, S3 bucket fixture, Lambda module loader (`load_lambda_module()`), service class loader (`load_service_class()`), factory fixtures (`create_test_edge()`, `create_test_profile()`, `create_authenticated_event()`)
+- **E2E**: Playwright (`npm run test:e2e`)
 
 ## Key Technical Details
 
 - **Authentication**: AWS Cognito with JWT tokens, credentials encrypted with libsodium (Sealbox)
+- **Real-time**: WebSocket API Gateway for command dispatch: frontend -> backend -> Electron agent
 - **State Management**: React Query (`@tanstack/react-query`)
 - **UI Components**: Radix UI primitives with Tailwind CSS
-- **Logging**: Winston (puppeteer), Python logging (lambdas)
+- **Logging**: Winston (client), Python logging (lambdas)
 - **AI Integration**: OpenAI API + AWS Bedrock (configurable model ID). No Google Gemini.
+- **Auto-update**: electron-updater publishing to GitHub Releases
 
 ## Environment Setup
 
 Required `.env` variables (see `.env.example`):
-- `VITE_API_URL`, `VITE_COGNITO_*` - Frontend config
+- `VITE_API_URL`, `VITE_COGNITO_*`, `VITE_WEBSOCKET_URL` - Frontend config
 - `OPENAI_API_KEY`, `BEDROCK_MODEL_ID` - AI config
 - AWS credentials for SAM deployment
 
-## SAM Deployment Notes
-
-Deploy with guided prompts for first-time setup:
-```bash
-cd backend
-sam build
-sam deploy --guided
-```
-
-Stack outputs provide values needed for `.env`. Use `get-env-vars.sh` script to auto-populate.
+See `docs/DEPLOYMENT.md` for deployment procedures.

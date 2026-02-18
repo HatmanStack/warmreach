@@ -50,32 +50,6 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   throw new Error('No base64 encoder available');
 }
 
-/** Import an RSA public key from a PEM string for RSA-OAEP with SHA-256 */
-export async function importRsaPublicKey(pem: string): Promise<CryptoKey> {
-  const pemContents = pem
-    .replace(/-----BEGIN PUBLIC KEY-----/g, '')
-    .replace(/-----END PUBLIC KEY-----/g, '')
-    .replace(/[\r\n\s]/g, '')
-    .trim();
-
-  const derBuffer = base64ToArrayBuffer(pemContents);
-  return crypto.subtle.importKey('spki', derBuffer, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, [
-    'encrypt',
-  ]);
-}
-
-/** Encrypt a UTF-8 string with RSA-OAEP and return base64 ciphertext */
-export async function encryptWithRsaOaep(plaintext: string, publicKeyPem: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const key = await importRsaPublicKey(publicKeyPem);
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'RSA-OAEP' },
-    key,
-    encoder.encode(plaintext)
-  );
-  return arrayBufferToBase64(encrypted);
-}
-
 /** Encrypt a UTF-8 string with Curve25519 sealed box and return base64 ciphertext */
 export async function encryptWithSealboxB64(
   plaintext: string,

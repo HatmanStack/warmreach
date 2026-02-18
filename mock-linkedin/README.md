@@ -1,6 +1,6 @@
 # Mock LinkedIn Server
 
-Local server that mimics LinkedIn's page structure for testing puppeteer automation without hitting the real site.
+Local server that mimics LinkedIn's page structure for testing client automation without hitting the real site.
 
 ## Quick Start
 
@@ -73,10 +73,16 @@ All routes match real LinkedIn URLs:
 | `GET /in/:profileId/recent-activity/:type/` | Activity pages |
 | `GET /in/:profileId/overlay/about-this-profile/` | About modal |
 | `GET /search/results/people/` | Search results |
-| `GET /messaging/compose/?recipient=...` | Messaging compose |
+| `GET /messaging/` | Messaging inbox |
+| `GET /messaging/thread/new` | New message compose |
 | `GET /mynetwork/invite-connect/connections/` | Your connections |
-| `GET /mynetwork/invitation-manager/` | Received invitations |
+| `GET /mynetwork/invitation-manager/received/` | Received invitations |
 | `GET /mynetwork/invitation-manager/sent/` | Sent invitations |
+| `GET /health` | Health check |
+| `POST /ragstack` | RAGStack proxy (search, ingest, status, scrape) |
+| `GET /profiles` | Mock DynamoDB profiles query |
+| `POST /profiles` | Mock DynamoDB profiles operations |
+| `POST /edges` | Mock DynamoDB edge operations |
 
 ## API Endpoints (for testing)
 
@@ -105,18 +111,18 @@ curl -X POST http://localhost:3333/api/reset
 
 ## Connecting to Puppeteer Backend
 
-Update your puppeteer backend to point to the mock server:
+Update your client backend to point to the mock server:
 
 ```bash
-# In puppeteer/.env or environment
+# In client/.env or environment
 LINKEDIN_BASE_URL=http://localhost:3333
 ```
 
-Or modify the puppeteer code to use a configurable base URL.
+Or modify the client code to use a configurable base URL.
 
 ## Placeholder Pages
 
-If you haven't saved real HTML yet, the server generates placeholder pages with the correct DOM selectors that your puppeteer code expects:
+If you haven't saved real HTML yet, the server generates placeholder pages with the correct DOM selectors that your client code expects:
 
 - `data-test-id="*"` attributes
 - `aria-label="*"` attributes

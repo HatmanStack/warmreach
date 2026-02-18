@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { puppeteerApiService } from '@/shared/services';
+import { lambdaApiService } from '@/shared/services';
 import { useAuth } from '@/features/auth';
 import { queryKeys } from '@/shared/lib/queryKeys';
-import type { Connection } from '@/shared/types';
+import type { Connection, ConnectionStatus } from '@/shared/types';
 
 export const useConnections = (filters?: { status?: string; tags?: string[]; limit?: number }) => {
   const { user } = useAuth();
@@ -11,7 +11,7 @@ export const useConnections = (filters?: { status?: string; tags?: string[]; lim
   // Build the full query key including filters for cache operations
   const fullQueryKey = [queryKeys.connections.byUser(user?.id ?? ''), filters];
 
-  // Query for fetching connections
+  // Query for fetching connections via Lambda API (DynamoDB)
   const {
     data: connections = [],
     isLoading: loading,
@@ -20,53 +20,28 @@ export const useConnections = (filters?: { status?: string; tags?: string[]; lim
   } = useQuery({
     queryKey: fullQueryKey,
     queryFn: async () => {
-      const response = await puppeteerApiService.getConnections(filters);
-      if (response.success && response.data) {
-        return (response.data.connections || []) as Connection[];
-      }
-      throw new Error(response.error || 'Failed to fetch connections');
+      const statusFilter = filters?.status as ConnectionStatus | undefined;
+      return await lambdaApiService.getConnectionsByStatus(statusFilter);
     },
     enabled: !!user,
   });
 
-  // Mutation for creating connection
-  const createMutation = useMutation({
-    mutationFn: (data: Partial<Connection>) => puppeteerApiService.createConnection(data),
-    onSuccess: (response) => {
-      if (response.success && response.data) {
-        queryClient.setQueryData(fullQueryKey, (old: Connection[] = []) => [
-          ...old,
-          response.data as Connection,
-        ]);
-      }
-    },
-  });
-
-  // Mutation for updating connection
+  // Mutation for updating connection status
   const updateMutation = useMutation({
     mutationFn: ({ id, updates }: { id: string; updates: Partial<Connection> }) =>
-      puppeteerApiService.updateConnection(id, updates),
-    onSuccess: (response, { id, updates }) => {
-      if (response.success) {
-        // Safely merge response.data if it's a valid object with connection fields
-        const responseData =
-          response.data && typeof response.data === 'object'
-            ? (response.data as Partial<Connection>)
-            : {};
-        queryClient.setQueryData(fullQueryKey, (old: Connection[] = []) =>
-          old.map((conn) => (conn.id === id ? { ...conn, ...updates, ...responseData } : conn))
-        );
-      }
+      lambdaApiService.updateConnectionStatus(id, updates.status as ConnectionStatus, {
+        profileId: id,
+      }),
+    onSuccess: (_, { id, updates }) => {
+      queryClient.setQueryData(fullQueryKey, (old: Connection[] = []) =>
+        old.map((conn) => (conn.id === id ? { ...conn, ...updates } : conn))
+      );
     },
   });
 
-  const createConnection = async (data: Partial<Connection>): Promise<boolean> => {
-    try {
-      const result = await createMutation.mutateAsync(data);
-      return result.success;
-    } catch {
-      return false;
-    }
+  const createConnection = async (): Promise<boolean> => {
+    // Connection creation happens via search/profile-init commands, not direct CRUD
+    return false;
   };
 
   const updateConnection = async (
@@ -74,8 +49,8 @@ export const useConnections = (filters?: { status?: string; tags?: string[]; lim
     updates: Partial<Connection>
   ): Promise<boolean> => {
     try {
-      const result = await updateMutation.mutateAsync({ id: connectionId, updates });
-      return result.success;
+      await updateMutation.mutateAsync({ id: connectionId, updates });
+      return true;
     } catch {
       return false;
     }

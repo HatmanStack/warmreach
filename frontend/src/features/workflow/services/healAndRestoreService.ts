@@ -1,4 +1,4 @@
-import { puppeteerApiService } from '@/shared/services';
+import { websocketService } from '@/shared/services';
 import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('HealAndRestoreService');
@@ -16,13 +16,10 @@ export interface HealAndRestoreNotification {
 }
 
 class HealAndRestoreService {
-  private eventSource: EventSource | null = null;
   private listeners: ((notification: HealAndRestoreNotification) => void)[] = [];
-  private isPolling = false;
   private isListening = false;
   private ignoredSessionIds: Set<string> = new Set();
-  private pollAttempts = 0;
-  private readonly maxPollAttempts = 720; // 1 hour at 5-second intervals
+  private unsubscribe: (() => void) | null = null;
 
   // Check if auto-approve is enabled for this session
   isAutoApproveEnabled(): boolean {
@@ -38,48 +35,64 @@ class HealAndRestoreService {
     }
   }
 
-  // Send authorization to backend
+  // Send authorization to backend via WebSocket
   async authorizeHealAndRestore(sessionId: string, autoApprove: boolean = false): Promise<boolean> {
     try {
-      const response = await puppeteerApiService.authorizeHealAndRestore(sessionId, autoApprove);
-      // If we previously ignored this session due to cancel, remove from ignore set on authorize
       this.ignoredSessionIds.delete(sessionId);
-      return response.success;
+      return websocketService.send({
+        action: 'heal_authorize',
+        sessionId,
+        autoApprove,
+      });
     } catch (error) {
       logger.error('Failed to authorize heal and restore', { error });
       return false;
     }
   }
 
-  // Send cancel to backend and locally ignore this session so it won't re-trigger the modal
+  // Send cancel to backend via WebSocket
   async cancelHealAndRestore(sessionId: string): Promise<boolean> {
     try {
       this.ignoredSessionIds.add(sessionId);
-      const response = await puppeteerApiService.cancelHealAndRestore(sessionId);
-      return response.success;
+      return websocketService.send({
+        action: 'heal_cancel',
+        sessionId,
+      });
     } catch (error) {
       logger.error('Failed to cancel heal and restore', { error });
-      // Even if backend fails, keep ignoring this session locally to prevent UI loop
       return false;
     }
   }
 
-  // Start listening for heal and restore notifications
+  // Start listening for heal and restore notifications via WebSocket
   startListening(): void {
-    if (!this.isPolling) {
-      this.startPolling();
-    }
+    if (this.isListening) return;
     this.isListening = true;
+
+    this.unsubscribe = websocketService.onMessage((message) => {
+      if (message.action !== 'heal_request') return;
+
+      const notification: HealAndRestoreNotification = {
+        sessionId: message.sessionId as string,
+        message: (message.message as string) || 'Heal and restore authorization required',
+        timestamp: Date.now(),
+      };
+
+      if (this.isAutoApproveEnabled()) {
+        this.authorizeHealAndRestore(notification.sessionId, true);
+      } else if (!this.ignoredSessionIds.has(notification.sessionId)) {
+        this.notifyListeners(notification);
+      }
+    });
   }
 
   // Stop listening for notifications
   stopListening(): void {
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
     }
     this.isListening = false;
-    this.isPolling = false;
   }
 
   // Add listener for heal and restore notifications
@@ -95,57 +108,6 @@ class HealAndRestoreService {
   // Notify all listeners
   private notifyListeners(notification: HealAndRestoreNotification): void {
     this.listeners.forEach((listener) => listener(notification));
-  }
-
-  // Poll for heal and restore status when SSE/WebSocket is unavailable
-  private startPolling(): void {
-    if (this.isPolling) return;
-    this.isPolling = true;
-    this.pollAttempts = 0;
-
-    const poll = async () => {
-      // Stop polling if disabled or max attempts reached
-      if (!this.isPolling || this.pollAttempts >= this.maxPollAttempts) {
-        if (this.pollAttempts >= this.maxPollAttempts) {
-          logger.warn('Max poll attempts reached, stopping heal and restore polling');
-        }
-        this.isPolling = false;
-        return;
-      }
-
-      this.pollAttempts++;
-
-      try {
-        const response = await puppeteerApiService.checkHealAndRestoreStatus();
-        if (response.success && response.data?.pendingSession) {
-          const notification: HealAndRestoreNotification = {
-            sessionId: response.data.pendingSession.sessionId,
-            message: 'Heal and restore authorization required',
-            timestamp: Date.now(),
-          };
-
-          // Check if auto-approve is enabled
-          if (this.isAutoApproveEnabled()) {
-            // Automatically authorize
-            await this.authorizeHealAndRestore(notification.sessionId, true);
-          } else {
-            // If this session was cancelled/ignored locally, do not notify again
-            if (!this.ignoredSessionIds.has(notification.sessionId)) {
-              this.notifyListeners(notification);
-            }
-          }
-        }
-      } catch (error) {
-        logger.error('Error polling for heal and restore status', { error });
-      }
-
-      // Poll every 5 seconds if still active
-      if (this.isPolling) {
-        setTimeout(poll, 5000);
-      }
-    };
-
-    poll();
   }
 }
 

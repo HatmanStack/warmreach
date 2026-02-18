@@ -19,8 +19,6 @@ dynamodb = boto3.resource('dynamodb')
 
 # Environment variables
 TABLE_NAME = os.environ['DYNAMODB_TABLE_NAME']
-COGNITO_USER_POOL_ID = os.environ['COGNITO_USER_POOL_ID']
-COGNITO_REGION = os.environ.get('COGNITO_REGION', 'us-west-2')
 
 table = dynamodb.Table(TABLE_NAME)
 service = DynamoDBApiService(table)

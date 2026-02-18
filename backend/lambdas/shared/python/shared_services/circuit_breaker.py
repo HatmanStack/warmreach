@@ -88,14 +88,14 @@ class CircuitBreaker:
                 self._half_open_calls += 1
 
             result = func(*args, **kwargs)
-            self._on_success()
+            self.on_success()
             return result
         except Exception as e:
-            self._on_failure(e)
+            self.on_failure(e)
             raise
 
-    def _on_success(self) -> None:
-        """Reset failure tracking on successful call."""
+    def on_success(self) -> None:
+        """Reset failure tracking on successful call. Can be called directly for manual tracking."""
         if self._state == 'half_open':
             logger.info(f"Circuit breaker '{self.service_name}': half_open -> closed (recovery successful)")
         self._state = 'closed'
@@ -103,8 +103,8 @@ class CircuitBreaker:
         self._last_failure_time = None
         self._half_open_calls = 0
 
-    def _on_failure(self, error: Exception) -> None:
-        """Track failure and potentially trip the breaker."""
+    def on_failure(self, error: Exception) -> None:
+        """Track failure and potentially trip the breaker. Can be called directly for manual tracking."""
         self._failure_count += 1
         self._last_failure_time = time.time()
 

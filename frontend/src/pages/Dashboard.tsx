@@ -27,6 +27,7 @@ import { StatusPicker, ProgressIndicator } from '@/features/workflow';
 import { useProfileInit } from '@/features/profile';
 import { useUserProfile } from '@/features/profile';
 import { NoConnectionsState } from '@/shared/components/ui/empty-state';
+import { AgentStatusBadge } from '@/shared/components/AgentStatusBadge';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -127,6 +128,7 @@ const Dashboard = () => {
               <span className="text-2xl font-bold text-white">WarmReach</span>
             </div>
             <div className="flex items-center space-x-4">
+              <AgentStatusBadge />
               <span className="text-white">Welcome, {displayName}</span>
               <Button
                 variant="ghost"

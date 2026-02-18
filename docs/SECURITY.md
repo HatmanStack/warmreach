@@ -1,10 +1,8 @@
 # Security Architecture
 
-Security is a core component of the WarmReach platform, designed to protect user credentials, isolate data, and ensure secure communication.
-
 ## Credential Management (Sealbox)
 
-We utilize a custom encryption mechanism referred to as "Sealbox" to protect sensitive user credentials (e.g., LinkedIn passwords).
+Sealbox encrypts sensitive user credentials (e.g., LinkedIn passwords) using libsodium.
 
 -   **Device-Specific Keys**: Each deployment or developer machine generates a unique X25519 key pair via libsodium.
 -   **Public Key Encryption**: The frontend receives only the public key (`VITE_CRED_SEALBOX_PUBLIC_KEY_B64`). Credentials entered by the user are encrypted in the browser before being sent to the backend.
@@ -19,11 +17,10 @@ We utilize a custom encryption mechanism referred to as "Sealbox" to protect sen
 
 ## Data Isolation
 
--   **DynamoDB Partitioning**: User data is isolated at the database level using partition keys derived from the user's identity. This ensures that users can only access their own data.
--   **S3 Object Security**: Access to S3 objects (screenshots, profiles) is restricted via IAM policies and presigned URLs where appropriate.
+-   **DynamoDB Partitioning**: User data is isolated at the database level using partition keys derived from the user's Cognito `sub`. This ensures that users can only access their own data.
 
 ## Best Practices
 
--   **No Secrets in Frontend**: We strictly adhere to the rule of never storing API keys or secrets in frontend code or `VITE_` environment variables.
+-   **No Secrets in Frontend**: API keys and secrets are never stored in frontend code or `VITE_` environment variables.
 -   **HTTPS/TLS**: All communication between the frontend, API Gateway, and backend services is encrypted in transit using TLS.
 -   **Least Privilege**: IAM roles for Lambda functions are scoped to the minimum necessary permissions.

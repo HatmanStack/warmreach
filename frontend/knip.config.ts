@@ -2,7 +2,6 @@ import type { KnipConfig } from 'knip';
 
 const config: KnipConfig = {
   entry: [
-    'src/main.tsx',
     'src/pages/**/*.tsx',
   ],
   project: [
@@ -19,19 +18,6 @@ const config: KnipConfig = {
     'vite.config.ts',
     'tailwind.config.ts',
     'vitest.config.ts',
-  ],
-  ignoreDependencies: [
-    // Vite plugins configured in vite.config.ts
-    '@vitejs/*',
-    'vite',
-    // TailwindCSS
-    'tailwindcss',
-    'autoprefixer',
-    'postcss',
-    // Testing dependencies
-    'vitest',
-    '@testing-library/*',
-    'jsdom',
   ],
 };
 

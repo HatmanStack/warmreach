@@ -2,25 +2,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { useConnections } from './useConnections';
 import { createWrapper } from '@/test-utils/queryWrapper';
-import type { Connection, PuppeteerApiResponse } from '@/shared/types';
+import type { Connection } from '@/shared/types';
+
+const mockGetConnectionsByStatus = vi.fn();
 
 // Mock the dependencies
 vi.mock('@/shared/services', () => ({
-  puppeteerApiService: {
-    getConnections: vi.fn(),
-    createConnection: vi.fn(),
-    updateConnection: vi.fn(),
+  lambdaApiService: {
+    getConnectionsByStatus: (...args: unknown[]) => mockGetConnectionsByStatus(...args),
+    updateConnectionStatus: vi.fn(),
   },
+  websocketService: { onMessage: vi.fn(() => vi.fn()), onStateChange: vi.fn(() => vi.fn()) },
+  commandService: {},
 }));
 
 vi.mock('@/features/auth', () => ({
   useAuth: vi.fn(() => ({ user: { id: 'test-user' } })),
 }));
 
-import { puppeteerApiService } from '@/shared/services';
 import { useAuth } from '@/features/auth';
 
-const mockGetConnections = puppeteerApiService.getConnections as ReturnType<typeof vi.fn>;
 const mockUseAuth = useAuth as ReturnType<typeof vi.fn>;
 
 // Test fixtures
@@ -52,11 +53,7 @@ describe('useConnections', () => {
 
   describe('fetching connections', () => {
     it('should return typed Connection[] when API returns valid data', async () => {
-      const mockResponse: PuppeteerApiResponse<{ connections: Connection[] }> = {
-        success: true,
-        data: { connections: [validConnection, validConnection2] },
-      };
-      mockGetConnections.mockResolvedValue(mockResponse);
+      mockGetConnectionsByStatus.mockResolvedValue([validConnection, validConnection2]);
 
       const { result } = renderHook(() => useConnections(), {
         wrapper: createWrapper(),
@@ -74,11 +71,7 @@ describe('useConnections', () => {
     });
 
     it('should handle empty response', async () => {
-      const mockResponse: PuppeteerApiResponse<{ connections: Connection[] }> = {
-        success: true,
-        data: { connections: [] },
-      };
-      mockGetConnections.mockResolvedValue(mockResponse);
+      mockGetConnectionsByStatus.mockResolvedValue([]);
 
       const { result } = renderHook(() => useConnections(), {
         wrapper: createWrapper(),
@@ -93,11 +86,7 @@ describe('useConnections', () => {
     });
 
     it('should set error state on API failure', async () => {
-      const mockResponse: PuppeteerApiResponse<{ connections: Connection[] }> = {
-        success: false,
-        error: 'Failed to fetch connections',
-      };
-      mockGetConnections.mockResolvedValue(mockResponse);
+      mockGetConnectionsByStatus.mockRejectedValue(new Error('Failed to fetch connections'));
 
       const { result } = renderHook(() => useConnections(), {
         wrapper: createWrapper(),
@@ -112,7 +101,7 @@ describe('useConnections', () => {
     });
 
     it('should handle network errors', async () => {
-      mockGetConnections.mockRejectedValue(new Error('Network error'));
+      mockGetConnectionsByStatus.mockRejectedValue(new Error('Network error'));
 
       const { result } = renderHook(() => useConnections(), {
         wrapper: createWrapper(),
@@ -126,26 +115,8 @@ describe('useConnections', () => {
       expect(result.current.error).toBe('Network error');
     });
 
-    it('should not fetch when user is not authenticated', async () => {
-      mockUseAuth.mockReturnValue({ user: null });
-
-      const { result } = renderHook(() => useConnections(), {
-        wrapper: createWrapper(),
-      });
-
-      // Wait a tick to ensure no fetch was initiated
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      expect(mockGetConnections).not.toHaveBeenCalled();
-      expect(result.current.connections).toEqual([]);
-    });
-
-    it('should pass filters to API call', async () => {
-      const mockResponse: PuppeteerApiResponse<{ connections: Connection[] }> = {
-        success: true,
-        data: { connections: [validConnection] },
-      };
-      mockGetConnections.mockResolvedValue(mockResponse);
+    it('should pass status filter to API call', async () => {
+      mockGetConnectionsByStatus.mockResolvedValue([validConnection]);
 
       const filters = { status: 'ally', limit: 10 };
       renderHook(() => useConnections(filters), {
@@ -153,22 +124,15 @@ describe('useConnections', () => {
       });
 
       await waitFor(() => {
-        expect(mockGetConnections).toHaveBeenCalledWith(filters);
+        expect(mockGetConnectionsByStatus).toHaveBeenCalledWith('ally');
       });
     });
   });
 
   describe('conversion_likelihood enum handling', () => {
     it('should correctly handle high conversion likelihood', async () => {
-      const connectionWithHighLikelihood = {
-        ...validConnection,
-        conversion_likelihood: 'high' as const,
-      };
-      const mockResponse: PuppeteerApiResponse<{ connections: Connection[] }> = {
-        success: true,
-        data: { connections: [connectionWithHighLikelihood] },
-      };
-      mockGetConnections.mockResolvedValue(mockResponse);
+      const conn = { ...validConnection, conversion_likelihood: 'high' as const };
+      mockGetConnectionsByStatus.mockResolvedValue([conn]);
 
       const { result } = renderHook(() => useConnections(), {
         wrapper: createWrapper(),
@@ -182,15 +146,8 @@ describe('useConnections', () => {
     });
 
     it('should correctly handle medium conversion likelihood', async () => {
-      const connectionWithMediumLikelihood = {
-        ...validConnection,
-        conversion_likelihood: 'medium' as const,
-      };
-      const mockResponse: PuppeteerApiResponse<{ connections: Connection[] }> = {
-        success: true,
-        data: { connections: [connectionWithMediumLikelihood] },
-      };
-      mockGetConnections.mockResolvedValue(mockResponse);
+      const conn = { ...validConnection, conversion_likelihood: 'medium' as const };
+      mockGetConnectionsByStatus.mockResolvedValue([conn]);
 
       const { result } = renderHook(() => useConnections(), {
         wrapper: createWrapper(),
@@ -204,15 +161,8 @@ describe('useConnections', () => {
     });
 
     it('should correctly handle low conversion likelihood', async () => {
-      const connectionWithLowLikelihood = {
-        ...validConnection,
-        conversion_likelihood: 'low' as const,
-      };
-      const mockResponse: PuppeteerApiResponse<{ connections: Connection[] }> = {
-        success: true,
-        data: { connections: [connectionWithLowLikelihood] },
-      };
-      mockGetConnections.mockResolvedValue(mockResponse);
+      const conn = { ...validConnection, conversion_likelihood: 'low' as const };
+      mockGetConnectionsByStatus.mockResolvedValue([conn]);
 
       const { result } = renderHook(() => useConnections(), {
         wrapper: createWrapper(),
@@ -226,13 +176,9 @@ describe('useConnections', () => {
     });
 
     it('should handle connections without conversion_likelihood', async () => {
-      const connectionWithoutLikelihood = { ...validConnection };
-      delete (connectionWithoutLikelihood as Partial<Connection>).conversion_likelihood;
-      const mockResponse: PuppeteerApiResponse<{ connections: Connection[] }> = {
-        success: true,
-        data: { connections: [connectionWithoutLikelihood] },
-      };
-      mockGetConnections.mockResolvedValue(mockResponse);
+      const conn = { ...validConnection };
+      delete (conn as Partial<Connection>).conversion_likelihood;
+      mockGetConnectionsByStatus.mockResolvedValue([conn]);
 
       const { result } = renderHook(() => useConnections(), {
         wrapper: createWrapper(),

@@ -216,6 +216,234 @@ Resources:
               issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
               audience:
                 - !Ref UserPoolClient
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 5
+
+  # ==========================================================================
+  # WebSocket API for real-time client-backend communication
+  # ==========================================================================
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub 'warmreach-websocket-${Environment}'
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: $request.body.action
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+
+  # IAM role for Lambdas to call @connections management API
+  WebSocketManageConnectionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'warmreach-ws-manage-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ManageConnections
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - execute-api:ManageConnections
+                Resource: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/${Environment}/*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ProfilesTable.Arn
+                  - !Sub '${ProfilesTable.Arn}/index/*'
+
+  # --- WebSocket Connect ---
+  WebSocketConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'warmreach-ws-connect-${Environment}'
+      CodeUri: lambdas/websocket-connect/
+      Handler: lambda_function.lambda_handler
+      Timeout: 10
+      Role: !GetAtt WebSocketManageConnectionsRole.Arn
+      Layers:
+        - !Ref SharedPythonLayer
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref ProfilesTable
+          LOG_LEVEL: INFO
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          COGNITO_REGION: !Ref AWS::Region
+          WEBSOCKET_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+
+  WebSocketConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WebSocketConnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*/$connect'
+
+  WebSocketConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketConnectFunction.Arn}/invocations'
+
+  WebSocketConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${WebSocketConnectIntegration}'
+
+  # --- WebSocket Disconnect ---
+  WebSocketDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'warmreach-ws-disconnect-${Environment}'
+      CodeUri: lambdas/websocket-disconnect/
+      Handler: lambda_function.lambda_handler
+      Timeout: 10
+      Role: !GetAtt WebSocketManageConnectionsRole.Arn
+      Layers:
+        - !Ref SharedPythonLayer
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref ProfilesTable
+          LOG_LEVEL: INFO
+
+  WebSocketDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WebSocketDisconnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*/$disconnect'
+
+  WebSocketDisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketDisconnectFunction.Arn}/invocations'
+
+  WebSocketDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      Target: !Sub 'integrations/${WebSocketDisconnectIntegration}'
+
+  # --- WebSocket Default ---
+  WebSocketDefaultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'warmreach-ws-default-${Environment}'
+      CodeUri: lambdas/websocket-default/
+      Handler: lambda_function.lambda_handler
+      Timeout: 29
+      Role: !GetAtt WebSocketManageConnectionsRole.Arn
+      Layers:
+        - !Ref SharedPythonLayer
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref ProfilesTable
+          LOG_LEVEL: INFO
+          WEBSOCKET_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+
+  WebSocketDefaultPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WebSocketDefaultFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*/$default'
+
+  WebSocketDefaultIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketDefaultFunction.Arn}/invocations'
+
+  WebSocketDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $default
+      Target: !Sub 'integrations/${WebSocketDefaultIntegration}'
+
+  # ==========================================================================
+  # Command Dispatch (HTTP API routes for command lifecycle)
+  # ==========================================================================
+  CommandDispatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'warmreach-command-dispatch-${Environment}'
+      CodeUri: lambdas/command-dispatch/
+      Handler: lambda_function.lambda_handler
+      Timeout: 10
+      Role: !GetAtt WebSocketManageConnectionsRole.Arn
+      Layers:
+        - !Ref SharedPythonLayer
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref ProfilesTable
+          LOG_LEVEL: INFO
+          WEBSOCKET_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+          ALLOWED_ORIGINS: !If
+            - IncludeDevOriginsCondition
+            - !Sub 'http://localhost:5173,http://localhost:3000${ProductionOrigins}'
+            - !Ref ProductionOrigins
+      Events:
+        CreateCommand:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /commands
+            Method: POST
+        GetCommand:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /commands/{commandId}
+            Method: GET
+        CommandsOptions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /commands
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+        CommandIdOptions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /commands/{commandId}
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
 
   EdgeProcessingFunction:
     Type: AWS::Serverless::Function
@@ -373,6 +601,9 @@ Outputs:
   DynamoDBTableName:
     Description: DynamoDB table name
     Value: !Ref ProfilesTable
+  WebSocketApiUrl:
+    Description: WebSocket API endpoint URL
+    Value: !Sub 'wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
   # RAGStack Outputs (only available when DeployRAGStack=true)
   RAGStackGraphQLEndpoint:
     Condition: DeployRAGStackCondition

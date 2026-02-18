@@ -510,27 +510,6 @@ export interface ApiResponse<T = unknown> {
 }
 
 /**
- * API response wrapper for puppeteer service operations
- *
- * @interface PuppeteerApiResponse
- * @template T The type of the response data
- * @description Standard response format from the puppeteer backend service.
- */
-export interface PuppeteerApiResponse<T = unknown> {
-  /** Whether the operation was successful */
-  success: boolean;
-
-  /** Response data payload */
-  data?: T;
-
-  /** Error message if operation failed */
-  error?: string;
-
-  /** Additional message information */
-  message?: string;
-}
-
-/**
  * Search response from LinkedIn search operations
  *
  * @interface SearchResponse

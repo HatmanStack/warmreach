@@ -6,21 +6,23 @@
   "description": "WarmReach - Monorepo",
   "scripts": {
     "dev": "cd frontend && npm run dev",
-    "dev:puppeteer": "cd puppeteer && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "electron:dev": "cd client && npm run electron:dev",
+    "electron:build": "cd client && npm run electron:build",
     "build": "cd frontend && npm run build",
-    "test": "npm run test:frontend && npm run test:puppeteer && npm run test:backend",
+    "test": "npm run test:frontend && npm run test:client && npm run test:backend",
     "test:frontend": "cd frontend && npm run test",
-    "test:puppeteer": "cd puppeteer && npm run test",
+    "test:client": "cd client && npm run test",
     "test:backend": "cd tests/backend && . .venv/bin/activate && python -m pytest unit/ -v --tb=short",
     "typecheck:frontend": "cd frontend && npx tsc --noEmit",
-    "typecheck:puppeteer": "cd puppeteer && npx tsc --noEmit",
-    "lint": "npm run lint:frontend && npm run lint:puppeteer && npm run lint:backend",
+    "typecheck:client": "cd client && npx tsc --noEmit",
+    "lint": "npm run lint:frontend && npm run lint:client && npm run lint:backend",
     "lint:frontend": "cd frontend && npm run lint",
-    "lint:puppeteer": "cd puppeteer && npm run lint",
+    "lint:client": "cd client && npm run lint",
     "lint:backend": "cd backend && uvx ruff check lambdas --exclude .aws-sam && uvx ruff format --check lambdas --exclude .aws-sam",
-    "format": "npx prettier --write 'frontend/src/**/*.{ts,tsx}' 'puppeteer/src/**/*.{js,ts}' 'mock-linkedin/**/*.js'",
-    "format:check": "npx prettier --check 'frontend/src/**/*.{ts,tsx}' 'puppeteer/src/**/*.{js,ts}' 'mock-linkedin/**/*.js'",
-    "check": "npm run format:check && npm run lint && npm run typecheck:frontend && npm run typecheck:puppeteer && npm run test",
+    "format": "npx prettier --write 'frontend/src/**/*.{ts,tsx}' 'client/src/**/*.{js,ts}' 'mock-linkedin/**/*.js'",
+    "format:check": "npx prettier --check 'frontend/src/**/*.{ts,tsx}' 'client/src/**/*.{js,ts}' 'mock-linkedin/**/*.js'",
+    "check": "npm run format:check && npm run lint && npm run typecheck:frontend && npm run typecheck:client && npm run test",
     "benchmark": "node scripts/benchmarks/benchmark-performance.js",
     "cleanup": "bash scripts/cleanup/code-cleanup.sh",
     "cleanup:audit": "bash scripts/cleanup/code-cleanup.sh audit",
@@ -32,14 +34,17 @@
   },
   "author": "HatmanStack",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "lint-staged": {
     "frontend/src/**/*.{ts,tsx}": [
       "prettier --write",
       "eslint --config frontend/eslint.config.js --max-warnings 0"
     ],
-    "puppeteer/src/**/*.{js,ts}": [
+    "client/src/**/*.{js,ts}": [
       "prettier --write",
-      "eslint --config puppeteer/eslint.config.js --max-warnings 0"
+      "eslint --config client/eslint.config.js --max-warnings 0"
     ],
     "backend/lambdas/**/*.py": [
       "uvx ruff check --fix",

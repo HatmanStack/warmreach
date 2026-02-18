@@ -7,9 +7,9 @@ This guide provides instructions for setting up your development environment and
 -   **Node.js**: v24 LTS (managed via nvm)
 -   **Python**: 3.13+ (for backend Lambdas)
 -   **Docker**: For docker-compose local development and LocalStack
--   **Chrome/Chromium**: For puppeteer automation
+-   **Chrome/Chromium**: For Puppeteer automation
 -   **jq**: For JSON processing in scripts (optional)
--   **libsodium-dev**: For Sealbox encryption in puppeteer
+-   **libsodium-dev**: For Sealbox encryption in client
 -   **AWS CLI**: Configured with appropriate credentials (for deployment)
 -   **AWS SAM CLI**: For Lambda deployment
 -   **OpenAI API Key**: For content generation features
@@ -34,7 +34,7 @@ If you prefer to set up manually:
     ```bash
     npm install
     cd frontend && npm install && cd ..
-    cd puppeteer && npm install && cd ..
+    cd client && npm install && cd ..
     cd mock-linkedin && npm install && cd ..
     ```
 
@@ -43,7 +43,7 @@ If you prefer to set up manually:
     cd tests/backend
     python -m venv .venv
     source .venv/bin/activate
-    pip install -r requirements-test.txt
+    uv pip install -r requirements-test.lock --system
     cd ../..
     ```
 
@@ -72,7 +72,7 @@ This starts:
 - **LocalStack** (port 4566) — DynamoDB, S3, SQS, Cognito
 - **localstack-init** — Provisions all AWS resources on startup
 - **mock-linkedin** (port 3333) — Simulated LinkedIn pages
-- **puppeteer-backend** (port 3001) — Automation backend
+- **client-backend** (port 3001) — Automation backend
 - **frontend** (port 5173) — Vite dev server
 
 ### LocalStack
@@ -95,7 +95,7 @@ This project supports multiple development modes to facilitate testing without a
 
 ### 1. Mock Mode (Frontend + Mock Server)
 **Best for**: UI development, testing flows without browser automation.
--   **Frontend**: Connects to the local Mock Server or Puppeteer Backend in testing mode.
+-   **Frontend**: Connects to the local Mock Server or Client Backend in testing mode.
 -   **Mock Server**: Simulates LinkedIn pages and API responses.
 
 ```bash
@@ -106,9 +106,9 @@ cd mock-linkedin && npm start
 npm run dev
 ```
 
-### 2. Hybrid Mode (Frontend + Puppeteer + Mock Server)
+### 2. Hybrid Mode (Frontend + Client + Mock Server)
 **Best for**: Testing the automation logic (Puppeteer) against a stable, offline target.
--   **Puppeteer Backend**: Configured to scrape `localhost:3333` instead of LinkedIn.
+-   **Client Backend**: Configured to scrape `localhost:3333` instead of LinkedIn.
 -   **Mock Server**: Serves the HTML pages.
 
 **Configuration**:
@@ -123,14 +123,14 @@ LINKEDIN_BASE_URL=http://localhost:3333
 # Terminal 1: Start Mock Server
 cd mock-linkedin && npm start
 
-# Terminal 2: Start Puppeteer Backend
-npm run dev:puppeteer
+# Terminal 2: Start Client Backend
+npm run dev:client
 
 # Terminal 3: Start Frontend
 npm run dev
 ```
 
-### 3. Full Development Mode (Frontend + Puppeteer + Real LinkedIn)
+### 3. Full Development Mode (Frontend + Client + Real LinkedIn)
 **Best for**: Final verification and real-world testing.
 **Warning**: Use with caution to avoid account flagging. Respect rate limits.
 
@@ -143,8 +143,8 @@ LINKEDIN_TESTING_MODE=false
 
 **Run**:
 ```bash
-# Terminal 1: Start Puppeteer Backend
-npm run dev:puppeteer
+# Terminal 1: Start Client Backend
+npm run dev:client
 
 # Terminal 2: Start Frontend
 npm run dev
@@ -165,9 +165,17 @@ source .venv/bin/activate
 python -m pytest unit/ -v --tb=short
 ```
 
+### Client Tests
+```bash
+npm run test:client
+```
+
 ### End-to-End Tests
 
-E2E tests are located in `tests/e2e/`. Currently this directory is a placeholder for future E2E test implementation.
+E2E tests use Playwright and are located in `tests/e2e/`.
+```bash
+npm run test:e2e
+```
 
 ## Linting and Code Quality
 
@@ -179,14 +187,14 @@ npm run lint
 Or run them individually:
 ```bash
 npm run lint:frontend
-npm run lint:puppeteer
+npm run lint:client
 npm run lint:backend
 ```
 
 ## Project Structure
 
 -   `frontend/`: React/Vite frontend application
--   `puppeteer/`: Node.js/Express backend for browser automation
+-   `client/`: Electron tray app + Node.js/Express backend for browser automation
 -   `backend/`: AWS SAM infrastructure and Lambda functions
 -   `tests/`: Unit, integration, and E2E tests
 -   `docs/`: Project documentation

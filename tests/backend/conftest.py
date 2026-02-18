@@ -68,7 +68,7 @@ def load_lambda_module(lambda_name: str):
 
     # Clear any cached module imports that might conflict
     for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith('services') or mod_name.startswith('errors') or mod_name.startswith('models'):
+        if mod_name.startswith(('services', 'errors', 'models', 'shared_services')):
             del sys.modules[mod_name]
 
     # Build clean path with shared FIRST, then lambda-specific

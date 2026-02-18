@@ -1,58 +1,100 @@
 # Architecture
 
-This project follows a microservices-oriented architecture with a clear separation of concerns between the frontend, backend, and cloud infrastructure.
+WarmReach is a monorepo with three components: a React frontend, an Electron/Puppeteer client, and an AWS serverless backend.
 
-## Frontend
+> **Note:** Billing and tier management are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
 
--   **Framework**: React 18
--   **Build Tool**: Vite
--   **Language**: TypeScript
--   **Styling**: Tailwind CSS
--   **State Management**: (Implicitly managed via React hooks and context, specific libraries not detailed in README)
--   **Purpose**: Provides a user interface for managing LinkedIn automation tasks, configuring settings, and viewing results. It communicates with the backend via API Gateway.
+## Components
 
-## Backend
+### Frontend (`frontend/`)
 
--   **Framework**: Node.js with Express.js
--   **Automation Engine**: Puppeteer
--   **Language**: JavaScript/TypeScript
--   **Purpose**: Orchestrates LinkedIn interactions using Puppeteer. It handles browser automation, session management, content generation (via OpenAI), and security features like credential encryption. It also acts as a proxy to the cloud backend API.
--   **Key Components**:
-    -   **Puppeteer Service**: Manages browser instances, navigates LinkedIn, performs actions.
-    -   **Content Generation Service**: Integrates with OpenAI API for personalized messages and posts.
-    -   **Credential Management**: Uses Sealbox encryption for secure storage and retrieval of sensitive credentials.
-    -   **Session Management**: Tracks and restores LinkedIn sessions to maintain automation continuity.
-    -   **API Proxy**: Routes requests to AWS Lambda functions via API Gateway.
+- **Stack**: React 18, TypeScript, Vite, Tailwind CSS
+- **State**: React Query (`@tanstack/react-query`) for server state, React context for UI state
+- **UI**: Radix UI primitives with Tailwind CSS
+- **Organization**: Feature-based (`features/auth/`, `features/connections/`, `features/messages/`, `features/posts/`, etc.) with barrel exports
+- **Communication**: HTTP to API Gateway (Cognito JWT auth), WebSocket for real-time command dispatch
 
-## Cloud Infrastructure (AWS)
+### Client (`client/`)
 
--   **Compute**: AWS Lambda functions for backend processing and API endpoints.
--   **API Gateway**: Manages incoming API requests from the frontend and routes them to the appropriate Lambda functions.
--   **Database**: AWS DynamoDB for storing profile data, automation queues, and session information.
--   **RAGStack**: A dedicated infrastructure stack (deployed via `deploy-ragstack.js`) that handles vector embeddings and semantic search using AWS Bedrock.
--   **Storage**: AWS S3 for storing profile text data and artifacts.
--   **Authentication**: AWS Cognito for user authentication and authorization.
--   **Deployment**: AWS SAM (Serverless Application Model) for defining and deploying serverless infrastructure.
+- **Stack**: Electron tray app, Node.js/Express, Puppeteer
+- **Organization**: Domain-driven (`src/domains/` — automation, connections, linkedin, messaging, profile, search, session, storage, workflow)
+- **Transport**: WebSocket connection to backend for receiving commands from frontend
+- **Automation**: Queue-based LinkedIn interaction processing with session preservation and checkpoint-based heal/restore recovery
+- **Security**: Sealbox encryption (libsodium X25519) for LinkedIn credentials — decrypted just-in-time on the client, never sent to the cloud
 
-## AI Services
+### AWS Backend (`backend/`)
 
--   **RAGStack & AWS Bedrock**: The core engine for text ingestion and semantic search. It uses Amazon Nova multimodal embeddings to vectorize profile data, enabling advanced search capabilities.
--   **OpenAI API**: Used for generating personalized messages and post content.
+- **Stack**: AWS SAM, Python 3.13 Lambdas, DynamoDB, API Gateway V2, Cognito
+- **Infrastructure** (defined in `template.yaml`):
+  - **DynamoDB**: Single-table design (PK/SK + GSI1, TTL enabled)
+  - **HTTP API**: API Gateway V2 with Cognito JWT authorizer
+  - **WebSocket API**: API Gateway V2 for real-time command dispatch to Electron agent
+  - **Cognito**: User pool with email-based auth
+
+#### Lambda Functions
+
+| Function | Route | Purpose |
+|----------|-------|---------|
+| `command-dispatch` | `POST/GET /commands` | Command creation and dispatch to Electron agent via WebSocket |
+| `dynamodb-api` | `GET/POST /dynamodb`, `/profiles` | User settings, profile CRUD |
+| `edge-processing` | `POST /edges`, `/ragstack` | Connection edge management, RAGStack search/ingest |
+| `llm` | `POST /llm` | OpenAI/Bedrock AI operations (quota-metered) |
+| `websocket-*` | WebSocket `$connect/$disconnect/$default` | WebSocket lifecycle and message routing |
+
+#### Shared Services (`lambdas/shared/python/`)
+
+| Module | Purpose |
+|--------|---------|
+| `base_service.py` | Base class for service layers |
+| `websocket_service.py` | WebSocket @connections API helper |
+| `ragstack_client.py` | RAGStack GraphQL client with circuit breaker + retry |
+| `circuit_breaker.py` | Circuit breaker pattern |
+| `ingestion_service.py` | Profile data ingestion |
+| `observability.py` | Correlation context and structured JSON logging |
+
+### RAGStack (optional nested stack)
+
+[RAGStack-Lambda](https://github.com/HatmanStack/RAGStack-Lambda) provides vector embeddings and semantic search via AWS Bedrock Knowledge Base. Conditionally deployed via `DeployRAGStack` parameter, or connected externally via `RAGSTACK_GRAPHQL_ENDPOINT` and `RAGSTACK_API_KEY`.
 
 ## Data Flow
 
-1.  **User Interaction**: The Frontend UI allows users to configure tasks, view progress, and manage settings.
-2.  **Backend Request**: Frontend sends requests to API Gateway.
-3.  **API Gateway**: Routes requests to appropriate Lambda functions.
-4.  **Lambda Functions**:
-    *   **Edge Processing**: Handles data ingestion directly into RAGStack (`/ragstack` endpoint).
-    *   **DynamoDB API**: Manages CRUD operations for profile metadata.
-    *   **LLM Service**: Orchestrates content generation.
-5.  **Puppeteer Backend**:
-    *   Orchestrates LinkedIn interactions.
-    *   Extracts text and data from LinkedIn profiles.
-    *   Sends processed text/markdown to the **Edge Processing Lambda** for ingestion into RAGStack.
-    *   (Legacy) May optionally capture screenshots for debugging, but primary data flow is text-based.
-6.  **LinkedIn**: The target platform for automated interactions.
+```
+Frontend (React)
+  +-- HTTP API -> Lambda (Cognito JWT)
+  |     +-- /commands -> command-dispatch -> WebSocket -> Electron agent
+  |     +-- /dynamodb, /profiles -> dynamodb-api -> DynamoDB
+  |     +-- /edges, /ragstack -> edge-processing -> DynamoDB + RAGStack
+  |     +-- /llm -> llm -> OpenAI API
+  +-- WebSocket API -> Lambda
+        +-- $connect -> JWT validation, connection tracking
+        +-- $default -> message routing to Electron agent
+        +-- $disconnect -> cleanup
 
-This layered approach ensures scalability, maintainability, and security for the LinkedIn automation platform.
+Electron Client (user's machine)
+  +-- WebSocket <- receives commands from backend
+  +-- Puppeteer -> LinkedIn browser automation
+  +-- HTTP -> edge-processing Lambda (profile ingestion)
+  +-- Credentials stored locally only (Sealbox encrypted)
+```
+
+## DynamoDB Schema (single table)
+
+| Entity | PK | SK | Purpose |
+|--------|----|----|---------|
+| User settings | `USER#{sub}` | `SETTINGS` | Preferences, LinkedIn config |
+| Usage counters | `USER#{sub}` | `USAGE#daily` / `USAGE#monthly` | Quota metering |
+| Connection edge | `USER#{sub}` | `PROFILE#{id_b64}` | User-to-profile relationship |
+| Profile edge | `PROFILE#{id_b64}` | `USER#{sub}` | Reverse lookup |
+| WebSocket conn | `WSCONN#{connId}` | `CONN` | Active connection tracking |
+| Command | `COMMAND#{cmdId}` | `CMD` | Command state machine |
+
+## Authentication
+
+- **Cloud API**: Cognito JWT in `Authorization: Bearer <token>` header
+- **WebSocket**: JWT in query string at `$connect` time
+- **Client <-> LinkedIn**: Sealbox-encrypted credentials (X25519 key exchange, libsodium)
+
+## AI Services
+
+- **OpenAI API**: Post idea generation (`gpt-4.1`), deep research (`o4-mini-deep-research`), synthesis (`gpt-5.2`)
+- **AWS Bedrock**: RAGStack vector embeddings (Nova multimodal)

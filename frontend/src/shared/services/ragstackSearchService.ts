@@ -239,5 +239,3 @@ const ragstackSearchService = new RAGStackSearchService();
 export async function searchProfiles(query: string, maxResults = 100): Promise<SearchResponse> {
   return ragstackSearchService.search(query, maxResults);
 }
-
-export default ragstackSearchService;

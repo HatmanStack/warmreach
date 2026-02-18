@@ -1,17 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockAuthorize, mockCancel, mockCheckStatus } = vi.hoisted(() => ({
-  mockAuthorize: vi.fn(),
-  mockCancel: vi.fn(),
-  mockCheckStatus: vi.fn(),
-}));
+const mockSend = vi.fn();
+const mockOnMessage = vi.fn();
 
 vi.mock('@/shared/services', () => ({
-  puppeteerApiService: {
-    authorizeHealAndRestore: mockAuthorize,
-    cancelHealAndRestore: mockCancel,
-    checkHealAndRestoreStatus: mockCheckStatus,
+  websocketService: {
+    send: (...args: unknown[]) => mockSend(...args),
+    onMessage: (...args: unknown[]) => mockOnMessage(...args),
   },
+  lambdaApiService: {},
+  commandService: {},
 }));
 
 vi.mock('@/shared/utils/logger', () => ({
@@ -23,7 +21,6 @@ vi.mock('@/shared/utils/logger', () => ({
   }),
 }));
 
-// Import the class directly to create fresh instances per test
 import { healAndRestoreService } from './healAndRestoreService';
 
 describe('HealAndRestoreService', () => {
@@ -53,17 +50,23 @@ describe('HealAndRestoreService', () => {
   });
 
   describe('authorizeHealAndRestore', () => {
-    it('should call API and return true on success', async () => {
-      mockAuthorize.mockResolvedValue({ success: true });
+    it('should send via WebSocket and return result', async () => {
+      mockSend.mockReturnValue(true);
 
       const result = await healAndRestoreService.authorizeHealAndRestore('session-1');
 
       expect(result).toBe(true);
-      expect(mockAuthorize).toHaveBeenCalledWith('session-1', false);
+      expect(mockSend).toHaveBeenCalledWith({
+        action: 'heal_authorize',
+        sessionId: 'session-1',
+        autoApprove: false,
+      });
     });
 
-    it('should return false on API error', async () => {
-      mockAuthorize.mockRejectedValue(new Error('Network error'));
+    it('should return false on error', async () => {
+      mockSend.mockImplementation(() => {
+        throw new Error('Not connected');
+      });
 
       const result = await healAndRestoreService.authorizeHealAndRestore('session-1');
 
@@ -72,41 +75,45 @@ describe('HealAndRestoreService', () => {
   });
 
   describe('cancelHealAndRestore', () => {
-    it('should call API and add to ignored set', async () => {
-      mockCancel.mockResolvedValue({ success: true });
+    it('should send via WebSocket and add to ignored set', async () => {
+      mockSend.mockReturnValue(true);
 
       const result = await healAndRestoreService.cancelHealAndRestore('session-2');
 
       expect(result).toBe(true);
-      expect(mockCancel).toHaveBeenCalledWith('session-2');
+      expect(mockSend).toHaveBeenCalledWith({
+        action: 'heal_cancel',
+        sessionId: 'session-2',
+      });
     });
 
-    it('should still ignore session on API failure', async () => {
-      mockCancel.mockRejectedValue(new Error('Server error'));
+    it('should still ignore session on error', async () => {
+      mockSend.mockImplementation(() => {
+        throw new Error('Failed');
+      });
 
       const result = await healAndRestoreService.cancelHealAndRestore('session-3');
 
       expect(result).toBe(false);
-      // Session should still be locally ignored (prevents re-trigger)
     });
   });
 
   describe('listener subscription', () => {
-    it('should add and notify listeners', async () => {
+    it('should add and notify listeners via WebSocket message', () => {
       const listener = vi.fn();
       healAndRestoreService.addListener(listener);
 
-      // Simulate polling detecting a pending session
-      mockCheckStatus.mockResolvedValue({
-        success: true,
-        data: { pendingSession: { sessionId: 'sess-1' } },
+      // Capture the WebSocket message handler
+      let messageHandler: (msg: Record<string, unknown>) => void;
+      mockOnMessage.mockImplementation((handler: (msg: Record<string, unknown>) => void) => {
+        messageHandler = handler;
+        return vi.fn(); // unsubscribe
       });
 
-      vi.useFakeTimers();
       healAndRestoreService.startListening();
-      // Let the first poll execute
-      await vi.advanceTimersByTimeAsync(0);
-      vi.useRealTimers();
+
+      // Simulate a heal_request message
+      messageHandler!({ action: 'heal_request', sessionId: 'sess-1' });
 
       expect(listener).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -123,20 +130,21 @@ describe('HealAndRestoreService', () => {
       const listener = vi.fn();
       healAndRestoreService.addListener(listener);
 
-      // Cancel a session first to add to ignored set
-      mockCancel.mockResolvedValue({ success: true });
+      // Cancel a session to add to ignored set
+      mockSend.mockReturnValue(true);
       await healAndRestoreService.cancelHealAndRestore('sess-ignored');
 
-      // Now poll returns the same session
-      mockCheckStatus.mockResolvedValue({
-        success: true,
-        data: { pendingSession: { sessionId: 'sess-ignored' } },
+      // Capture the WebSocket message handler
+      let messageHandler: (msg: Record<string, unknown>) => void;
+      mockOnMessage.mockImplementation((handler: (msg: Record<string, unknown>) => void) => {
+        messageHandler = handler;
+        return vi.fn();
       });
 
-      vi.useFakeTimers();
       healAndRestoreService.startListening();
-      await vi.advanceTimersByTimeAsync(0);
-      vi.useRealTimers();
+
+      // Simulate a heal_request for the ignored session
+      messageHandler!({ action: 'heal_request', sessionId: 'sess-ignored' });
 
       expect(listener).not.toHaveBeenCalled();
 
@@ -152,26 +160,23 @@ describe('HealAndRestoreService', () => {
       healAndRestoreService.addListener(listener2);
       healAndRestoreService.removeListener(listener1);
 
-      // Only listener2 should remain - verified by the service not throwing
-      // when listener1 is no longer called
+      // Only listener2 should remain
     });
   });
 
   describe('startListening / stopListening', () => {
-    it('should start polling on startListening', () => {
-      mockCheckStatus.mockResolvedValue({ success: true, data: {} });
-
-      vi.useFakeTimers();
+    it('should start listening via WebSocket on startListening', () => {
+      mockOnMessage.mockReturnValue(vi.fn());
       healAndRestoreService.startListening();
-      vi.useRealTimers();
+
+      expect(mockOnMessage).toHaveBeenCalled();
 
       healAndRestoreService.stopListening();
-      // No assertion needed - just verifying no errors
     });
 
-    it('should stop polling on stopListening', () => {
+    it('should stop listening on stopListening', () => {
       healAndRestoreService.stopListening();
-      // Service should be in stopped state - no errors
+      // No errors
     });
   });
 });

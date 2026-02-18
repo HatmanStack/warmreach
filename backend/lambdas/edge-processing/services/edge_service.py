@@ -54,16 +54,6 @@ class EdgeService(BaseService):
         self.ragstack_client = ragstack_client
         self.ingestion_service = ingestion_service
 
-    def health_check(self) -> dict[str, Any]:
-        """Check service health by verifying table access."""
-        try:
-            # reload() fetches current table metadata from DynamoDB
-            self.table.reload()
-            status = self.table.table_status
-            return {'healthy': status == 'ACTIVE', 'details': {'table_status': status}}
-        except Exception as e:
-            return {'healthy': False, 'details': {'error': str(e)}}
-
     def upsert_status(
         self, user_id: str, profile_id: str, status: str, added_at: str | None = None, messages: list | None = None
     ) -> dict[str, Any]:

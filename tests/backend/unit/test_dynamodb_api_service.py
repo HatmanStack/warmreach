@@ -20,20 +20,6 @@ class TestDynamoDBApiServiceInit:
         service = DynamoDBApiService(table=mock_table)
         assert service.table == mock_table
 
-    def test_health_check_returns_healthy(self):
-        mock_table = MagicMock()
-        mock_table.table_status = 'ACTIVE'
-        service = DynamoDBApiService(table=mock_table)
-        result = service.health_check()
-        assert result['healthy'] is True
-
-    def test_health_check_returns_unhealthy_on_error(self):
-        mock_table = MagicMock()
-        mock_table.reload.side_effect = Exception('Connection error')
-        service = DynamoDBApiService(table=mock_table)
-        result = service.health_check()
-        assert result['healthy'] is False
-
 
 class TestGetUserProfile:
     """Tests for get_user_profile method."""

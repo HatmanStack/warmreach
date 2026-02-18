@@ -77,3 +77,13 @@ class ConfigurationError(ServiceError):
         if config_key:
             details['config_key'] = config_key
         super().__init__(message, 'CONFIGURATION_ERROR', details if details else None)
+
+
+class QuotaExceededError(ServiceError):
+    """Raised when a usage quota has been exceeded."""
+
+    def __init__(self, message: str = 'Quota exceeded', operation: str | None = None):
+        details = {}
+        if operation:
+            details['operation'] = operation
+        super().__init__(message, 'QUOTA_EXCEEDED', details if details else None)

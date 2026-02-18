@@ -1,0 +1,42 @@
+name: Sync Public Repo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout warmreach-pro
+        uses: actions/checkout@v4
+        with:
+          path: warmreach-pro
+
+      - name: Clone warmreach (public)
+        env:
+          DEPLOY_KEY: ${{ secrets.WARMREACH_PUBLIC_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key" \
+            git clone git@github.com:HatmanStack/warmreach.git warmreach
+
+      - name: Run sync
+        env:
+          GIT_SSH_COMMAND: "ssh -i ~/.ssh/deploy_key"
+        run: |
+          cd warmreach
+          git config user.name "WarmReach Sync Bot"
+          git config user.email "sync-bot@warmreach.dev"
+          cd ..
+          warmreach-pro/.sync/sync.sh \
+            --public-repo "$GITHUB_WORKSPACE/warmreach" \
+            --message "sync: update from warmreach-pro@${{ github.sha }}"
+
+      - name: Cleanup deploy key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

@@ -213,16 +213,6 @@ class TestSynthesizeResearch:
         assert 'job_id' in result.get('error', '').lower()
 
 
-class TestHealthCheck:
-    """Tests for health check."""
-
-    def test_health_check_returns_status(self, service):
-        """Should return health status."""
-        result = service.health_check()
-
-        assert 'healthy' in result
-
-
 class TestSanitizePrompt:
     """Tests for _sanitize_prompt input validation."""
 

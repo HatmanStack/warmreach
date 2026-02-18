@@ -41,7 +41,7 @@ bash scripts/setup.sh
 docker compose up
 ```
 
-Frontend at http://localhost:5173, puppeteer backend at http://localhost:3001, mock LinkedIn at http://localhost:3333.
+Frontend at http://localhost:5173, client backend at http://localhost:3001, mock LinkedIn at http://localhost:3333.
 
 ### Option B: Manual Setup
 
@@ -50,7 +50,7 @@ Frontend at http://localhost:5173, puppeteer backend at http://localhost:3001, m
 ```bash
 bash scripts/setup.sh       # Install all dependencies + create .env
 npm run dev                  # Frontend: http://localhost:5173
-npm run dev:puppeteer        # Backend: http://localhost:3001
+npm run dev:client           # Backend: http://localhost:3001
 ```
 
 See [Development Guide](docs/DEVELOPMENT.md) for detailed instructions.
@@ -60,7 +60,7 @@ See [Development Guide](docs/DEVELOPMENT.md) for detailed instructions.
 | Layer | Technologies |
 |-------|--------------|
 | **Frontend** | React 18, TypeScript, Vite, Tailwind CSS |
-| **Backend (Automation)** | Node.js, Express, Puppeteer |
+| **Client (Automation)** | Electron, Node.js, Express, Puppeteer |
 | **Cloud (AWS)** | Lambda, DynamoDB, API Gateway, Cognito, S3 |
 | **AI** | OpenAI GPT models |
 

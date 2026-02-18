@@ -420,21 +420,6 @@ class TestEdgeServiceErrorHandling:
             )
 
 
-class TestEdgeServiceHealthCheck:
-    """Tests for health check."""
-
-    def test_health_check_returns_healthy(self):
-        """Should return healthy status when table is accessible."""
-        mock_table = MagicMock()
-        mock_table.table_status = 'ACTIVE'
-
-        service = EdgeService(table=mock_table)
-
-        result = service.health_check()
-
-        assert result['healthy'] is True
-
-
 class TestEdgeServiceMessageCap:
     """Tests for MAX_MESSAGES_PER_EDGE cap."""
 

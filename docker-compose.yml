@@ -46,9 +46,9 @@ services:
       retries: 10
       start_period: 5s
 
-  puppeteer-backend:
+  client-backend:
     build:
-      context: ./puppeteer
+      context: ./client
       dockerfile: Dockerfile.dev
     ports:
       - "3001:3001"
@@ -79,7 +79,7 @@ services:
     ports:
       - "5173:5173"
     depends_on:
-      puppeteer-backend:
+      client-backend:
         condition: service_healthy
     env_file:
       - .env.docker

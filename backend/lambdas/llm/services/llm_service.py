@@ -55,20 +55,6 @@ class LLMService(BaseService):
             'BEDROCK_MODEL_ID', 'anthropic.claude-3-sonnet-20240229-v1:0'
         )
 
-    def health_check(self) -> dict[str, Any]:
-        """Check service health by verifying clients are configured."""
-        clients_configured = (
-            self.openai_client is not None or self.bedrock_client is not None
-        ) and self.table is not None
-        return {
-            'healthy': clients_configured,
-            'details': {
-                'openai_configured': self.openai_client is not None,
-                'bedrock_configured': self.bedrock_client is not None,
-                'dynamodb_configured': self.table is not None,
-            },
-        }
-
     def generate_ideas(self, user_profile: dict, prompt: str, job_id: str, user_id: str) -> dict[str, Any]:
         """
         Generate LinkedIn content ideas using AI.
