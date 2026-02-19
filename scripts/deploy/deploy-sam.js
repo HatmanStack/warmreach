@@ -668,7 +668,7 @@ async function main() {
     console.log('\nAPI URL:', outputs.ApiUrl);
     console.log('\nNext steps:');
     console.log('1. Start frontend: npm run dev');
-    console.log('2. Start puppeteer backend: npm run dev:puppeteer');
+    console.log('2. Start client backend: npm run dev:client');
   } catch (error) {
     console.error('\n❌ Deployment failed:', error.message);
     process.exit(1);

@@ -35,23 +35,23 @@ analyze_frontend() {
     cd "$REPO_ROOT"
 }
 
-# Analyze puppeteer component with knip
-analyze_puppeteer() {
-    echo "  → Analyzing puppeteer with knip..."
+# Analyze client component with knip
+analyze_client() {
+    echo "  → Analyzing client with knip..."
 
-    local output_file="$REPORT_DIR/knip-puppeteer-$TIMESTAMP.json"
+    local output_file="$REPORT_DIR/knip-client-$TIMESTAMP.json"
 
     if ! check_tool "npx" "npm install -g npm"; then
-        echo "    ⚠ npx not found, skipping puppeteer analysis"
-        PUPPETEER_DEAD_CODE="{}"
+        echo "    ⚠ npx not found, skipping client analysis"
+        CLIENT_DEAD_CODE="{}"
         return 1
     fi
 
-    cd "$REPO_ROOT/puppeteer"
+    cd "$REPO_ROOT/client"
 
     # Run knip with JSON reporter, capture output
     if npx knip --reporter json > "$output_file" 2>/dev/null; then
-        echo "    ✓ No dead code found in puppeteer"
+        echo "    ✓ No dead code found in client"
     else
         # knip exits non-zero when issues found - that's expected
         echo "    ✓ Knip analysis complete (issues found)"
@@ -59,10 +59,10 @@ analyze_puppeteer() {
 
     # Store for report generation
     if [[ -f "$output_file" ]]; then
-        PUPPETEER_DEAD_CODE=$(cat "$output_file")
+        CLIENT_DEAD_CODE=$(cat "$output_file")
         echo "    Report saved: $output_file"
     else
-        PUPPETEER_DEAD_CODE="{}"
+        CLIENT_DEAD_CODE="{}"
     fi
 
     cd "$REPO_ROOT"
@@ -74,7 +74,7 @@ get_js_dead_code() {
     cat <<EOF
 {
     "frontend": $FRONTEND_DEAD_CODE,
-    "puppeteer": $PUPPETEER_DEAD_CODE
+    "client": $CLIENT_DEAD_CODE
 }
 EOF
 }
@@ -105,7 +105,7 @@ scan_js_secrets() {
         return 1
     fi
 
-    # Scan frontend and puppeteer with detect-secrets
+    # Scan frontend and client with detect-secrets
     # Disable Base64HighEntropyString to reduce false positives
 
     # Scan frontend
@@ -117,24 +117,24 @@ scan_js_secrets() {
         --exclude-files '.*\.d\.ts$' \
         2>/dev/null) || true
 
-    # Scan puppeteer
-    local puppeteer_results
-    puppeteer_results=$(uvx detect-secrets scan "$REPO_ROOT/puppeteer/src" \
+    # Scan client
+    local client_results
+    client_results=$(uvx detect-secrets scan "$REPO_ROOT/client/src" \
         --disable-plugin Base64HighEntropyString \
         --exclude-files '.*\.test\.js$' \
         --exclude-files 'node_modules/.*' \
         2>/dev/null) || true
 
     # Combine results
-    local frontend_secrets puppeteer_secrets
+    local frontend_secrets client_secrets
     frontend_secrets=$(echo "$frontend_results" | jq -r '.results // {}' 2>/dev/null || echo "{}")
-    puppeteer_secrets=$(echo "$puppeteer_results" | jq -r '.results // {}' 2>/dev/null || echo "{}")
+    client_secrets=$(echo "$client_results" | jq -r '.results // {}' 2>/dev/null || echo "{}")
 
     # Create combined output
     cat > "$output_file" <<EOF
 {
     "frontend": $frontend_secrets,
-    "puppeteer": $puppeteer_secrets
+    "client": $client_secrets
 }
 EOF
 
@@ -148,10 +148,10 @@ EOF
     # Count findings
     local total_secrets=0
     if command -v jq &> /dev/null; then
-        local frontend_count puppeteer_count
+        local frontend_count client_count
         frontend_count=$(echo "$frontend_secrets" | jq 'keys | length' 2>/dev/null || echo "0")
-        puppeteer_count=$(echo "$puppeteer_secrets" | jq 'keys | length' 2>/dev/null || echo "0")
-        total_secrets=$((frontend_count + puppeteer_count))
+        client_count=$(echo "$client_secrets" | jq 'keys | length' 2>/dev/null || echo "0")
+        total_secrets=$((frontend_count + client_count))
     fi
 
     if [[ $total_secrets -gt 0 ]]; then

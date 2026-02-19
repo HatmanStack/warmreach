@@ -23,7 +23,7 @@ remove_console_logs() {
     local output_file="$REPORT_DIR/sanitize-console-$TIMESTAMP.txt"
 
     # Find all JS/TS files (excluding tests and node_modules)
-    find "$REPO_ROOT/frontend/src" "$REPO_ROOT/puppeteer/src" \
+    find "$REPO_ROOT/frontend/src" "$REPO_ROOT/client/src" \
         -type f \( -name "*.js" -o -name "*.ts" -o -name "*.tsx" \) \
         ! -name "*.test.*" ! -name "*.spec.*" \
         -exec grep -l 'console\.\(log\|warn\|debug\|info\)' {} \; 2>/dev/null > "$output_file" || true
@@ -67,7 +67,7 @@ remove_debugger_statements() {
     local output_file="$REPORT_DIR/sanitize-debugger-$TIMESTAMP.txt"
 
     # Find JS debugger statements
-    find "$REPO_ROOT/frontend/src" "$REPO_ROOT/puppeteer/src" \
+    find "$REPO_ROOT/frontend/src" "$REPO_ROOT/client/src" \
         -type f \( -name "*.js" -o -name "*.ts" -o -name "*.tsx" \) \
         ! -name "*.test.*" ! -name "*.spec.*" \
         -exec grep -l 'debugger' {} \; 2>/dev/null > "$output_file" || true
@@ -93,7 +93,7 @@ find_todo_comments() {
     local output_file="$REPORT_DIR/sanitize-todo-$TIMESTAMP.txt"
 
     # Find TODO/FIXME in JS/TS
-    find "$REPO_ROOT/frontend/src" "$REPO_ROOT/puppeteer/src" \
+    find "$REPO_ROOT/frontend/src" "$REPO_ROOT/client/src" \
         -type f \( -name "*.js" -o -name "*.ts" -o -name "*.tsx" \) \
         -exec grep -l 'TODO\|FIXME\|XXX\|HACK' {} \; 2>/dev/null > "$output_file" || true
 

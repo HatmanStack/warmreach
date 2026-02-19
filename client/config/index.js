@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Load environment variables
-// 1) Service-local .env (puppeteer-backend/.env)
+// 1) Service-local .env (client/.env)
 dotenv.config({ path: path.join(__dirname, '../.env') });
 // 2) Fallback/combined root .env (project/.env) if present
 dotenv.config({ path: path.join(__dirname, '../../.env') });

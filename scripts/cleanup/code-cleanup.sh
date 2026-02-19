@@ -45,7 +45,7 @@ js_cleanup() {
     cd "$REPO_ROOT/frontend"
     npm run lint 2>&1 || echo "ESLint found issues (expected during cleanup)"
 
-    cd "$REPO_ROOT/puppeteer"
+    cd "$REPO_ROOT/client"
     npm run lint 2>&1 || echo "ESLint found issues (expected during cleanup)"
 }
 
@@ -78,7 +78,7 @@ generate_summary() {
     echo ""
     echo "Files checked:"
     find "$REPO_ROOT/frontend/src" -name "*.ts" -o -name "*.tsx" | wc -l | xargs echo "  - TypeScript files:"
-    find "$REPO_ROOT/puppeteer/src" -name "*.js" | wc -l | xargs echo "  - Puppeteer JS files:"
+    find "$REPO_ROOT/client/src" -name "*.js" | wc -l | xargs echo "  - Puppeteer JS files:"
     find "$REPO_ROOT/backend/lambdas" -name "*.py" ! -path "*/.aws-sam/*" | wc -l | xargs echo "  - Python Lambda files:"
     echo ""
     echo "To view reports:"
@@ -93,7 +93,7 @@ run_analysis() {
     echo "=== Analysis Phase ==="
 
     analyze_frontend
-    analyze_puppeteer
+    analyze_client
     analyze_backend
     scan_js_secrets
     scan_py_secrets

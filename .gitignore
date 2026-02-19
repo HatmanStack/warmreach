@@ -4,6 +4,7 @@ node_modules
 # Environment
 .env
 .env.ragstack
+.env.aws-outputs
 *.local
 
 # Build output
@@ -43,6 +44,7 @@ __pycache__/
 # Testing / Coverage
 coverage/
 **/coverage/
+.coverage
 reports/
 
 # AWS / Deployment

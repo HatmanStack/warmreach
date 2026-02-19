@@ -5,7 +5,7 @@
 # Global variables for report data (set by analysis functions)
 # Only initialize if not already set by other modules
 : "${FRONTEND_DEAD_CODE:={}}"
-: "${PUPPETEER_DEAD_CODE:={}}"
+: "${CLIENT_DEAD_CODE:={}}"
 : "${BACKEND_DEAD_CODE:={}}"
 : "${JS_SECRETS:={}}"
 : "${PY_SECRETS:={}}"
@@ -21,7 +21,7 @@ generate_json_report() {
 
     # Count issues from knip reports
     local frontend_files=0 frontend_issues=0
-    local puppeteer_files=0 puppeteer_issues=0
+    local client_files=0 client_issues=0
 
     if [[ -n "$FRONTEND_DEAD_CODE" ]] && [[ "$FRONTEND_DEAD_CODE" != "{}" ]]; then
         if command -v jq &> /dev/null; then
@@ -30,10 +30,10 @@ generate_json_report() {
         fi
     fi
 
-    if [[ -n "$PUPPETEER_DEAD_CODE" ]] && [[ "$PUPPETEER_DEAD_CODE" != "{}" ]]; then
+    if [[ -n "$CLIENT_DEAD_CODE" ]] && [[ "$CLIENT_DEAD_CODE" != "{}" ]]; then
         if command -v jq &> /dev/null; then
-            puppeteer_files=$(echo "$PUPPETEER_DEAD_CODE" | jq '.files | length // 0' 2>/dev/null || echo "0")
-            puppeteer_issues=$(echo "$PUPPETEER_DEAD_CODE" | jq '.issues | length // 0' 2>/dev/null || echo "0")
+            client_files=$(echo "$CLIENT_DEAD_CODE" | jq '.files | length // 0' 2>/dev/null || echo "0")
+            client_issues=$(echo "$CLIENT_DEAD_CODE" | jq '.issues | length // 0' 2>/dev/null || echo "0")
         fi
     fi
 
@@ -57,11 +57,11 @@ generate_json_report() {
         "rawReport": "$REPORT_DIR/knip-frontend-$TIMESTAMP.json"
       }
     },
-    "puppeteer": {
+    "client": {
       "deadCode": {
-        "unusedFiles": $puppeteer_files,
-        "issues": $puppeteer_issues,
-        "rawReport": "$REPORT_DIR/knip-puppeteer-$TIMESTAMP.json"
+        "unusedFiles": $client_files,
+        "issues": $client_issues,
+        "rawReport": "$REPORT_DIR/knip-client-$TIMESTAMP.json"
       }
     },
     "backend": {
@@ -82,8 +82,8 @@ generate_json_report() {
     "todoComments": "$REPORT_DIR/sanitize-todo-$TIMESTAMP.txt"
   },
   "summary": {
-    "totalDeadCodeFiles": $((frontend_files + puppeteer_files)),
-    "totalDeadCodeIssues": $((frontend_issues + puppeteer_issues + backend_issues))
+    "totalDeadCodeFiles": $((frontend_files + client_files)),
+    "totalDeadCodeIssues": $((frontend_issues + client_issues + backend_issues))
   }
 }
 EOF
@@ -105,7 +105,7 @@ generate_markdown_report() {
 
     # Count issues
     local frontend_files=0 frontend_issues=0
-    local puppeteer_files=0 puppeteer_issues=0
+    local client_files=0 client_issues=0
     local backend_issues=0
 
     if [[ -n "$FRONTEND_DEAD_CODE" ]] && [[ "$FRONTEND_DEAD_CODE" != "{}" ]]; then
@@ -115,10 +115,10 @@ generate_markdown_report() {
         fi
     fi
 
-    if [[ -n "$PUPPETEER_DEAD_CODE" ]] && [[ "$PUPPETEER_DEAD_CODE" != "{}" ]]; then
+    if [[ -n "$CLIENT_DEAD_CODE" ]] && [[ "$CLIENT_DEAD_CODE" != "{}" ]]; then
         if command -v jq &> /dev/null; then
-            puppeteer_files=$(echo "$PUPPETEER_DEAD_CODE" | jq '.files | length // 0' 2>/dev/null || echo "0")
-            puppeteer_issues=$(echo "$PUPPETEER_DEAD_CODE" | jq '.issues | length // 0' 2>/dev/null || echo "0")
+            client_files=$(echo "$CLIENT_DEAD_CODE" | jq '.files | length // 0' 2>/dev/null || echo "0")
+            client_issues=$(echo "$CLIENT_DEAD_CODE" | jq '.issues | length // 0' 2>/dev/null || echo "0")
         fi
     fi
 
@@ -153,9 +153,9 @@ generate_markdown_report() {
 | Component   | Unused Files | Dead Code Issues |
 |-------------|-------------|------------------|
 | Frontend    | $frontend_files | $frontend_issues |
-| Puppeteer   | $puppeteer_files | $puppeteer_issues |
+| Client   | $client_files | $client_issues |
 | Backend     | - | $backend_issues |
-| **Total**   | $((frontend_files + puppeteer_files)) | $((frontend_issues + puppeteer_issues + backend_issues)) |
+| **Total**   | $((frontend_files + client_files)) | $((frontend_issues + client_issues + backend_issues)) |
 
 ## Sanitization Findings
 
@@ -171,7 +171,7 @@ generate_markdown_report() {
 ### Dead Code Analysis
 
 - **Frontend (knip):** \`$REPORT_DIR/knip-frontend-$TIMESTAMP.json\`
-- **Puppeteer (knip):** \`$REPORT_DIR/knip-puppeteer-$TIMESTAMP.json\`
+- **Client (knip):** \`$REPORT_DIR/knip-client-$TIMESTAMP.json\`
 - **Backend (vulture):** \`$REPORT_DIR/vulture-backend-$TIMESTAMP.txt\`
 
 ### Secrets Detection
@@ -209,7 +209,7 @@ print_summary() {
 
     # Count issues
     local frontend_files=0 frontend_issues=0
-    local puppeteer_files=0 puppeteer_issues=0
+    local client_files=0 client_issues=0
     local backend_issues=0
 
     if [[ -n "$FRONTEND_DEAD_CODE" ]] && [[ "$FRONTEND_DEAD_CODE" != "{}" ]]; then
@@ -219,10 +219,10 @@ print_summary() {
         fi
     fi
 
-    if [[ -n "$PUPPETEER_DEAD_CODE" ]] && [[ "$PUPPETEER_DEAD_CODE" != "{}" ]]; then
+    if [[ -n "$CLIENT_DEAD_CODE" ]] && [[ "$CLIENT_DEAD_CODE" != "{}" ]]; then
         if command -v jq &> /dev/null; then
-            puppeteer_files=$(echo "$PUPPETEER_DEAD_CODE" | jq '.files | length // 0' 2>/dev/null || echo "0")
-            puppeteer_issues=$(echo "$PUPPETEER_DEAD_CODE" | jq '.issues | length // 0' 2>/dev/null || echo "0")
+            client_files=$(echo "$CLIENT_DEAD_CODE" | jq '.files | length // 0' 2>/dev/null || echo "0")
+            client_issues=$(echo "$CLIENT_DEAD_CODE" | jq '.issues | length // 0' 2>/dev/null || echo "0")
         fi
     fi
 
@@ -232,13 +232,13 @@ print_summary() {
         fi
     fi
 
-    local total_files=$((frontend_files + puppeteer_files))
-    local total_issues=$((frontend_issues + puppeteer_issues + backend_issues))
+    local total_files=$((frontend_files + client_files))
+    local total_issues=$((frontend_issues + client_issues + backend_issues))
 
     echo ""
     echo "Dead Code:"
     echo "  - Frontend: $frontend_files unused files, $frontend_issues issues"
-    echo "  - Puppeteer: $puppeteer_files unused files, $puppeteer_issues issues"
+    echo "  - Client: $client_files unused files, $client_issues issues"
     echo "  - Backend: $backend_issues issues"
     echo "  - Total: $total_files unused files, $total_issues issues"
     echo ""

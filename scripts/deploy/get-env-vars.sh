@@ -109,5 +109,5 @@ if [[ "${2}" == "--update-env" ]]; then
     echo ""
     echo "🔄 Next steps:"
     echo "   1. Restart your dev server: npm run dev"
-    echo "   2. Restart backend: cd puppeteer-backend && npm start"
+    echo "   2. Restart client backend: npm run dev:client"
 fi

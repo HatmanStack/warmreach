@@ -29,8 +29,8 @@ echo "Installing frontend dependencies..."
 (cd frontend && npm install)
 
 echo ""
-echo "Installing puppeteer dependencies..."
-(cd puppeteer && npm install)
+echo "Installing client dependencies..."
+(cd client && npm install)
 
 echo ""
 echo "Installing mock-linkedin dependencies..."
@@ -62,5 +62,5 @@ echo ""
 echo "Quick start:"
 echo "  docker compose up        # Start all services with LocalStack"
 echo "  npm run dev              # Start frontend only"
-echo "  npm run dev:puppeteer    # Start puppeteer backend only"
+echo "  npm run dev:client       # Start client backend only"
 echo "  npm run check            # Run all lint + typecheck + tests"
