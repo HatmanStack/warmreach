@@ -8,7 +8,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 WarmReach helps users build more authentic professional relationships by surfacing buried interactions, identifying active connections, enabling thoughtful AI-assisted outreach, and providing network insight. All automation respects rate limits and mimics human interaction patterns.
 
-This is the **Community Edition** — a free, self-deployable version of WarmReach. Billing and tier management are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
+This is the **Community Edition** — a free, self-deployable version of WarmReach.
+
+Premium features (network graph visualization, relationship strength scoring, warm introduction paths, messaging intelligence, reply probability, advanced analytics) are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
+
+### Community vs Pro
+
+Community edition includes: LinkedIn automation, RAGStack integration, AI content generation, credential management, heal & restore, and the full serverless backend.
+
+Pro adds: network graph visualization, relationship strength scoring, cluster detection, warm intro paths, message intelligence, reply probability, tone analysis, best time to send, advanced analytics, priority inference, managed Puppeteer, billing/tier management, and usage quotas.
+
+The `shared_services/monetization.py` module contains no-op stubs. All Lambda code imports from this module. In Pro, it re-exports real quota/feature-flag/tier services; here it returns permissive defaults for core features only.
 
 ## Project Overview
 

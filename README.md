@@ -1,4 +1,4 @@
-# WarmReach
+# WarmReach Community Edition
 
 <p align="center">
 <a href="https://www.apache.org/licenses/LICENSE-2.0.html"><img src="https://img.shields.io/badge/license-Apache2.0-blue" alt="Apache 2.0 License" /></a>
@@ -9,9 +9,9 @@
 
 LinkedIn networking tool that helps build authentic professional relationships through active connection analysis, engagement surfacing, and AI-assisted outreach. Built for efficiency, security, and scalability.
 
-** THIS REPO IS IN ACTIVE DEVELOPMENT AND WILL CHANGE OFTEN **
+This is the **Community Edition** — a free, self-deployable version of WarmReach. For premium features including network graph visualization, relationship strength scoring, connection path finding, and messaging intelligence, see [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
 
-## 📚 Documentation
+## Documentation
 
 -   **[Architecture](docs/ARCHITECTURE.md)**: System design and components.
 -   **[Development Guide](docs/DEVELOPMENT.md)**: Setup, running, and testing instructions.
@@ -21,7 +21,7 @@ LinkedIn networking tool that helps build authentic professional relationships t
 -   **[API Reference](docs/API_REFERENCE.md)**: Overview of available API endpoints.
 -   **[Troubleshooting](docs/TROUBLESHOOTING.md)**: Solutions for common issues.
 
-## ✨ Features
+## Community Features
 
 -   **LinkedIn Automation**: Queue-based interaction system with session preservation.
 -   **RAGStack Integration**: Semantic search and text ingestion using AWS Bedrock and RAGStack-Lambda.
@@ -30,7 +30,18 @@ LinkedIn networking tool that helps build authentic professional relationships t
 -   **Heal & Restore**: Checkpoint-based recovery for long-running automation processes.
 -   **Cloud Native**: Fully serverless backend using AWS Lambda, DynamoDB, and S3.
 
-## 🚀 Quick Start
+## Pro Features
+
+The following features are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro):
+
+-   **Network Graph Visualization**: Interactive visualization of your LinkedIn network with cluster detection.
+-   **Relationship Strength Scoring**: Score connections by interaction frequency, recency, and reciprocity.
+-   **Warm Introduction Paths**: Find the shortest path to any person through your existing connections.
+-   **Messaging Intelligence**: Analyze message patterns and track response rates by tone, length, and timing.
+-   **Reply Probability**: Predict likelihood of getting a reply based on historical and profile signals.
+-   **Advanced Analytics**: Network growth trends, engagement metrics, and outreach effectiveness dashboard.
+
+## Quick Start
 
 ### Option A: Docker (Recommended)
 
@@ -55,7 +66,7 @@ npm run dev:client           # Backend: http://localhost:3001
 
 See [Development Guide](docs/DEVELOPMENT.md) for detailed instructions.
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Layer | Technologies |
 |-------|--------------|
@@ -64,6 +75,6 @@ See [Development Guide](docs/DEVELOPMENT.md) for detailed instructions.
 | **Cloud (AWS)** | Lambda, DynamoDB, API Gateway, Cognito, S3 |
 | **AI** | OpenAI GPT models |
 
-## 📜 License
+## License
 
 Apache 2.0 - see [LICENSE](LICENSE)
