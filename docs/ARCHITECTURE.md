@@ -2,7 +2,7 @@
 
 WarmReach is a monorepo with three components: a React frontend, an Electron/Puppeteer client, and an AWS serverless backend.
 
-> **Note:** Billing and tier management are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
+> **Note:** Billing and tier management are available in WarmReach Pro.
 
 ## Components
 

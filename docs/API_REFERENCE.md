@@ -2,7 +2,7 @@
 
 Two API layers: the **Client Backend** (local Electron/Express for browser automation) and the **AWS Cloud API** (serverless Lambda functions).
 
-> **Note:** Billing and tier management are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
+> **Note:** Billing and tier management are available in WarmReach Pro.
 
 ## Client Backend (Local)
 

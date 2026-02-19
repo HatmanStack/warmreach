@@ -10,7 +10,7 @@ WarmReach helps users build more authentic professional relationships by surfaci
 
 This is the **Community Edition** — a free, self-deployable version of WarmReach.
 
-Premium features (network graph visualization, relationship strength scoring, warm introduction paths, messaging intelligence, reply probability, advanced analytics) are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
+Premium features (network graph visualization, relationship strength scoring, warm introduction paths, messaging intelligence, reply probability, advanced analytics) are available in WarmReach Pro.
 
 ### Community vs Pro
 

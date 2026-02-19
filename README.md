@@ -9,7 +9,7 @@
 
 LinkedIn networking tool that helps build authentic professional relationships through active connection analysis, engagement surfacing, and AI-assisted outreach. Built for efficiency, security, and scalability.
 
-This is the **Community Edition** — a free, self-deployable version of WarmReach. For premium features including network graph visualization, relationship strength scoring, connection path finding, and messaging intelligence, see [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
+This is the **Community Edition** — a free, self-deployable version of WarmReach. Premium features including network graph visualization, relationship strength scoring, connection path finding, and messaging intelligence are available in WarmReach Pro.
 
 ## Documentation
 
@@ -32,7 +32,7 @@ This is the **Community Edition** — a free, self-deployable version of WarmRea
 
 ## Pro Features
 
-The following features are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro):
+The following features are available in WarmReach Pro:
 
 -   **Network Graph Visualization**: Interactive visualization of your LinkedIn network with cluster detection.
 -   **Relationship Strength Scoring**: Score connections by interaction frequency, recency, and reciprocity.

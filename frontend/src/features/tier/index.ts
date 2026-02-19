@@ -4,8 +4,7 @@
  * All features are enabled, no billing, no quotas. TierProvider wraps children
  * unchanged and every feature gate passes.
  *
- * Billing and tier management are available in WarmReach Pro
- * (https://github.com/HatmanStack/warmreach-pro).
+ * Billing and tier management are available in WarmReach Pro.
  */
 
 import React, { createContext, useContext, type ReactNode } from 'react';

@@ -2,7 +2,7 @@
 
 This guide walks through deploying a fresh WarmReach stack from scratch. After the architecture redesign, all infrastructure lives in this repo — there is no separate control plane stack.
 
-> **Note:** Billing and tier management are available in [WarmReach Pro](https://github.com/HatmanStack/warmreach-pro).
+> **Note:** Billing and tier management are available in WarmReach Pro.
 
 ## Prerequisites
 
