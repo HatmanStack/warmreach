@@ -51,11 +51,6 @@ def ensure_tier_exists(table, user_sub):
     return {'tier': 'community'}
 
 
-class QuotaExceededError(Exception):
-    """Stub exception — never raised in the community edition."""
-
-    def __init__(self, message='Quota exceeded', operation=None):
-        super().__init__(message)
-        self.message = message
-        self.code = 'QUOTA_EXCEEDED'
-        self.details = {'operation': operation} if operation else {}
+# Re-export the real exception class so isinstance() checks work correctly
+# when tests or other code import from errors.exceptions directly.
+from errors.exceptions import QuotaExceededError  # noqa: F401

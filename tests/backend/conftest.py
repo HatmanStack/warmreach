@@ -122,9 +122,8 @@ def load_service_class(lambda_name: str, service_name: str):
 
     # Clear any cached module imports that might conflict
     for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith('services') or mod_name.startswith('errors') or mod_name.startswith('models'):
-            if 'shared' not in str(sys.modules.get(mod_name, '')):
-                del sys.modules[mod_name]
+        if mod_name.startswith(('services', 'errors', 'models', 'shared_services')):
+            del sys.modules[mod_name]
 
     # Build clean path with shared FIRST, then lambda-specific
     # This ensures shared modules (services.base_service, errors, models) are found first

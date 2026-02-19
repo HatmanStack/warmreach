@@ -1843,6 +1843,7 @@ export class LinkedInInteractionService {
       recipientProfileId,
       messageLength: messageContent.length,
       options,
+      startTime: Date.now(),
     };
 
     logger.info('Executing complete LinkedIn messaging workflow', context);
@@ -1950,6 +1951,7 @@ export class LinkedInInteractionService {
       hasMessage: connectionMessage.length > 0,
       messageLength: connectionMessage.length,
       options,
+      startTime: Date.now(),
     };
 
     logger.info('Executing complete LinkedIn connection workflow', context);
@@ -2048,6 +2050,7 @@ export class LinkedInInteractionService {
       hasMedia: mediaAttachments.length > 0,
       mediaCount: mediaAttachments.length,
       options,
+      startTime: Date.now(),
     };
 
     logger.info('Executing complete LinkedIn post creation workflow', context);
