@@ -4,6 +4,10 @@ All Lambda code imports from ``shared_services.monetization``. In the
 community edition every call succeeds and all features are enabled.
 """
 
+# Re-export the real exception class so isinstance() checks work correctly
+# when tests or other code import from errors.exceptions directly.
+from errors.exceptions import QuotaExceededError  # noqa: F401
+
 
 class QuotaService:
     """No-op quota service — every call succeeds."""
@@ -49,8 +53,3 @@ class FeatureFlagService:
 def ensure_tier_exists(table, user_sub):
     """No-op tier provisioning — returns community tier."""
     return {'tier': 'community'}
-
-
-# Re-export the real exception class so isinstance() checks work correctly
-# when tests or other code import from errors.exceptions directly.
-from errors.exceptions import QuotaExceededError  # noqa: F401
