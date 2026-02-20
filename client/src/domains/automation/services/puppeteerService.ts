@@ -1,4 +1,6 @@
-import puppeteer, {
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import type {
   Browser,
   Page,
   HTTPResponse,
@@ -8,9 +10,53 @@ import puppeteer, {
   GoToOptions,
   ClickOptions,
 } from 'puppeteer';
+import fs from 'fs';
+import path from 'path';
 import config from '#shared-config/index.js';
 import { logger } from '#utils/logger.js';
 import RandomHelpers from '#utils/randomHelpers.js';
+import {
+  getCanvasNoiseScript,
+  getWebGLSpoofScript,
+  getAudioNoiseScript,
+} from '../utils/stealthScripts.js';
+
+// Apply stealth plugin if enabled
+if (config.puppeteer.enableStealth) {
+  puppeteer.use(StealthPlugin());
+}
+
+/**
+ * Detect a system-installed Chrome/Chromium binary.
+ * Returns the first path found, or undefined to use bundled Chromium.
+ */
+function detectSystemChrome(): string | undefined {
+  const configPath = config.puppeteer.executablePath;
+  if (configPath) return configPath;
+
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        ]
+      : [
+          '/usr/bin/google-chrome-stable',
+          '/usr/bin/google-chrome',
+          '/usr/bin/chromium-browser',
+          '/usr/bin/chromium',
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // permission error etc — skip
+    }
+  }
+  return undefined;
+}
 
 /**
  * Options for link extraction
@@ -52,6 +98,7 @@ export class PuppeteerService {
         '--no-first-run',
         '--no-zygote',
         '--disable-gpu',
+        '--disable-blink-features=AutomationControlled',
       ];
 
       // Non-headless UI niceties
@@ -64,21 +111,40 @@ export class PuppeteerService {
 
       // If user asked for UI but no DISPLAY is available, warn and keep headless to avoid crash
       const effectiveHeadless: boolean | 'shell' =
-        !resolvedHeadless && !displayEnv ? 'shell' : resolvedHeadless ? 'shell' : false;
+        resolvedHeadless || !displayEnv ? 'shell' : false;
       if (!resolvedHeadless && !displayEnv) {
         logger.warn(
           'HEADLESS=false requested but DISPLAY is not set. Browser UI cannot be shown in this environment. Running headless instead.'
         );
       }
 
+      // Resolve userDataDir for persistent profile
+      let userDataDir: string | undefined;
+      if (config.puppeteer.userDataDir) {
+        userDataDir = config.puppeteer.userDataDir;
+      } else {
+        try {
+          // Use Electron's userData path if available
+          const { app } = await import('electron');
+          userDataDir = path.join(app.getPath('userData'), 'browser-profile');
+        } catch {
+          // Not running in Electron — ephemeral profile
+        }
+      }
+
+      const executablePath = detectSystemChrome();
+
       this.browser = await puppeteer.launch({
         headless: effectiveHeadless,
         slowMo: config.puppeteer.slowMo,
         defaultViewport: null,
         args: launchArgs,
+        ignoreDefaultArgs: ['--enable-automation'],
+        ...(userDataDir ? { userDataDir } : {}),
+        ...(executablePath ? { executablePath } : {}),
       });
 
-      this.page = await this.browser.newPage();
+      this.page = await this.browser!.newPage();
 
       // Set viewport
       await this.page.setViewport({
@@ -93,6 +159,25 @@ export class PuppeteerService {
 
       // Set default timeout
       this.page.setDefaultTimeout(config.timeouts.default);
+
+      // Request interception: block chrome-extension:// requests
+      if (config.puppeteer.enableRequestInterception) {
+        await this.page.setRequestInterception(true);
+        this.page.on('request', (req) => {
+          if (req.url().startsWith('chrome-extension://')) {
+            req.abort('blockedbyclient');
+          } else {
+            req.continue();
+          }
+        });
+      }
+
+      // Fingerprint noise injection
+      if (config.puppeteer.enableFingerprintNoise) {
+        await this.page.evaluateOnNewDocument(getCanvasNoiseScript());
+        await this.page.evaluateOnNewDocument(getWebGLSpoofScript());
+        await this.page.evaluateOnNewDocument(getAudioNoiseScript());
+      }
 
       logger.info('Puppeteer browser initialized successfully');
       return this.page;
@@ -152,6 +237,24 @@ export class PuppeteerService {
     try {
       const element = await this.waitForSelector(selector);
       if (element) {
+        // Mouse simulation: move cursor along a human-like path before clicking
+        if (config.puppeteer.enableMouseSimulation) {
+          const box = await element.boundingBox();
+          if (box) {
+            const viewport = config.puppeteer.viewport;
+            const mousePath = RandomHelpers.generateMousePath(viewport, box) as Array<{
+            x: number;
+            y: number;
+          }>;
+            for (const point of mousePath) {
+              await this.page.mouse.move(point.x, point.y, {
+                steps: RandomHelpers.randomInRange(2, 4),
+              });
+              await RandomHelpers.randomDelay(10, 30);
+            }
+          }
+        }
+
         await element.click(options);
         await RandomHelpers.randomDelay(500, 1500);
         return true;
@@ -435,7 +538,7 @@ export class PuppeteerService {
 
   /**
    * Extract profile picture URLs from the current connections list page.
-   * Returns a map of profileId → pictureUrl.
+   * Returns a map of profileId -> pictureUrl.
    */
   async extractProfilePictures(): Promise<Record<string, string>> {
     try {

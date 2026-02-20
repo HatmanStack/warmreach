@@ -42,10 +42,12 @@ export function createMockPage(options = {}) {
     waitForSelector: vi.fn().mockResolvedValue({
       click: vi.fn().mockResolvedValue(),
       type: vi.fn().mockResolvedValue(),
+      boundingBox: vi.fn().mockResolvedValue({ x: 100, y: 100, width: 80, height: 30 }),
     }),
     click: vi.fn().mockResolvedValue(),
     type: vi.fn().mockResolvedValue(),
     evaluate: vi.fn().mockResolvedValue(options.evaluateResult || {}),
+    evaluateOnNewDocument: vi.fn().mockResolvedValue(),
     $: vi.fn().mockResolvedValue(options.querySelector || null),
     $$: vi.fn().mockResolvedValue(options.querySelectorAll || []),
     waitForNavigation: vi.fn().mockResolvedValue(),
@@ -54,6 +56,11 @@ export function createMockPage(options = {}) {
     close: vi.fn().mockResolvedValue(),
     setViewport: vi.fn().mockResolvedValue(),
     setUserAgent: vi.fn().mockResolvedValue(),
+    setRequestInterception: vi.fn().mockResolvedValue(),
+    setDefaultTimeout: vi.fn(),
+    isClosed: vi.fn().mockReturnValue(false),
+    on: vi.fn(),
+    mouse: { move: vi.fn().mockResolvedValue(), click: vi.fn().mockResolvedValue() },
   };
 }
 
@@ -63,6 +70,7 @@ export function createMockBrowser() {
     newPage: vi.fn().mockResolvedValue(createMockPage()),
     close: vi.fn().mockResolvedValue(),
     pages: vi.fn().mockResolvedValue([]),
+    isConnected: vi.fn().mockReturnValue(true),
   };
 }
 
