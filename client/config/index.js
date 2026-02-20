@@ -68,6 +68,13 @@ export const config = {
       width: parseInt(process.env.VIEWPORT_WIDTH) || 1200,
       height: parseInt(process.env.VIEWPORT_HEIGHT) || 1200,
     },
+    // Anti-fingerprint config
+    userDataDir: process.env.PUPPETEER_USER_DATA_DIR || '',
+    executablePath: process.env.CHROME_EXECUTABLE_PATH || '',
+    enableStealth: parseBoolean(process.env.PUPPETEER_STEALTH, true),
+    enableRequestInterception: parseBoolean(process.env.PUPPETEER_REQUEST_INTERCEPTION, true),
+    enableFingerprintNoise: parseBoolean(process.env.PUPPETEER_FINGERPRINT_NOISE, true),
+    enableMouseSimulation: parseBoolean(process.env.PUPPETEER_MOUSE_SIMULATION, true),
   },
 
   // Timeouts
