@@ -33,9 +33,23 @@ BASE_HEADERS = {
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     'Access-Control-Allow-Methods': 'POST,OPTIONS',
 }
-OPS = {'generate_ideas', 'research_selected_ideas', 'get_research_result', 'synthesize_research', 'generate_message'}
-METERED_OPS = {'generate_ideas', 'research_selected_ideas', 'synthesize_research', 'generate_message'}
+OPS = {
+    'generate_ideas',
+    'research_selected_ideas',
+    'get_research_result',
+    'synthesize_research',
+    'generate_message',
+    'analyze_message_patterns',
+}
+METERED_OPS = {
+    'generate_ideas',
+    'research_selected_ideas',
+    'synthesize_research',
+    'generate_message',
+    'analyze_message_patterns',
+}
 DEEP_RESEARCH_OPS = {'research_selected_ideas', 'synthesize_research'}
+MESSAGE_INTEL_OPS = {'analyze_message_patterns'}
 
 _quota_service = QuotaService(table) if table else None
 _feature_flag_service = FeatureFlagService(table) if table else None
@@ -121,6 +135,24 @@ def lambda_handler(event, _context):
                 logger.warning('Feature flag check failed, allowing request')
                 pass
 
+        # Feature gate: message intelligence ops require feature flag
+        if op in MESSAGE_INTEL_OPS and _feature_flag_service:
+            try:
+                flags = _feature_flag_service.get_feature_flags(user_id)
+                if not flags.get('features', {}).get('message_intelligence', False):
+                    return _resp(
+                        403,
+                        {
+                            'error': 'Feature not available on current plan',
+                            'code': 'FEATURE_GATED',
+                            'feature': 'message_intelligence',
+                        },
+                        event,
+                    )
+            except Exception:
+                logger.warning('Feature flag check failed, allowing request')
+                pass
+
         svc = LLMService(openai_client=openai_client, bedrock_client=bedrock_client, table=table)
 
         if op == 'generate_ideas':
@@ -159,6 +191,12 @@ def lambda_handler(event, _context):
                 user_profile=body.get('userProfile'),
                 message_history=body.get('messageHistory'),
                 connection_id=body.get('connectionId'),
+            )
+
+        elif op == 'analyze_message_patterns':
+            result = svc.analyze_message_patterns(
+                stats=body.get('stats', {}),
+                sample_messages=body.get('sampleMessages', []),
             )
 
         else:

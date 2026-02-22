@@ -24,6 +24,8 @@ const ALL_FEATURES: Record<string, boolean> = {
   advanced_analytics: true,
   priority_support: true,
   deep_research: true,
+  relationship_strength_scoring: true,
+  message_intelligence: true,
 };
 
 const TierContext = createContext<TierContextValue>({

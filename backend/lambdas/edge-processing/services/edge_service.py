@@ -2,6 +2,7 @@
 
 import base64
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -11,6 +12,8 @@ from botocore.exceptions import ClientError
 from errors.exceptions import ExternalServiceError, ValidationError
 from models.enums import classify_conversion_likelihood
 from shared_services.base_service import BaseService
+from shared_services.message_intelligence_service import MessageIntelligenceService
+from shared_services.relationship_scoring_service import RelationshipScoringService
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,8 @@ class EdgeService(BaseService):
         """
         super().__init__()
         self.table = table
+        self.scoring_service = RelationshipScoringService()
+        self.message_intelligence_service = MessageIntelligenceService()
         self.ragstack_endpoint = ragstack_endpoint
         self.ragstack_api_key = ragstack_api_key
         self.ragstack_client = ragstack_client
@@ -249,20 +254,10 @@ class EdgeService(BaseService):
             dict with connections list and count
         """
         try:
-            if status:
-                response = self.table.query(
-                    IndexName='GSI1',
-                    KeyConditionExpression='GSI1PK = :pk AND begins_with(GSI1SK, :sk)',
-                    ExpressionAttributeValues={':pk': f'USER#{user_id}', ':sk': f'STATUS#{status}#'},
-                )
-            else:
-                response = self.table.query(
-                    KeyConditionExpression='PK = :pk AND begins_with(SK, :sk)',
-                    ExpressionAttributeValues={':pk': f'USER#{user_id}', ':sk': 'PROFILE#'},
-                )
+            edges = self._query_all_gsi1_edges(user_id, status) if status else self._query_all_user_edges(user_id)
 
             connections = []
-            for edge_item in response.get('Items', []):
+            for edge_item in edges:
                 profile_id = edge_item['SK'].replace('PROFILE#', '')
                 if not profile_id:
                     continue
@@ -345,6 +340,201 @@ class EdgeService(BaseService):
             raise ExternalServiceError(
                 message='Failed to check edge existence', service='DynamoDB', original_error=str(e)
             ) from e
+
+    def _query_all_user_edges(self, user_id: str) -> list[dict]:
+        """Query all edge items for a user, paginating through all results."""
+        edges: list[dict] = []
+        params: dict[str, Any] = {
+            'KeyConditionExpression': 'PK = :pk AND begins_with(SK, :sk)',
+            'ExpressionAttributeValues': {':pk': f'USER#{user_id}', ':sk': 'PROFILE#'},
+        }
+        while True:
+            response = self.table.query(**params)
+            edges.extend(response.get('Items', []))
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+            params['ExclusiveStartKey'] = last_key
+        return edges
+
+    def _query_all_gsi1_edges(self, user_id: str, status: str) -> list[dict]:
+        """Query all edge items for a user+status via GSI1, paginating through all results."""
+        edges: list[dict] = []
+        params: dict[str, Any] = {
+            'IndexName': 'GSI1',
+            'KeyConditionExpression': 'GSI1PK = :pk AND begins_with(GSI1SK, :sk)',
+            'ExpressionAttributeValues': {':pk': f'USER#{user_id}', ':sk': f'STATUS#{status}#'},
+        }
+        while True:
+            response = self.table.query(**params)
+            edges.extend(response.get('Items', []))
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+            params['ExclusiveStartKey'] = last_key
+        return edges
+
+    def compute_and_store_scores(self, user_id: str) -> dict[str, Any]:
+        """Compute relationship scores for all user connections and persist them.
+
+        Args:
+            user_id: Cognito user sub.
+
+        Returns:
+            dict with success flag and count of scores computed.
+        """
+        try:
+            edges = self._query_all_user_edges(user_id)
+
+            count = 0
+            now = datetime.now(UTC).isoformat()
+            for edge in edges:
+                profile_id = edge['SK'].replace('PROFILE#', '')
+                metadata = self._get_profile_metadata(profile_id)
+                result = self.scoring_service.compute_score(edge, metadata)
+
+                self.table.update_item(
+                    Key={'PK': edge['PK'], 'SK': edge['SK']},
+                    UpdateExpression='SET relationshipScore = :score, scoreBreakdown = :breakdown, scoreComputedAt = :ts',
+                    ExpressionAttributeValues={
+                        ':score': result['score'],
+                        ':breakdown': result['breakdown'],
+                        ':ts': now,
+                    },
+                )
+                count += 1
+
+            return {'success': True, 'scoresComputed': count}
+
+        except ClientError as e:
+            logger.error(f'DynamoDB error in compute_and_store_scores: {e}')
+            raise ExternalServiceError(
+                message='Failed to compute scores', service='DynamoDB', original_error=str(e)
+            ) from e
+
+    def get_messaging_insights(self, user_id: str, force_recompute: bool = False) -> dict[str, Any]:
+        """Retrieve or compute messaging insights for a user.
+
+        Checks for cached insights (< 7 days old). If cached and not
+        force_recompute, returns cached. Otherwise queries edges and
+        computes fresh stats.
+
+        Args:
+            user_id: Cognito user sub.
+            force_recompute: If True, recompute even if cached.
+
+        Returns:
+            Dict with stats, insights (or None), and computedAt.
+        """
+        try:
+            # Check for cached insights
+            if not force_recompute:
+                cached = self.table.get_item(Key={'PK': f'USER#{user_id}', 'SK': 'INSIGHTS#messaging'}).get('Item')
+                if cached:
+                    computed_at = cached.get('computedAt', '')
+                    if computed_at:
+                        try:
+                            computed_dt = datetime.fromisoformat(computed_at.replace('Z', '+00:00'))
+                            age_days = (datetime.now(UTC) - computed_dt).total_seconds() / 86400
+                            if age_days < 7:
+                                return {
+                                    'stats': cached.get('stats', {}),
+                                    'insights': cached.get('insights'),
+                                    'sampleMessages': cached.get('sampleMessages', []),
+                                    'computedAt': computed_at,
+                                }
+                        except (ValueError, TypeError):
+                            pass  # Recompute on parse failure
+
+            # Query all edges with messages for the user (paginated)
+            edges = self._query_all_user_edges(user_id)
+
+            # Compute stats
+            stats = self.message_intelligence_service.compute_messaging_stats(edges)
+
+            # Collect sample outbound messages for LLM analysis
+            sample_messages = self._collect_sample_outbound(edges, limit=10)
+
+            now = datetime.now(UTC).isoformat()
+            ttl = int(time.time()) + (7 * 86400)  # 7 days from now
+
+            # Store in DynamoDB
+            self.table.put_item(
+                Item={
+                    'PK': f'USER#{user_id}',
+                    'SK': 'INSIGHTS#messaging',
+                    'stats': stats,
+                    'sampleMessages': sample_messages,
+                    'computedAt': now,
+                    'ttl': ttl,
+                }
+            )
+
+            return {
+                'stats': stats,
+                'insights': None,
+                'sampleMessages': sample_messages,
+                'computedAt': now,
+            }
+
+        except ClientError as e:
+            logger.error(f'DynamoDB error in get_messaging_insights: {e}')
+            raise ExternalServiceError(
+                message='Failed to get messaging insights', service='DynamoDB', original_error=str(e)
+            ) from e
+
+    def store_message_insights(self, user_id: str, insights: list[str]) -> dict[str, Any]:
+        """Store LLM-generated insights alongside cached stats.
+
+        Args:
+            user_id: Cognito user sub.
+            insights: List of insight strings from LLM analysis.
+
+        Returns:
+            Dict with success flag.
+        """
+        try:
+            now = datetime.now(UTC).isoformat()
+            self.table.update_item(
+                Key={'PK': f'USER#{user_id}', 'SK': 'INSIGHTS#messaging'},
+                UpdateExpression='SET insights = :ins, insightsUpdatedAt = :ts',
+                ConditionExpression='attribute_exists(PK)',
+                ExpressionAttributeValues={
+                    ':ins': insights,
+                    ':ts': now,
+                },
+            )
+            return {'success': True, 'insightsUpdatedAt': now}
+
+        except ClientError as e:
+            if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
+                raise ValidationError(
+                    'Messaging insights must be computed before storing LLM analysis',
+                    field='insights',
+                ) from None
+            logger.error(f'DynamoDB error in store_message_insights: {e}')
+            raise ExternalServiceError(
+                message='Failed to store message insights', service='DynamoDB', original_error=str(e)
+            ) from e
+
+    def _collect_sample_outbound(self, edges: list[dict], limit: int = 10) -> list[dict]:
+        """Collect recent outbound messages across connections for LLM analysis.
+
+        Gathers candidates from all edges, then returns the most recent by
+        timestamp to avoid sampling bias toward early-scanned connections.
+        """
+        candidates: list[dict] = []
+        for edge in edges:
+            messages = edge.get('messages', [])
+            if not isinstance(messages, list):
+                continue
+            for msg in reversed(messages):
+                if isinstance(msg, dict) and msg.get('type') == 'outbound' and msg.get('content'):
+                    candidates.append({'content': msg['content'], 'timestamp': msg.get('timestamp', '')})
+                    break  # At most one per connection
+        # Sort by timestamp descending, take the most recent
+        candidates.sort(key=lambda m: m.get('timestamp', ''), reverse=True)
+        return candidates[:limit]
 
     # =========================================================================
     # RAGStack proxy operations
@@ -462,6 +652,9 @@ class EdgeService(BaseService):
             'conversion_likelihood': conversion_likelihood,
             'profile_picture_url': profile_data.get('profilePictureUrl', ''),
             'message_history': messages if isinstance(messages, list) else [],
+            'relationship_score': edge_item.get('relationshipScore'),
+            'score_breakdown': edge_item.get('scoreBreakdown'),
+            'score_computed_at': edge_item.get('scoreComputedAt'),
         }
 
     def _calculate_conversion_likelihood(self, profile_data: dict, edge_item: dict) -> str:

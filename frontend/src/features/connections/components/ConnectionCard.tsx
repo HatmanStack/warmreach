@@ -3,6 +3,8 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MessageSquare, ExternalLink, User, Building, MapPin, Tag } from 'lucide-react';
+import { FeatureGate } from '@/features/tier';
+import { RelationshipStrengthBadge } from './RelationshipStrengthBadge';
 import type { ConnectionCardProps } from '@/types';
 
 /**
@@ -319,8 +321,8 @@ const ConnectionCard = ({
               />
             ) : (
               <div className="w-full h-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center text-white font-semibold">
-                {connection.first_name[0]}
-                {connection.last_name[0]}
+                {connection.first_name?.[0] || '?'}
+                {connection.last_name?.[0] || ''}
               </div>
             )}
           </div>
@@ -333,6 +335,13 @@ const ConnectionCard = ({
               {connection.first_name} {connection.last_name}
             </h3>
             <div className="flex items-center space-x-2 flex-shrink-0">
+              {/* Relationship Strength Badge (Pro feature) */}
+              <FeatureGate feature="relationship_strength_scoring">
+                <RelationshipStrengthBadge
+                  score={connection.relationship_score}
+                  breakdown={connection.score_breakdown}
+                />
+              </FeatureGate>
               {/* Connection Status Badge */}
               {statusDisplay && (
                 <Badge

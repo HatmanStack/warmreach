@@ -21,7 +21,7 @@ interface VirtualConnectionListProps {
   overscanCount?: number;
   showFilters?: boolean;
   initialFilters?: ConnectionFilters;
-  sortBy?: 'name' | 'company' | 'date_added' | 'conversion_likelihood';
+  sortBy?: 'name' | 'company' | 'date_added' | 'conversion_likelihood' | 'strength';
   sortOrder?: 'asc' | 'desc';
   showCheckboxes?: boolean;
   selectedConnections?: string[];

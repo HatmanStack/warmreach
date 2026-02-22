@@ -269,6 +269,40 @@ describe('connectionFiltering', () => {
       expect(result[0].conversion_likelihood).toBe('high');
     });
 
+    it('should sort by strength descending (highest first)', () => {
+      const connections = [
+        createConnection({ relationship_score: 30 }),
+        createConnection({ id: 'conn-2', relationship_score: 90 }),
+        createConnection({ id: 'conn-3', relationship_score: 60 }),
+      ];
+      const result = sortConnections(connections, 'strength', 'desc');
+      expect(result[0].relationship_score).toBe(90);
+      expect(result[1].relationship_score).toBe(60);
+      expect(result[2].relationship_score).toBe(30);
+    });
+
+    it('should sort by strength ascending', () => {
+      const connections = [
+        createConnection({ relationship_score: 90 }),
+        createConnection({ id: 'conn-2', relationship_score: 30 }),
+      ];
+      const result = sortConnections(connections, 'strength', 'asc');
+      expect(result[0].relationship_score).toBe(30);
+      expect(result[1].relationship_score).toBe(90);
+    });
+
+    it('should sort connections without relationship_score to the bottom', () => {
+      const connections = [
+        createConnection({ relationship_score: 50 }),
+        createConnection({ id: 'conn-2' }), // No score
+        createConnection({ id: 'conn-3', relationship_score: 80 }),
+      ];
+      const result = sortConnections(connections, 'strength', 'desc');
+      expect(result[0].relationship_score).toBe(80);
+      expect(result[1].relationship_score).toBe(50);
+      expect(result[2].relationship_score).toBeUndefined();
+    });
+
     it('should not mutate original array', () => {
       const connections = [
         createConnection({ first_name: 'Bob' }),

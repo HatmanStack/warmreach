@@ -44,6 +44,8 @@ class FeatureFlagService:
                 'advanced_analytics': True,
                 'priority_support': True,
                 'deep_research': True,
+                'relationship_strength_scoring': True,
+                'message_intelligence': True,
             },
             'quotas': {},
             'rateLimits': {},

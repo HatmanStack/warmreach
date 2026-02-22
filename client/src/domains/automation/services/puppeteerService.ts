@@ -243,9 +243,9 @@ export class PuppeteerService {
           if (box) {
             const viewport = config.puppeteer.viewport;
             const mousePath = RandomHelpers.generateMousePath(viewport, box) as Array<{
-            x: number;
-            y: number;
-          }>;
+              x: number;
+              y: number;
+            }>;
             for (const point of mousePath) {
               await this.page.mouse.move(point.x, point.y, {
                 steps: RandomHelpers.randomInRange(2, 4),

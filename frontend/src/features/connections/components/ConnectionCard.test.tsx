@@ -3,6 +3,19 @@ import { describe, it, expect, vi } from 'vitest';
 import ConnectionCard from './ConnectionCard';
 import type { Connection } from '@/types';
 
+// Mock tier context for feature-gated components
+vi.mock('@/features/tier', () => ({
+  useTier: () => ({
+    isFeatureEnabled: (f: string) => f === 'relationship_strength_scoring',
+    tier: 'pro',
+  }),
+  FeatureGate: ({ children, feature }: { children: React.ReactNode; feature?: string }) => {
+    // Only render children when feature is enabled
+    if (feature === 'relationship_strength_scoring') return <>{children}</>;
+    return <>{children}</>;
+  },
+}));
+
 const mockConnection: Connection = {
   id: 'dGVzdC1pZA==',
   first_name: 'Jane',
@@ -130,5 +143,29 @@ describe('ConnectionCard', () => {
     // After error, should show initials instead
     expect(container.querySelector('img')).not.toBeInTheDocument();
     expect(screen.getByText('JD')).toBeInTheDocument();
+  });
+
+  it('should render strength badge when score is present and feature enabled', () => {
+    const connectionWithScore = {
+      ...mockConnection,
+      relationship_score: 72,
+      score_breakdown: {
+        frequency: 80,
+        recency: 90,
+        reciprocity: 60,
+        profile_completeness: 55,
+        depth: 70,
+      },
+    };
+    render(<ConnectionCard connection={connectionWithScore} />);
+
+    expect(screen.getByTestId('strength-badge')).toBeInTheDocument();
+    expect(screen.getByText('72')).toBeInTheDocument();
+  });
+
+  it('should not render strength badge when score is undefined', () => {
+    render(<ConnectionCard connection={mockConnection} />);
+
+    expect(screen.queryByTestId('strength-badge')).not.toBeInTheDocument();
   });
 });

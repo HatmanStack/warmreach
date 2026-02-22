@@ -7,7 +7,8 @@ import os
 import boto3
 from errors.exceptions import AuthorizationError, ExternalServiceError, NotFoundError, ServiceError, ValidationError
 from services.edge_service import EdgeService
-from shared_services.monetization import QuotaService, ensure_tier_exists
+from shared_services.analytics_service import AnalyticsService
+from shared_services.monetization import FeatureFlagService, QuotaService, ensure_tier_exists
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -21,6 +22,8 @@ RAGSTACK_API_KEY = os.environ.get('RAGSTACK_API_KEY', '')
 _ragstack_client = None
 _ingestion_service = None
 _quota_service = QuotaService(table) if table else None
+_feature_flag_service = FeatureFlagService(table) if table else None
+_analytics_service = AnalyticsService(table) if table else None
 
 if RAGSTACK_GRAPHQL_ENDPOINT and RAGSTACK_API_KEY:
     from shared_services.ingestion_service import IngestionService
@@ -259,6 +262,98 @@ def lambda_handler(event, context):
             if not pid:
                 return _resp(400, {'error': 'profileId required'}, event)
             return _resp(200, svc.check_exists(user_id, pid), event)
+        if op == 'get_messaging_insights':
+            if _feature_flag_service:
+                flags = _feature_flag_service.get_feature_flags(user_id)
+                if not flags.get('features', {}).get('message_intelligence', False):
+                    return _resp(
+                        403, {'error': 'Feature not available on current plan', 'code': 'FEATURE_GATED'}, event
+                    )
+            force = body.get('forceRecompute', False)
+            result = svc.get_messaging_insights(user_id, force_recompute=force)
+            return _resp(200, result, event)
+        if op == 'store_message_insights':
+            insights = body.get('insights', [])
+            if not insights or not isinstance(insights, list):
+                return _resp(400, {'error': 'insights list required'}, event)
+            result = svc.store_message_insights(user_id, insights)
+            return _resp(200, result, event)
+        if op == 'compute_relationship_scores':
+            if _feature_flag_service:
+                flags = _feature_flag_service.get_feature_flags(user_id)
+                if not flags.get('features', {}).get('relationship_strength_scoring', False):
+                    return _resp(
+                        403, {'error': 'Feature not available on current plan', 'code': 'FEATURE_GATED'}, event
+                    )
+            result = svc.compute_and_store_scores(user_id)
+            _report_telemetry(user_id, 'compute_relationship_scores')
+            return _resp(200, result, event)
+        if op == 'get_analytics_dashboard':
+            if _feature_flag_service:
+                flags = _feature_flag_service.get_feature_flags(user_id)
+                if not flags.get('features', {}).get('advanced_analytics', False):
+                    return _resp(
+                        403, {'error': 'Feature not available on current plan', 'code': 'FEATURE_GATED'}, event
+                    )
+            try:
+                days = min(int(body.get('days', 30)), 365)
+            except (TypeError, ValueError):
+                return _resp(400, {'error': 'days must be a number'}, event)
+            result = _analytics_service.get_dashboard_summary(user_id, days)
+            _report_telemetry(user_id, 'analytics_query')
+            return _resp(200, result, event)
+        if op == 'get_connection_funnel':
+            if _feature_flag_service:
+                flags = _feature_flag_service.get_feature_flags(user_id)
+                if not flags.get('features', {}).get('advanced_analytics', False):
+                    return _resp(
+                        403, {'error': 'Feature not available on current plan', 'code': 'FEATURE_GATED'}, event
+                    )
+            result = _analytics_service.get_connection_funnel(user_id)
+            _report_telemetry(user_id, 'analytics_query')
+            return _resp(200, result, event)
+        if op == 'get_growth_timeline':
+            if _feature_flag_service:
+                flags = _feature_flag_service.get_feature_flags(user_id)
+                if not flags.get('features', {}).get('advanced_analytics', False):
+                    return _resp(
+                        403, {'error': 'Feature not available on current plan', 'code': 'FEATURE_GATED'}, event
+                    )
+            try:
+                days = min(int(body.get('days', 30)), 365)
+            except (TypeError, ValueError):
+                return _resp(400, {'error': 'days must be a number'}, event)
+            result = _analytics_service.get_growth_timeline(user_id, days)
+            _report_telemetry(user_id, 'analytics_query')
+            return _resp(200, result, event)
+        if op == 'get_engagement_metrics':
+            if _feature_flag_service:
+                flags = _feature_flag_service.get_feature_flags(user_id)
+                if not flags.get('features', {}).get('advanced_analytics', False):
+                    return _resp(
+                        403, {'error': 'Feature not available on current plan', 'code': 'FEATURE_GATED'}, event
+                    )
+            try:
+                days = min(int(body.get('days', 30)), 365)
+            except (TypeError, ValueError):
+                return _resp(400, {'error': 'days must be a number'}, event)
+            result = _analytics_service.get_engagement_metrics(user_id, days)
+            _report_telemetry(user_id, 'analytics_query')
+            return _resp(200, result, event)
+        if op == 'get_usage_summary':
+            if _feature_flag_service:
+                flags = _feature_flag_service.get_feature_flags(user_id)
+                if not flags.get('features', {}).get('advanced_analytics', False):
+                    return _resp(
+                        403, {'error': 'Feature not available on current plan', 'code': 'FEATURE_GATED'}, event
+                    )
+            try:
+                days = min(int(body.get('days', 30)), 365)
+            except (TypeError, ValueError):
+                return _resp(400, {'error': 'days must be a number'}, event)
+            result = _analytics_service.get_usage_summary(user_id, days)
+            _report_telemetry(user_id, 'analytics_query')
+            return _resp(200, result, event)
         return _resp(400, {'error': f'Unsupported operation: {op}'}, event)
 
     except ValidationError as e:

@@ -12,6 +12,7 @@ from shared_services.base_service import BaseService
 
 try:
     from prompts import (
+        ANALYZE_MESSAGE_PATTERNS_PROMPT,
         GENERATE_MESSAGE_PROMPT,
         LINKEDIN_IDEAS_PROMPT,
         LINKEDIN_RESEARCH_PROMPT,
@@ -22,6 +23,9 @@ except ImportError:
     LINKEDIN_RESEARCH_PROMPT = '{topics}\n{user_data}'
     SYNTHESIZE_RESEARCH_PROMPT = '{user_data}\n{research_content}\n{post_content}\n{ideas_content}'
     GENERATE_MESSAGE_PROMPT = '{sender_data}\n{recipient_name}\n{recipient_position}\n{recipient_company}\n{recipient_headline}\n{recipient_tags}\n{recipient_context}\n{conversation_topic}\n{message_history}'
+    ANALYZE_MESSAGE_PATTERNS_PROMPT = (
+        '{total_outbound}\n{total_inbound}\n{response_rate}\n{avg_response_time}\n{sample_messages}'
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -437,6 +441,66 @@ class LLMService(BaseService):
         except Exception as e:
             logger.error(f'Error in generate_message: {e}')
             return {'generatedMessage': '', 'confidence': 0, 'error': 'Failed to generate message'}
+
+    def analyze_message_patterns(self, stats: dict, sample_messages: list) -> dict[str, Any]:
+        """Analyze message patterns via LLM and return actionable insights.
+
+        Args:
+            stats: Aggregate messaging stats from MessageIntelligenceService.
+            sample_messages: List of outbound message dicts (content, got_response).
+
+        Returns:
+            Dict with insights list and analyzedAt timestamp.
+        """
+        try:
+            # Format sample messages for the prompt (up to 20, truncated to 200 chars)
+            formatted_samples = []
+            for msg in sample_messages[:20]:
+                content = self._sanitize_prompt(str(msg.get('content', ''))[:200], 200)
+                got_response = 'got response' if msg.get('got_response') else 'no response'
+                formatted_samples.append(f'- [{got_response}] {content}')
+
+            sample_text = '\n'.join(formatted_samples) if formatted_samples else 'No sample messages available.'
+
+            response_rate_pct = round((stats.get('responseRate', 0) or 0) * 100, 1)
+            avg_time = stats.get('avgResponseTimeHours')
+            avg_time_str = f'{avg_time:.1f} hours' if avg_time is not None else 'N/A'
+
+            prompt = ANALYZE_MESSAGE_PATTERNS_PROMPT.format(
+                total_outbound=stats.get('totalOutbound', 0),
+                total_inbound=stats.get('totalInbound', 0),
+                response_rate=response_rate_pct,
+                avg_response_time=avg_time_str,
+                sample_messages=sample_text,
+            )
+
+            response = self.openai_client.responses.create(
+                model='gpt-4.1',
+                input=prompt,
+            )
+
+            content = self._extract_response_content(response)
+
+            # Parse numbered insights from response
+            import re
+
+            insights = []
+            for line in content.strip().split('\n'):
+                line = line.strip()
+                if line:
+                    # Strip leading number prefix (e.g. "1. ", "2) ", "3- ")
+                    cleaned = re.sub(r'^\s*\d+[\.\)\-]?\s*', '', line)
+                    if cleaned:
+                        insights.append(cleaned)
+
+            return {
+                'insights': insights,
+                'analyzedAt': datetime.now(UTC).isoformat(),
+            }
+
+        except Exception as e:
+            logger.error(f'Error in analyze_message_patterns: {e}')
+            return {'insights': [], 'analyzedAt': datetime.now(UTC).isoformat(), 'error': str(e)}
 
     def _fetch_profile_context(self, connection_id: str) -> str:
         """Fetch enriched profile context from DynamoDB metadata."""

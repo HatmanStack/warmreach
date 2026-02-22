@@ -87,16 +87,18 @@ describe('LinkedInInteractionService anti-spam guards', () => {
     it('should throw at per-hour ceiling (200)', () => {
       // Simulate 200 actions spread across the last hour (but not last minute)
       const now = Date.now();
-      service._actionLog = Array.from({ length: 200 }, (_, i) =>
-        now - 120000 - i * 10 // 2+ minutes ago, within the hour
+      service._actionLog = Array.from(
+        { length: 200 },
+        (_, i) => now - 120000 - i * 10 // 2+ minutes ago, within the hour
       );
       expect(() => service._enforceRateLimit()).toThrow('Rate limit exceeded');
     });
 
     it('should throw at daily ceiling (500)', () => {
       const now = Date.now();
-      service._actionLog = Array.from({ length: 500 }, (_, i) =>
-        now - 7200000 - i * 100 // 2+ hours ago, within 24h
+      service._actionLog = Array.from(
+        { length: 500 },
+        (_, i) => now - 7200000 - i * 100 // 2+ hours ago, within 24h
       );
       expect(() => service._enforceRateLimit()).toThrow('Rate limit exceeded');
     });
@@ -106,7 +108,7 @@ describe('LinkedInInteractionService anti-spam guards', () => {
       service._actionLog = [
         now - 90000000, // >24h ago
         now - 90000001,
-        now - 1000,     // recent
+        now - 1000, // recent
       ];
       service._enforceRateLimit();
       // Old entries filtered out; new one added = 2 total
@@ -121,9 +123,9 @@ describe('LinkedInInteractionService anti-spam guards', () => {
     });
 
     it('should propagate errors from the callback', async () => {
-      await expect(
-        service._paced(0, 0, () => Promise.reject(new Error('fail')))
-      ).rejects.toThrow('fail');
+      await expect(service._paced(0, 0, () => Promise.reject(new Error('fail')))).rejects.toThrow(
+        'fail'
+      );
     });
   });
 });

@@ -1,6 +1,7 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/features/auth';
+import { useTier } from '@/features/tier';
 import { useToast } from '@/shared/hooks';
 import { lambdaApiService as dbConnector, ApiError } from '@/shared/services';
 import { queryKeys } from '@/shared/lib/queryKeys';
@@ -11,8 +12,10 @@ const logger = createLogger('useConnectionsManager');
 
 export function useConnectionsManager() {
   const { user } = useAuth();
+  const { isFeatureEnabled } = useTier();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const scoringTriggered = useRef(false);
 
   // Local UI state (not server state)
   const [selectedStatus, setSelectedStatus] = useState<StatusValue>('all');
@@ -30,6 +33,21 @@ export function useConnectionsManager() {
     queryFn: async () => {
       const fetchedConnections = await dbConnector.getConnectionsByStatus();
       logger.info('Connections fetched successfully', { count: fetchedConnections.length });
+      // Trigger scoring for pro users (fire-and-forget, non-blocking)
+      if (isFeatureEnabled('relationship_strength_scoring') && !scoringTriggered.current) {
+        scoringTriggered.current = true;
+        dbConnector
+          .computeRelationshipScores()
+          .then(() => new Promise((r) => setTimeout(r, 2000)))
+          .then(() => {
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.connections.byUser(user?.id ?? ''),
+            });
+          })
+          .catch((err) => {
+            logger.debug('Score computation failed (non-blocking)', { error: err });
+          });
+      }
       return fetchedConnections;
     },
     enabled: !!user,
@@ -139,6 +157,21 @@ export function useConnectionsManager() {
     [queryClient, user?.id]
   );
 
+  // Compute relationship scores for pro users (fire-and-forget, once per session)
+  const computeScores = useCallback(async () => {
+    if (!isFeatureEnabled('relationship_strength_scoring')) return;
+    if (scoringTriggered.current) return;
+    scoringTriggered.current = true;
+    try {
+      await dbConnector.computeRelationshipScores();
+      // Brief delay to let DynamoDB writes propagate before re-fetching
+      await new Promise((r) => setTimeout(r, 2000));
+      queryClient.invalidateQueries({ queryKey: queryKeys.connections.byUser(user?.id ?? '') });
+    } catch (err) {
+      logger.debug('Score computation failed (non-blocking)', { error: err });
+    }
+  }, [isFeatureEnabled, queryClient, user?.id]);
+
   // Wrapper to handle refetch with error handling (matches original API)
   const fetchConnectionsWithErrorHandling = useCallback(async () => {
     try {
@@ -180,5 +213,6 @@ export function useConnectionsManager() {
     handleConnectionCheckboxChange,
     updateConnectionStatus,
     calculateConnectionCounts,
+    computeScores,
   };
 }

@@ -158,6 +158,25 @@ Remember: The best LinkedIn posts feel like valuable insights shared by a truste
 Return ONLY the LinkedIn post text, ready to paste. No headers, labels, section numbers, or meta-commentary.
 """
 
+ANALYZE_MESSAGE_PATTERNS_PROMPT = """Analyze the following messaging data from a LinkedIn networking tool.
+
+Messaging Statistics:
+- Total outbound messages: {total_outbound}
+- Total inbound messages: {total_inbound}
+- Response rate: {response_rate}%
+- Average response time: {avg_response_time}
+
+Sample messages (most recent, anonymized):
+{sample_messages}
+
+Provide 3-5 actionable insights about:
+1. What messaging patterns appear most effective (getting responses)
+2. What timing patterns exist
+3. Suggestions for improving response rates
+4. Any concerning patterns (too aggressive, too generic, etc.)
+
+Format each insight as a single concise sentence. Return only the insights, one per line, numbered."""
+
 GENERATE_MESSAGE_PROMPT = """
 You are crafting a personalized LinkedIn message from one professional to another. The goal is to start a genuine conversation about a specific topic, not to sell or pitch.
 

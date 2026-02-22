@@ -123,8 +123,26 @@ export interface Connection {
   /** Array of message history (optional) */
   message_history?: Message[];
 
+  /** Relationship strength score 0-100 (optional, pro feature) */
+  relationship_score?: number;
+
+  /** Score component breakdown (optional, pro feature) */
+  score_breakdown?: ScoreBreakdown;
+
+  /** When the score was last computed (ISO string, optional) */
+  score_computed_at?: string;
+
   /** Flag indicating if this is demo/fake data (optional) */
   isFakeData?: boolean;
+}
+
+/** Breakdown of relationship strength score components */
+export interface ScoreBreakdown {
+  frequency: number;
+  recency: number;
+  reciprocity: number;
+  profile_completeness: number;
+  depth: number;
 }
 
 /**

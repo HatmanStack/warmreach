@@ -6,14 +6,15 @@
  * Usage:  node client/linkedin-inspect.mjs
  *
  * The browser opens with the full stealth mitigation stack active (stealth plugin +
- * canvas/WebGL/audio fingerprint noise), a clean profile (no extensions), disabled
- * automation signals, and a realistic viewport so you can inspect what LinkedIn sees.
+ * canvas/WebGL/audio fingerprint noise, request interception, random user agent,
+ * system Chrome detection), matching what PuppeteerService uses in production.
  * Close the browser window or press Ctrl-C to exit.
  *
  * Set PUPPETEER_STEALTH=false to disable stealth plugin for comparison testing.
  * Set PUPPETEER_FINGERPRINT_NOISE=false to disable canvas/WebGL/audio noise.
  */
 
+import fs from 'fs';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import {
@@ -21,6 +22,7 @@ import {
   getWebGLSpoofScript,
   getAudioNoiseScript,
 } from './src/domains/automation/utils/stealthScripts.ts';
+import RandomHelpers from './src/shared/utils/randomHelpers.js';
 
 const stealthEnabled = (process.env.PUPPETEER_STEALTH ?? 'true').toLowerCase() !== 'false';
 if (stealthEnabled) {
@@ -30,7 +32,39 @@ if (stealthEnabled) {
   console.log('Stealth plugin disabled (PUPPETEER_STEALTH=false)');
 }
 
-const browser = await puppeteer.launch({
+// Detect system Chrome/Chromium (same logic as PuppeteerService)
+function detectSystemChrome() {
+  const configPath = process.env.CHROME_EXECUTABLE_PATH || '';
+  if (configPath) return configPath;
+
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        ]
+      : [
+          '/usr/bin/google-chrome-stable',
+          '/usr/bin/google-chrome',
+          '/usr/bin/chromium-browser',
+          '/usr/bin/chromium',
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // skip
+    }
+  }
+  return undefined;
+}
+
+const executablePath = detectSystemChrome();
+const userDataDir = process.env.PUPPETEER_USER_DATA_DIR || undefined;
+
+const launchOptions = {
   headless: false,
   defaultViewport: null, // use window size
   args: [
@@ -50,10 +84,31 @@ const browser = await puppeteer.launch({
     // Disable infobars ("Chrome is being controlled by automated test software")
     '--disable-infobars',
   ],
-  ignoreDefaultArgs: ['--enable-automation'], // removes "controlled by automation" flag
-});
+  ignoreDefaultArgs: ['--enable-automation'],
+  ...(executablePath ? { executablePath } : {}),
+  ...(userDataDir ? { userDataDir } : {}),
+};
+
+if (executablePath) console.log(`Using system Chrome: ${executablePath}`);
+if (userDataDir) console.log(`Using persistent profile: ${userDataDir}`);
+
+const browser = await puppeteer.launch(launchOptions);
 
 const page = (await browser.pages())[0] || (await browser.newPage());
+
+// Random user agent
+const userAgent = RandomHelpers.getRandomUserAgent() ?? '';
+await page.setUserAgent(userAgent);
+
+// Request interception: block chrome-extension:// requests
+await page.setRequestInterception(true);
+page.on('request', (req) => {
+  if (req.url().startsWith('chrome-extension://')) {
+    req.abort('blockedbyclient');
+  } else {
+    req.continue();
+  }
+});
 
 // Fingerprint noise injection
 const noiseEnabled = (process.env.PUPPETEER_FINGERPRINT_NOISE ?? 'true').toLowerCase() !== 'false';

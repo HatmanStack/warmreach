@@ -226,3 +226,84 @@ def test_usage_report_failure_still_succeeds(lambda_context, llm_module, mock_se
         MockSvc.return_value.generate_message.return_value = {'message': 'Hello'}
         response = llm_module.lambda_handler(event, lambda_context)
     assert response['statusCode'] == 200
+
+
+# ---- analyze_message_patterns tests ----
+
+
+def test_analyze_message_patterns_routes_correctly(lambda_context, llm_module, mock_services):
+    """analyze_message_patterns calls LLMService with stats and sample messages."""
+    mock_services['feature_flags'].get_feature_flags.return_value = {
+        'tier': 'paid',
+        'features': {'message_intelligence': True, 'deep_research': True, 'ai_messaging': True},
+        'quotas': {},
+        'rateLimits': {},
+    }
+    event = {
+        'body': json.dumps({
+            'operation': 'analyze_message_patterns',
+            'stats': {'totalOutbound': 10, 'totalInbound': 5, 'responseRate': 0.5},
+            'sampleMessages': [{'content': 'hello', 'got_response': True}],
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    with patch.object(llm_module, 'LLMService') as MockSvc:
+        mock_result = {'insights': ['Insight 1', 'Insight 2'], 'analyzedAt': '2026-01-01T00:00:00'}
+        MockSvc.return_value.analyze_message_patterns.return_value = mock_result
+        response = llm_module.lambda_handler(event, lambda_context)
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert body['insights'] == ['Insight 1', 'Insight 2']
+    MockSvc.return_value.analyze_message_patterns.assert_called_once()
+
+
+def test_analyze_message_patterns_feature_gated(lambda_context, llm_module, mock_services):
+    """analyze_message_patterns returns 403 when message_intelligence is disabled."""
+    mock_services['feature_flags'].get_feature_flags.return_value = {
+        'tier': 'free',
+        'features': {'message_intelligence': False, 'deep_research': True},
+        'quotas': {},
+        'rateLimits': {},
+    }
+    event = {
+        'body': json.dumps({
+            'operation': 'analyze_message_patterns',
+            'stats': {},
+            'sampleMessages': [],
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    response = llm_module.lambda_handler(event, lambda_context)
+    assert response['statusCode'] == 403
+    body = json.loads(response['body'])
+    assert body['code'] == 'FEATURE_GATED'
+    assert body['feature'] == 'message_intelligence'
+
+
+def test_analyze_message_patterns_metered(lambda_context, llm_module, mock_services):
+    """analyze_message_patterns calls report_usage (it's a metered op)."""
+    mock_services['feature_flags'].get_feature_flags.return_value = {
+        'tier': 'paid',
+        'features': {'message_intelligence': True, 'deep_research': True, 'ai_messaging': True},
+        'quotas': {},
+        'rateLimits': {},
+    }
+    event = {
+        'body': json.dumps({
+            'operation': 'analyze_message_patterns',
+            'stats': {'totalOutbound': 5},
+            'sampleMessages': [],
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    with patch.object(llm_module, 'LLMService') as MockSvc:
+        MockSvc.return_value.analyze_message_patterns.return_value = {'insights': [], 'analyzedAt': '2026-01-01'}
+        response = llm_module.lambda_handler(event, lambda_context)
+    assert response['statusCode'] == 200
+    mock_services['quota'].report_usage.assert_called_once_with('test-user', 'analyze_message_patterns', count=1)

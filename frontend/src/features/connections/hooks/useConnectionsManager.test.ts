@@ -12,9 +12,14 @@ vi.mock('@/shared/hooks', () => ({
   useToast: vi.fn(() => ({ toast: vi.fn() })),
 }));
 
+vi.mock('@/features/tier', () => ({
+  useTier: vi.fn(() => ({ isFeatureEnabled: () => false, tier: 'free' })),
+}));
+
 vi.mock('@/shared/services', () => ({
   lambdaApiService: {
     getConnectionsByStatus: vi.fn(() => Promise.resolve([])),
+    computeRelationshipScores: vi.fn(() => Promise.resolve({ scoresComputed: 0 })),
   },
   ApiError: class ApiError extends Error {},
 }));
@@ -26,6 +31,7 @@ vi.mock('@/shared/utils/logger', () => ({
 // Import hook AFTER mocks are set up
 import { useConnectionsManager } from './useConnectionsManager';
 import { useAuth } from '@/features/auth';
+import { useTier } from '@/features/tier';
 import { lambdaApiService } from '@/shared/services';
 
 const mockUseAuth = useAuth as ReturnType<typeof vi.fn>;
@@ -281,6 +287,50 @@ describe('useConnectionsManager', () => {
       });
 
       expect(result.current.connectionsError).toBe('Network error');
+    });
+  });
+
+  describe('relationship score computation', () => {
+    const mockComputeScores = lambdaApiService.computeRelationshipScores as ReturnType<
+      typeof vi.fn
+    >;
+    const mockUseTier = useTier as ReturnType<typeof vi.fn>;
+
+    it('triggers score computation for pro users after connections fetch', async () => {
+      mockUseTier.mockReturnValue({
+        isFeatureEnabled: (f: string) => f === 'relationship_strength_scoring',
+        tier: 'pro',
+      });
+
+      const { result } = renderHook(() => useConnectionsManager(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.connectionsLoading).toBe(false);
+      });
+
+      // queryFn fires computeRelationshipScores as a side-effect for pro users
+      await waitFor(() => {
+        expect(mockComputeScores).toHaveBeenCalled();
+      });
+    });
+
+    it('does not trigger score computation for free-tier users', async () => {
+      mockUseTier.mockReturnValue({
+        isFeatureEnabled: () => false,
+        tier: 'free',
+      });
+
+      const { result } = renderHook(() => useConnectionsManager(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.connectionsLoading).toBe(false);
+      });
+
+      expect(mockComputeScores).not.toHaveBeenCalled();
     });
   });
 });

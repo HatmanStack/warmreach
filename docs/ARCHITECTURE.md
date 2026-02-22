@@ -2,7 +2,7 @@
 
 WarmReach is a monorepo with three components: a React frontend, an Electron/Puppeteer client, and an AWS serverless backend.
 
-> **Note:** Billing and tier management are available in WarmReach Pro.
+> **Note:** Billing, relationship scoring, message intelligence, and advanced analytics are available in WarmReach Pro.
 
 ## Components
 
@@ -33,24 +33,24 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 
 #### Lambda Functions
 
-| Function | Route | Purpose |
-|----------|-------|---------|
-| `command-dispatch` | `POST/GET /commands` | Command creation and dispatch to Electron agent via WebSocket |
-| `dynamodb-api` | `GET/POST /dynamodb`, `/profiles` | User settings, profile CRUD |
-| `edge-processing` | `POST /edges`, `/ragstack` | Connection edge management, RAGStack search/ingest |
-| `llm` | `POST /llm` | OpenAI/Bedrock AI operations (quota-metered) |
-| `websocket-*` | WebSocket `$connect/$disconnect/$default` | WebSocket lifecycle and message routing |
+| Function           | Route                                     | Purpose                                                       |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------------- |
+| `command-dispatch` | `POST/GET /commands`                      | Command creation and dispatch to Electron agent via WebSocket |
+| `dynamodb-api`     | `GET/POST /dynamodb`, `/profiles`         | User settings, profile CRUD                                   |
+| `edge-processing`  | `POST /edges`, `/ragstack`                | Connection edge management, RAGStack search/ingest            |
+| `llm`              | `POST /llm`                               | OpenAI/Bedrock AI operations (quota-metered)                  |
+| `websocket-*`      | WebSocket `$connect/$disconnect/$default` | WebSocket lifecycle and message routing                       |
 
 #### Shared Services (`lambdas/shared/python/`)
 
-| Module | Purpose |
-|--------|---------|
-| `base_service.py` | Base class for service layers |
-| `websocket_service.py` | WebSocket @connections API helper |
-| `ragstack_client.py` | RAGStack GraphQL client with circuit breaker + retry |
-| `circuit_breaker.py` | Circuit breaker pattern |
-| `ingestion_service.py` | Profile data ingestion |
-| `observability.py` | Correlation context and structured JSON logging |
+| Module                 | Purpose                                              |
+| ---------------------- | ---------------------------------------------------- |
+| `base_service.py`      | Base class for service layers                        |
+| `websocket_service.py` | WebSocket @connections API helper                    |
+| `ragstack_client.py`   | RAGStack GraphQL client with circuit breaker + retry |
+| `circuit_breaker.py`   | Circuit breaker pattern                              |
+| `ingestion_service.py` | Profile data ingestion                               |
+| `observability.py`     | Correlation context and structured JSON logging      |
 
 ### RAGStack (optional nested stack)
 
@@ -79,14 +79,14 @@ Electron Client (user's machine)
 
 ## DynamoDB Schema (single table)
 
-| Entity | PK | SK | Purpose |
-|--------|----|----|---------|
-| User settings | `USER#{sub}` | `SETTINGS` | Preferences, LinkedIn config |
-| Usage counters | `USER#{sub}` | `USAGE#daily` / `USAGE#monthly` | Quota metering |
-| Connection edge | `USER#{sub}` | `PROFILE#{id_b64}` | User-to-profile relationship |
-| Profile edge | `PROFILE#{id_b64}` | `USER#{sub}` | Reverse lookup |
-| WebSocket conn | `WSCONN#{connId}` | `CONN` | Active connection tracking |
-| Command | `COMMAND#{cmdId}` | `CMD` | Command state machine |
+| Entity          | PK                 | SK                              | Purpose                      |
+| --------------- | ------------------ | ------------------------------- | ---------------------------- |
+| User settings   | `USER#{sub}`       | `SETTINGS`                      | Preferences, LinkedIn config |
+| Usage counters  | `USER#{sub}`       | `USAGE#daily` / `USAGE#monthly` | Quota metering               |
+| Connection edge | `USER#{sub}`       | `PROFILE#{id_b64}`              | User-to-profile relationship |
+| Profile edge    | `PROFILE#{id_b64}` | `USER#{sub}`                    | Reverse lookup               |
+| WebSocket conn  | `WSCONN#{connId}`  | `CONN`                          | Active connection tracking   |
+| Command         | `COMMAND#{cmdId}`  | `CMD`                           | Command state machine        |
 
 ## Authentication
 

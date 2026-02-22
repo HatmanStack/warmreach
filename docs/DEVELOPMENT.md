@@ -130,6 +130,22 @@ npm run dev:client
 npm run dev
 ```
 
+### Fingerprint Inspection Tool
+
+A standalone script launches a non-headless browser with the full anti-fingerprinting stack (stealth plugin, canvas/WebGL/audio noise, request interception, random user agent, system Chrome detection). Use it to manually inspect what LinkedIn sees.
+
+```bash
+cd client && node --import tsx linkedin-inspect.mjs
+```
+
+Disable individual layers for comparison testing:
+```bash
+PUPPETEER_STEALTH=false cd client && node --import tsx linkedin-inspect.mjs
+PUPPETEER_FINGERPRINT_NOISE=false cd client && node --import tsx linkedin-inspect.mjs
+```
+
+Visit `bot.sannysoft.com` in the opened browser to verify stealth mitigations are active.
+
 ### 3. Full Development Mode (Frontend + Client + Real LinkedIn)
 **Best for**: Final verification and real-world testing.
 **Warning**: Use with caution to avoid account flagging. Respect rate limits.

@@ -668,6 +668,63 @@ class LambdaApiService {
       return { success: false, error: 'Failed to execute LLM operation' };
     }
   }
+
+  /**
+   * Trigger relationship score computation for all user connections
+   * @returns Promise with count of scores computed
+   */
+  async computeRelationshipScores(): Promise<{ scoresComputed: number }> {
+    return this.makeRequest<{ scoresComputed: number }>('edges', 'compute_relationship_scores');
+  }
+
+  /**
+   * Get messaging insights (stats + optional LLM insights)
+   * @param forceRecompute If true, recompute even if cached
+   * @returns Promise with stats, insights, and computedAt
+   */
+  async getMessagingInsights(forceRecompute = false): Promise<{
+    stats: Record<string, unknown>;
+    insights: string[] | null;
+    computedAt: string;
+  }> {
+    return this.makeRequest('edges', 'get_messaging_insights', { forceRecompute });
+  }
+
+  /**
+   * Trigger LLM analysis of message patterns
+   * @param stats Messaging stats object
+   * @param sampleMessages Sample outbound messages with response labels
+   * @returns Promise with insights and analyzedAt
+   */
+  async analyzeMessagePatterns(
+    stats: Record<string, unknown>,
+    sampleMessages: Record<string, unknown>[]
+  ): Promise<{ insights: string[]; analyzedAt: string }> {
+    return this.makeRequest('llm', 'analyze_message_patterns', {
+      stats,
+      sampleMessages,
+    });
+  }
+
+  /**
+   * Get analytics dashboard data
+   * @param days Number of days to aggregate
+   * @returns Promise with funnel, growth, engagement, usage data
+   */
+  async getAnalyticsDashboard(days = 30): Promise<Record<string, unknown>> {
+    return this.makeRequest('edges', 'get_analytics_dashboard', { days });
+  }
+
+  /**
+   * Store LLM-generated message insights
+   * @param insights Array of insight strings
+   * @returns Promise with success status
+   */
+  async storeMessageInsights(
+    insights: string[]
+  ): Promise<{ success: boolean; insightsUpdatedAt: string }> {
+    return this.makeRequest('edges', 'store_message_insights', { insights });
+  }
 }
 
 // Profile operations via Lambda-backed API - using centralized UserProfile from @/types

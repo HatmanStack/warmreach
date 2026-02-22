@@ -10,15 +10,18 @@ import {
   LogOut,
   AlertCircle,
   Database,
+  BarChart3,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
+import { useTier } from '@/features/tier';
 import { useHealAndRestore } from '@/features/workflow';
 import {
   useConnectionsManager,
   NewConnectionsTab,
   VirtualConnectionList,
   ConnectionListSkeleton,
+  MessageIntelligencePanel,
 } from '@/features/connections';
 import { ConversationTopicPanel, MessageModal, useMessageGeneration } from '@/features/messages';
 import { useLinkedInSearch } from '@/features/search';
@@ -32,6 +35,7 @@ import { AgentStatusBadge } from '@/shared/components/AgentStatusBadge';
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
+  const { isFeatureEnabled } = useTier();
   const { startListening } = useHealAndRestore();
   const { userProfile, refreshUserProfile } = useUserProfile();
   const [conversationTopic, setConversationTopic] = useState('');
@@ -130,6 +134,16 @@ const Dashboard = () => {
             <div className="flex items-center space-x-4">
               <AgentStatusBadge />
               <span className="text-white">Welcome, {displayName}</span>
+              {isFeatureEnabled('advanced_analytics') && (
+                <Button
+                  variant="ghost"
+                  className="text-white hover:bg-white/10"
+                  onClick={() => navigate('/analytics')}
+                >
+                  <BarChart3 className="h-4 w-4 mr-2" />
+                  Analytics
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 className="text-white hover:bg-white/10"
@@ -311,6 +325,7 @@ const Dashboard = () => {
                   onCancel={handleStopGeneration}
                   className="mt-4"
                 />
+                <MessageIntelligencePanel />
               </div>
             </div>
           </TabsContent>

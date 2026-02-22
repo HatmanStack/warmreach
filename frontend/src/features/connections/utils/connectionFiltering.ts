@@ -109,7 +109,7 @@ export function filterConnections(
  */
 export function sortConnections(
   connections: Connection[],
-  sortBy: 'name' | 'company' | 'date_added' | 'conversion_likelihood' = 'name',
+  sortBy: 'name' | 'company' | 'date_added' | 'conversion_likelihood' | 'strength' = 'name',
   sortOrder: 'asc' | 'desc' = 'asc'
 ): Connection[] {
   const sorted = [...connections].sort((a, b) => {
@@ -136,6 +136,11 @@ export function sortConnections(
         // Use ordinal values for enum-based sorting
         aValue = a.conversion_likelihood ? LIKELIHOOD_ORDINAL[a.conversion_likelihood] : 0;
         bValue = b.conversion_likelihood ? LIKELIHOOD_ORDINAL[b.conversion_likelihood] : 0;
+        break;
+
+      case 'strength':
+        aValue = a.relationship_score ?? -1;
+        bValue = b.relationship_score ?? -1;
         break;
 
       default:

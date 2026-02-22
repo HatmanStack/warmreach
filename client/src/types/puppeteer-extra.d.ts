@@ -27,9 +27,7 @@ declare module 'puppeteer-extra' {
 declare module 'puppeteer-extra-plugin-stealth' {
   import type { PuppeteerExtraPlugin } from 'puppeteer-extra';
 
-  function StealthPlugin(opts?: {
-    enabledEvasions?: Set<string>;
-  }): PuppeteerExtraPlugin;
+  function StealthPlugin(opts?: { enabledEvasions?: Set<string> }): PuppeteerExtraPlugin;
 
   export default StealthPlugin;
 }
