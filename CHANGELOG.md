@@ -33,6 +33,10 @@ First versioned release of WarmReach.
 - Validate `days` parameter as numeric, return 400 on invalid input
 - Handle empty `first_name` in connection card avatar fallback
 - Exclude pro frontend components from community edition sync
+- Fix CognitoUserPool mock constructor in test files (arrow functions not constructable)
+- Pin eslint ecosystem to v9-compatible versions to resolve peer dependency conflicts
+- Add stub overlays for pro backend services imported by shared code
+- Release-triggered sync workflow to mirror releases to community repo
 
 ### Dependencies
 
@@ -40,3 +44,4 @@ First versioned release of WarmReach.
 - Bump actions/setup-python from 5 to 6
 - Bump electron-builder from 26.7.0 to 26.8.1
 - Bump production dependencies in frontend and client
+- Merge dependabot PRs for frontend and client dependencies
