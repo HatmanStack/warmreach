@@ -5,6 +5,34 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-02-22
+
+### Added
+
+- **[Pro]** Tone Analysis — LLM-powered tone evaluation (professionalism, warmth, clarity, sales pressure) for draft LinkedIn messages
+- **[Pro]** Best Time to Send — Analyze message history to recommend optimal send times per connection based on response patterns
+- **[Pro]** Reply Probability — Predict response likelihood for each connection using recency, frequency, reciprocity, and message length signals
+- **[Pro]** Priority Inference — Rank connections by outreach priority combining reply probability, recency decay, relationship strength, and engagement signals with DynamoDB caching
+- **[Pro]** Cluster Detection — Group connections by shared company, industry, location, or tags to reveal network patterns
+- Shared `compute_response_rate` utility extracted to `message_utils.py` to deduplicate logic across services
+- Lambda overlay infrastructure for edge-processing and LLM lambdas to strip Pro operations from community sync
+- Release workflow (`release.yml`) to create GitHub Releases from tag pushes using CHANGELOG.md
+- Commitlint enforcement via Husky `commit-msg` hook
+
+### Changed
+
+- Extract `_check_feature_gate` helper in edge-processing lambda, replacing 11 identical 6-line blocks with 2-line calls
+- Add DynamoDB caching (7-day TTL) for priority recommendations following the messaging insights pattern
+- Inject `PriorityInferenceService` and `ReplyProbabilityService` into EdgeService constructor for warm container reuse
+
+### Fixed
+
+- Fix substring matching bug in `ClusterDetectionService` — use exact equality for company/industry/location grouping
+- Fix hardcoded confidence value in `ReplyProbabilityService` — derive from signal count
+- Fix ClusterView wording: "clusters found" to "groups found", "unclustered" to "ungrouped"
+- Fix stale `tone_analysis_service.py` overlay mapping to nonexistent file
+- Fix broken plan doc links in `PRO_FEATURES_ROADMAP.md` (old Phase paths to correct v1.0/v1.1 paths)
+
 ## [1.0.0] - 2026-02-22
 
 First versioned release of WarmReach.
