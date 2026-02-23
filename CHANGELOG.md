@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Remove stale `tone_analysis_service.py` overlay mapping to nonexistent file
 - Fix race condition in release workflow (remove tag trigger that caused duplicate runs)
+- Fix community CI failures — create `test_edge_service.py` overlay (strip Pro tests) and remove test files from sync `exclude_paths` so overlays are applied instead of deleted
+- Add "Active Development" notice to community README overlay
 
 ## [1.1.0] - 2026-02-22
 

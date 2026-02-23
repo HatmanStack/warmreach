@@ -1,3 +1,5 @@
+> **Active Development** — This repo changes frequently. Expect breaking changes.
+
 # WarmReach Community Edition
 
 <p align="center">
