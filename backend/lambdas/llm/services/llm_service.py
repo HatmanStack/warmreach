@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 # Shared layer imports (from /opt/python via Lambda Layer)
-from errors.exceptions import ServiceError
 from shared_services.base_service import BaseService
 
 try:
