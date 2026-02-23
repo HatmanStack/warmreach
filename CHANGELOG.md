@@ -5,6 +5,19 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-02-22
+
+### Added
+
+- Auto-release workflow — creating a release from CHANGELOG.md changes on push to main
+- Commitlint enforcement via Husky `commit-msg` hook
+- Lambda overlays for edge-processing and LLM lambdas to strip Pro logic from community sync
+
+### Fixed
+
+- Remove stale `tone_analysis_service.py` overlay mapping to nonexistent file
+- Fix race condition in release workflow (remove tag trigger that caused duplicate runs)
+
 ## [1.1.0] - 2026-02-22
 
 ### Added
