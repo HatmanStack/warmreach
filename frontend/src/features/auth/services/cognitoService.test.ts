@@ -30,27 +30,35 @@ const {
 
 vi.mock('amazon-cognito-identity-js', () => {
   return {
-    CognitoUserPool: vi.fn().mockImplementation(() => ({
-      signUp: mockSignUp,
-      getCurrentUser: mockGetCurrentUser,
-    })),
-    CognitoUser: vi.fn().mockImplementation(() => ({
-      authenticateUser: mockAuthenticateUser,
-      getUserAttributes: mockGetUserAttributes,
-      completeNewPasswordChallenge: mockCompleteNewPasswordChallenge,
-      signOut: mockSignOut,
-      getSession: mockGetSession,
-      confirmRegistration: mockConfirmRegistration,
-      resendConfirmationCode: mockResendConfirmationCode,
-      forgotPassword: mockForgotPassword,
-      confirmPassword: mockConfirmPassword,
-    })),
-    AuthenticationDetails: vi.fn(),
-    CognitoUserAttribute: vi.fn().mockImplementation((data: { Name: string; Value: string }) => ({
-      getName: () => data.Name,
-      getValue: () => data.Value,
-    })),
-    CognitoUserSession: vi.fn(),
+    CognitoUserPool: class {
+      signUp = mockSignUp;
+      getCurrentUser = mockGetCurrentUser;
+    },
+    CognitoUser: class {
+      authenticateUser = mockAuthenticateUser;
+      getUserAttributes = mockGetUserAttributes;
+      completeNewPasswordChallenge = mockCompleteNewPasswordChallenge;
+      signOut = mockSignOut;
+      getSession = mockGetSession;
+      confirmRegistration = mockConfirmRegistration;
+      resendConfirmationCode = mockResendConfirmationCode;
+      forgotPassword = mockForgotPassword;
+      confirmPassword = mockConfirmPassword;
+    },
+    AuthenticationDetails: class {},
+    CognitoUserAttribute: class {
+      private data: { Name: string; Value: string };
+      constructor(data: { Name: string; Value: string }) {
+        this.data = data;
+      }
+      getName() {
+        return this.data.Name;
+      }
+      getValue() {
+        return this.data.Value;
+      }
+    },
+    CognitoUserSession: class {},
   };
 });
 

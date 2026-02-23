@@ -608,6 +608,12 @@ export interface ConnectionCardProps {
 
   /** Callback when checkbox state changes */
   onCheckboxChange?: (connectionId: string, checked: boolean) => void;
+
+  /** Reply probability percentage 0-100 (optional, pro feature) */
+  replyProbability?: number;
+
+  /** Reply probability confidence level (optional, pro feature) */
+  replyConfidence?: 'high' | 'medium' | 'low';
 }
 
 /**

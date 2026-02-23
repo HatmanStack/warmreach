@@ -21,6 +21,23 @@ vi.mock('@/shared/hooks', () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
+// Mock tier context
+vi.mock('@/features/tier', () => ({
+  useTier: () => ({ isFeatureEnabled: () => false, tier: 'community', loading: false }),
+  FeatureGate: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+// Mock tone analysis hook
+vi.mock('@/features/connections/hooks/useToneAnalysis', () => ({
+  useToneAnalysis: () => ({
+    result: null,
+    isAnalyzing: false,
+    error: null,
+    analyzeTone: vi.fn(),
+    clearResult: vi.fn(),
+  }),
+}));
+
 // Mock logger
 vi.mock('@/shared/utils/logger', () => ({
   createLogger: () => ({

@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { MessageSquare, ExternalLink, User, Building, MapPin, Tag } from 'lucide-react';
 import { FeatureGate } from '@/features/tier';
 import { RelationshipStrengthBadge } from './RelationshipStrengthBadge';
+import { ReplyProbabilityBadge } from './ReplyProbabilityBadge';
 import type { ConnectionCardProps } from '@/types';
 
 /**
@@ -45,6 +46,8 @@ const ConnectionCard = ({
   isCheckboxEnabled = false,
   isChecked = false,
   onCheckboxChange,
+  replyProbability,
+  replyConfidence,
 }: ConnectionCardProps) => {
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isTagsOpen, setIsTagsOpen] = useState(false);
@@ -341,6 +344,15 @@ const ConnectionCard = ({
                   score={connection.relationship_score}
                   breakdown={connection.score_breakdown}
                 />
+              </FeatureGate>
+              {/* Reply Probability Badge (Pro feature) */}
+              <FeatureGate feature="reply_probability">
+                {replyProbability != null && replyConfidence && (
+                  <ReplyProbabilityBadge
+                    probability={replyProbability}
+                    confidence={replyConfidence}
+                  />
+                )}
               </FeatureGate>
               {/* Connection Status Badge */}
               {statusDisplay && (

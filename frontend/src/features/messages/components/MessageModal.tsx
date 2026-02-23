@@ -16,6 +16,7 @@ import {
   Sparkles,
   Check,
   SkipForward,
+  ScanEye,
 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { useToast } from '@/shared/hooks';
@@ -30,6 +31,9 @@ import {
 import { NoMessagesState } from '@/shared/components/ui/empty-state';
 import LoadingOverlay from '@/shared/components/ui/loading-overlay';
 import type { MessageModalProps } from '@/types';
+import { useTier } from '@/features/tier';
+import { useToneAnalysis } from '@/features/connections/hooks/useToneAnalysis';
+import { ToneAnalysisBadge } from '@/features/connections/components/ToneAnalysisBadge';
 
 export const MessageModal: React.FC<MessageModalProps> = ({
   isOpen,
@@ -49,6 +53,13 @@ export const MessageModal: React.FC<MessageModalProps> = ({
   const [isSending, setIsSending] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const { isFeatureEnabled } = useTier();
+  const {
+    result: toneResult,
+    isAnalyzing,
+    analyzeTone,
+    clearResult: clearToneResult,
+  } = useToneAnalysis();
 
   // Handle pre-populated message content
   useEffect(() => {
@@ -270,13 +281,19 @@ export const MessageModal: React.FC<MessageModalProps> = ({
           </LoadingOverlay>
         </div>
 
+        {/* Tone Analysis Result */}
+        {toneResult && <ToneAnalysisBadge result={toneResult} onClose={clearToneResult} />}
+
         {/* Message Input */}
         <div className="flex flex-col gap-1 pt-2 min-h-[120px]">
           <div className="flex w-full gap-2 flex-1">
             <textarea
               placeholder="Type your message..."
               value={messageInput}
-              onChange={(e) => setMessageInput(e.target.value)}
+              onChange={(e) => {
+                setMessageInput(e.target.value);
+                if (toneResult) clearToneResult();
+              }}
               onKeyDown={handleKeyDown}
               disabled={isSending}
               maxLength={1000}
@@ -305,19 +322,44 @@ export const MessageModal: React.FC<MessageModalProps> = ({
                   </Button>
                 </>
               ) : (
-                <Button
-                  onClick={handleSendMessage}
-                  disabled={isSending || !messageInput.trim()}
-                  size="icon"
-                  className="shrink-0 bg-blue-600 hover:bg-blue-700"
-                  aria-label="Send message"
-                >
-                  {isSending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
+                <>
+                  {isFeatureEnabled('tone_analysis') && (
+                    <Button
+                      onClick={() =>
+                        analyzeTone(
+                          messageInput,
+                          connection.first_name,
+                          connection.position,
+                          connection.status
+                        )
+                      }
+                      disabled={!messageInput.trim() || isAnalyzing}
+                      size="icon"
+                      className="shrink-0 bg-purple-600 hover:bg-purple-700"
+                      aria-label="Check tone"
+                      data-testid="check-tone-button"
+                    >
+                      {isAnalyzing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ScanEye className="h-4 w-4" />
+                      )}
+                    </Button>
                   )}
-                </Button>
+                  <Button
+                    onClick={handleSendMessage}
+                    disabled={isSending || !messageInput.trim()}
+                    size="icon"
+                    className="shrink-0 bg-blue-600 hover:bg-blue-700"
+                    aria-label="Send message"
+                  >
+                    {isSending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                  </Button>
+                </>
               )}
             </div>
           </div>

@@ -2,7 +2,7 @@
 
 WarmReach is a monorepo with three components: a React frontend, an Electron/Puppeteer client, and an AWS serverless backend.
 
-> **Note:** Billing, relationship scoring, message intelligence, and advanced analytics are available in WarmReach Pro.
+> **Note:** Billing, relationship scoring, message intelligence, tone analysis, send time recommendations, reply probability, priority inference, cluster detection, and advanced analytics are available in WarmReach Pro.
 
 ## Components
 
@@ -51,6 +51,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 | `circuit_breaker.py`   | Circuit breaker pattern                              |
 | `ingestion_service.py` | Profile data ingestion                               |
 | `observability.py`     | Correlation context and structured JSON logging      |
+| `message_utils.py`    | Shared message analysis utilities                    |
 
 ### RAGStack (optional nested stack)
 

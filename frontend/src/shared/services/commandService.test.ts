@@ -24,16 +24,18 @@ vi.mock('@/shared/utils/logger', () => ({
 
 // Mock Cognito — returns a valid session by default
 vi.mock('amazon-cognito-identity-js', () => ({
-  CognitoUserPool: vi.fn().mockImplementation(() => ({
-    getCurrentUser: () => ({
-      getSession: (cb: (err: Error | null, session: unknown) => void) =>
-        cb(null, {
-          isValid: () => true,
-          getIdToken: () => ({ getJwtToken: () => 'mock-token' }),
-        }),
-    }),
-  })),
-  CognitoUserSession: vi.fn(),
+  CognitoUserPool: class {
+    getCurrentUser() {
+      return {
+        getSession: (cb: (err: Error | null, session: unknown) => void) =>
+          cb(null, {
+            isValid: () => true,
+            getIdToken: () => ({ getJwtToken: () => 'mock-token' }),
+          }),
+      };
+    }
+  },
+  CognitoUserSession: class {},
 }));
 
 vi.mock('@/config/appConfig', () => ({

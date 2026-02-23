@@ -22,6 +22,9 @@ import {
   VirtualConnectionList,
   ConnectionListSkeleton,
   MessageIntelligencePanel,
+  SendTimeRecommendations,
+  PriorityRecommendations,
+  ClusterView,
 } from '@/features/connections';
 import { ConversationTopicPanel, MessageModal, useMessageGeneration } from '@/features/messages';
 import { useLinkedInSearch } from '@/features/search';
@@ -325,7 +328,10 @@ const Dashboard = () => {
                   onCancel={handleStopGeneration}
                   className="mt-4"
                 />
+                <PriorityRecommendations />
+                <ClusterView />
                 <MessageIntelligencePanel />
+                <SendTimeRecommendations />
               </div>
             </div>
           </TabsContent>

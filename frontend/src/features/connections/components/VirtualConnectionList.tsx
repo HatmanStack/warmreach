@@ -4,6 +4,7 @@ import ConnectionCard from './ConnectionCard';
 import NewConnectionCard from './NewConnectionCard';
 import ConnectionFiltersComponent from './ConnectionFilters';
 import { filterConnections, sortConnections } from '@/features/connections';
+import { useReplyProbabilities } from '../hooks/useReplyProbabilities';
 import type { Connection, ConnectionFilters } from '@/types';
 
 interface VirtualConnectionListProps {
@@ -53,6 +54,7 @@ const VirtualConnectionList: React.FC<VirtualConnectionListProps> = ({
   const [containerHeight, setContainerHeight] = useState(600);
   const [filters, setFilters] = useState<ConnectionFilters>(initialFilters);
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  const { probabilityMap } = useReplyProbabilities();
 
   // Compute container height from viewport
   useEffect(() => {
@@ -200,6 +202,8 @@ const VirtualConnectionList: React.FC<VirtualConnectionListProps> = ({
                       isCheckboxEnabled={connection.status === 'ally'}
                       isChecked={selectedConnections?.includes(connection.id) || false}
                       onCheckboxChange={onCheckboxChange}
+                      replyProbability={probabilityMap[connection.id]?.replyProbability}
+                      replyConfidence={probabilityMap[connection.id]?.confidence}
                     />
                   )}
                 </div>

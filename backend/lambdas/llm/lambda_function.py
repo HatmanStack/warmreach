@@ -132,8 +132,8 @@ def lambda_handler(event, _context):
                         event,
                     )
             except Exception:
-                logger.warning('Feature flag check failed, allowing request')
-                pass
+                logger.error('Feature flag check failed for deep_research, denying request')
+                return _resp(503, {'error': 'Feature availability check failed'}, event)
 
         # Feature gate: message intelligence ops require feature flag
         if op in MESSAGE_INTEL_OPS and _feature_flag_service:
@@ -150,8 +150,8 @@ def lambda_handler(event, _context):
                         event,
                     )
             except Exception:
-                logger.warning('Feature flag check failed, allowing request')
-                pass
+                logger.error('Feature flag check failed for message_intelligence, denying request')
+                return _resp(503, {'error': 'Feature availability check failed'}, event)
 
         svc = LLMService(openai_client=openai_client, bedrock_client=bedrock_client, table=table)
 
