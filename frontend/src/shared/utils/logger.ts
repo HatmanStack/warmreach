@@ -132,10 +132,21 @@ const log = (level: LogLevel, message: string, context?: LogContext): void => {
       break;
   }
 
-  // In production, you might want to send errors to a monitoring service
+  // In production, send errors to a monitoring service
   if (!isDevelopment() && level === 'error') {
-    // TODO: Send to error tracking service (e.g., Sentry, Datadog)
-    // Example: Sentry.captureException(new Error(message), { extra: context });
+    try {
+      const telemetryEndpoint = import.meta.env.VITE_TELEMETRY_ENDPOINT || '/api/telemetry/error';
+      fetch(telemetryEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, context: entry.context, timestamp: entry.timestamp }),
+        keepalive: true,
+      }).catch(() => {
+        // Silently ignore telemetry failures to prevent infinite error loops
+      });
+    } catch {
+      // Ignore synchronous errors in telemetry
+    }
   }
 };
 

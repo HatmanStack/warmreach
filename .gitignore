@@ -56,5 +56,7 @@ backend/samconfig.toml
 
 # Secrets / Keys
 client/.keys/*
-client/.sealbox_private_key
 mcp-servers.json
+
+# IDE Integration
+GEMINI.md

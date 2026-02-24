@@ -1,4 +1,5 @@
 // Shared services barrel export
-export { lambdaApiService, ApiError } from './lambdaApiService';
+export { lambdaApiService } from './lambdaApiService';
+export { ApiError } from '../utils/apiError';
 export { websocketService } from './websocketService';
 export { commandService } from './commandService';

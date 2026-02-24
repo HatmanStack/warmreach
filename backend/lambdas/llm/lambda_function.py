@@ -112,46 +112,39 @@ def lambda_handler(event, _context):
 
         # Auto-provision tier on first call (non-blocking)
         if table:
+            from botocore.exceptions import ClientError
+
             try:
                 ensure_tier_exists(table, user_id)
-            except Exception:
-                logger.debug('Tier auto-provision failed, continuing')
+            except ClientError as e:
+                logger.error(f'Tier auto-provision failed due to DynamoDB error: {e}')
+            except Exception as e:
+                logger.error(f'Tier auto-provision failed: {e}')
 
-        # Feature gate: deep research ops require feature flag
-        if op in DEEP_RESEARCH_OPS and _feature_flag_service:
-            try:
-                flags = _feature_flag_service.get_feature_flags(user_id)
-                if not flags.get('features', {}).get('deep_research', False):
-                    return _resp(
-                        403,
-                        {
-                            'error': 'Feature not available on current plan',
-                            'code': 'FEATURE_GATED',
-                            'feature': 'deep_research',
-                        },
-                        event,
-                    )
-            except Exception:
-                logger.error('Feature flag check failed for deep_research, denying request')
-                return _resp(503, {'error': 'Feature availability check failed'}, event)
+        # Feature gate checks
+        if _feature_flag_service:
+            feature_to_check = None
+            if op in DEEP_RESEARCH_OPS:
+                feature_to_check = 'deep_research'
+            elif op in MESSAGE_INTEL_OPS:
+                feature_to_check = 'message_intelligence'
 
-        # Feature gate: message intelligence ops require feature flag
-        if op in MESSAGE_INTEL_OPS and _feature_flag_service:
-            try:
-                flags = _feature_flag_service.get_feature_flags(user_id)
-                if not flags.get('features', {}).get('message_intelligence', False):
-                    return _resp(
-                        403,
-                        {
-                            'error': 'Feature not available on current plan',
-                            'code': 'FEATURE_GATED',
-                            'feature': 'message_intelligence',
-                        },
-                        event,
-                    )
-            except Exception:
-                logger.error('Feature flag check failed for message_intelligence, denying request')
-                return _resp(503, {'error': 'Feature availability check failed'}, event)
+            if feature_to_check:
+                try:
+                    flags = _feature_flag_service.get_feature_flags(user_id)
+                    if not flags.get('features', {}).get(feature_to_check, False):
+                        return _resp(
+                            403,
+                            {
+                                'error': 'Feature not available on current plan',
+                                'code': 'FEATURE_GATED',
+                                'feature': feature_to_check,
+                            },
+                            event,
+                        )
+                except Exception:
+                    logger.error(f'Feature flag check failed for {feature_to_check}, denying request')
+                    return _resp(503, {'error': 'Feature availability check failed'}, event)
 
         svc = LLMService(openai_client=openai_client, bedrock_client=bedrock_client, table=table)
 

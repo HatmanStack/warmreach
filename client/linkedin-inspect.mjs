@@ -40,16 +40,16 @@ function detectSystemChrome() {
   const candidates =
     process.platform === 'win32'
       ? [
-          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        ]
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      ]
       : [
-          '/usr/bin/google-chrome-stable',
-          '/usr/bin/google-chrome',
-          '/usr/bin/chromium-browser',
-          '/usr/bin/chromium',
-          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        ];
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      ];
 
   for (const candidate of candidates) {
     try {
@@ -70,6 +70,9 @@ const launchOptions = {
   args: [
     '--no-sandbox',
     '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage', // Prevent shared memory crashes on Linux (heavy pages)
+    '--disable-accelerated-2d-canvas',
+    '--no-zygote',
     '--start-maximized',
     '--window-size=1400,900',
 
@@ -95,6 +98,28 @@ if (userDataDir) console.log(`Using persistent profile: ${userDataDir}`);
 const browser = await puppeteer.launch(launchOptions);
 
 const page = (await browser.pages())[0] || (await browser.newPage());
+
+// Capture page console logs and errors to debug LinkedIn logouts/crashes
+const logFile = 'linkedin-inspect.log';
+page.on('console', (msg) => {
+  const type = msg.type();
+  const rawText = msg.text();
+
+  if (rawText.includes('net::ERR_BLOCKED_BY_CLIENT.Inspector')) {
+    return;
+  }
+
+  if (type === 'error' || type === 'warning' || type === 'log') {
+    const text = `[PAGE_${type.toUpperCase()}] ${rawText}\n`;
+    console.log(text.trim());
+    fs.appendFileSync(logFile, text);
+  }
+});
+page.on('pageerror', (err) => {
+  const text = `[PAGE_EXCEPTION] ${err.toString()}\n`;
+  console.error(text.trim());
+  fs.appendFileSync(logFile, text);
+});
 
 // Random user agent
 const userAgent = RandomHelpers.getRandomUserAgent() ?? '';

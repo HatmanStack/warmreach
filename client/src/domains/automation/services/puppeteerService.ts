@@ -37,16 +37,16 @@ function detectSystemChrome(): string | undefined {
   const candidates =
     process.platform === 'win32'
       ? [
-          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        ]
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      ]
       : [
-          '/usr/bin/google-chrome-stable',
-          '/usr/bin/google-chrome',
-          '/usr/bin/chromium-browser',
-          '/usr/bin/chromium',
-          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        ];
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      ];
 
   for (const candidate of candidates) {
     try {
@@ -111,7 +111,7 @@ export class PuppeteerService {
 
       // If user asked for UI but no DISPLAY is available, warn and keep headless to avoid crash
       const effectiveHeadless: boolean | 'shell' =
-        resolvedHeadless || !displayEnv ? 'shell' : false;
+        (resolvedHeadless || !displayEnv) ? 'shell' : false;
       if (!resolvedHeadless && !displayEnv) {
         logger.warn(
           'HEADLESS=false requested but DISPLAY is not set. Browser UI cannot be shown in this environment. Running headless instead.'
@@ -171,6 +171,24 @@ export class PuppeteerService {
           }
         });
       }
+
+      // Capture page console logs and errors to debug LinkedIn logouts/crashes
+      this.page.on('console', (msg) => {
+        const type = msg.type();
+        const rawText = msg.text();
+
+        if (rawText.includes('net::ERR_BLOCKED_BY_CLIENT.Inspector')) {
+          return;
+        }
+
+        if (type === 'error' || type === 'warn' || type === 'log') {
+          logger.debug(`[PAGE_${type.toUpperCase()}] ${rawText}`);
+        }
+      });
+      this.page.on('pageerror', (err: unknown) => {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        logger.error(`[PAGE_EXCEPTION] ${errorMessage}`);
+      });
 
       // Fingerprint noise injection
       if (config.puppeteer.enableFingerprintNoise) {

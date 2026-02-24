@@ -9,8 +9,10 @@ from conftest import load_lambda_module
 
 @pytest.fixture
 def llm_module():
-    """Load the LLM Lambda module."""
-    return load_lambda_module('llm')
+    """Load the LLM Lambda module within a mock AWS context."""
+    from moto import mock_aws
+    with mock_aws():
+        return load_lambda_module('llm')
 
 
 @pytest.fixture
@@ -21,7 +23,12 @@ def mock_services(llm_module):
     mock_ff = MagicMock()
     mock_ff.get_feature_flags.return_value = {
         'tier': 'paid',
-        'features': {'deep_research': True, 'ai_messaging': True},
+        'features': {
+            'deep_research': True,
+            'ai_messaging': True,
+            'tone_analysis': True,
+            'message_intelligence': True,
+        },
         'quotas': {},
         'rateLimits': {},
     }

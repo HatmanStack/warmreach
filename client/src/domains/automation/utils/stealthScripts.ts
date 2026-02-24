@@ -41,9 +41,15 @@ export function getCanvasNoiseScript(): string {
     HTMLCanvasElement.prototype.toDataURL = function(...args) {
       return origToDataURL.apply(noisyExport(this), args);
     };
+    HTMLCanvasElement.prototype.toDataURL.toString = function() {
+      return 'function toDataURL() { [native code] }';
+    };
 
     HTMLCanvasElement.prototype.toBlob = function(callback, ...rest) {
       return origToBlob.call(noisyExport(this), callback, ...rest);
+    };
+    HTMLCanvasElement.prototype.toBlob.toString = function() {
+      return 'function toBlob() { [native code] }';
     };
   })()`;
 }
@@ -76,6 +82,9 @@ export function getWebGLSpoofScript(): string {
       if (param === 0x9246) return profile.renderer;
       return getParam.call(this, param);
     };
+    WebGLRenderingContext.prototype.getParameter.toString = function() {
+      return 'function getParameter() { [native code] }';
+    };
 
     if (typeof WebGL2RenderingContext !== 'undefined') {
       const getParam2 = WebGL2RenderingContext.prototype.getParameter;
@@ -83,6 +92,9 @@ export function getWebGLSpoofScript(): string {
         if (param === 0x9245) return profile.vendor;
         if (param === 0x9246) return profile.renderer;
         return getParam2.call(this, param);
+      };
+      WebGL2RenderingContext.prototype.getParameter.toString = function() {
+        return 'function getParameter() { [native code] }';
       };
     }
   })()`;
@@ -100,13 +112,16 @@ export function getAudioNoiseScript(): string {
     OfflineAudioContext.prototype.startRendering = function() {
       return origStartRendering.call(this).then(buffer => {
         for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-          const data = buffer.getChannelData(ch);
-          for (let i = 0; i < data.length; i += 100) {
-            data[i] += (Math.random() - 0.5) * 0.0002;
-          }
-        }
-        return buffer;
+           const data = buffer.getChannelData(ch);
+           for (let i = 0; i < data.length; i += 100) {
+             data[i] += (Math.random() - 0.5) * 0.0002;
+           }
+         }
+         return buffer;
       });
+    };
+    OfflineAudioContext.prototype.startRendering.toString = function() {
+      return 'function startRendering() { [native code] }';
     };
   })()`;
 }
