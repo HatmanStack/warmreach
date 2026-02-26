@@ -8,6 +8,12 @@
 import { PuppeteerService } from '../../automation/services/puppeteerService.js';
 import { logger } from '#utils/logger.js';
 import ConfigManager from '#shared-config/configManager.js';
+import { SignalDetector } from '../../automation/utils/signalDetector.js';
+import { SessionMetrics } from '../../automation/utils/sessionMetrics.js';
+import { getContentAnalyzer, _resetContentAnalyzerForTesting } from '../../automation/utils/contentSignalAnalyzer.js';
+import { BackoffController } from '../../automation/utils/backoffController.js';
+import { linkedInInteractionQueue } from '../../automation/utils/interactionQueue.js';
+import { linkedinResolver } from '../../linkedin/selectors/index.js';
 
 /**
  * Browser Session Manager - Singleton class for managing persistent LinkedIn browser sessions.
@@ -23,6 +29,10 @@ class BrowserSessionManager {
   static sessionStartTime = null;
   static errorCount = 0;
   static configManager = ConfigManager;
+  static signalDetector = null;
+  static sessionMetrics = null;
+  static contentAnalyzer = null;
+  static backoffController = null;
 
   /**
    * Get maximum errors from configuration.
@@ -38,6 +48,38 @@ class BrowserSessionManager {
    */
   static get sessionTimeout() {
     return this.configManager.getSessionConfig().timeout;
+  }
+
+  /**
+   * Get the SignalDetector instance.
+   * @returns {SignalDetector|null}
+   */
+  static getSignalDetector() {
+    return this.signalDetector;
+  }
+
+  /**
+   * Get the SessionMetrics instance.
+   * @returns {SessionMetrics|null}
+   */
+  static getSessionMetrics() {
+    return this.sessionMetrics;
+  }
+
+  /**
+   * Get the ContentSignalAnalyzer instance.
+   * @returns {ContentSignalAnalyzer|null}
+   */
+  static getContentAnalyzer() {
+    return this.contentAnalyzer;
+  }
+
+  /**
+   * Get the BackoffController instance.
+   * @returns {BackoffController|null}
+   */
+  static getBackoffController() {
+    return this.backoffController;
   }
 
   /**
@@ -68,6 +110,15 @@ class BrowserSessionManager {
         logger.info('Cleaning up unhealthy browser session');
         await this.cleanup();
       }
+
+      // Initialize signal detection components
+      this.signalDetector = new SignalDetector();
+      this.sessionMetrics = new SessionMetrics(this.signalDetector);
+      this.contentAnalyzer = getContentAnalyzer(linkedinResolver);
+      
+      // Initialize and start backoff controller
+      this.backoffController = new BackoffController(this.signalDetector, linkedInInteractionQueue);
+      this.backoffController.start();
 
       // Create new session
       logger.info('Initializing new browser session for LinkedIn interactions');
@@ -195,6 +246,20 @@ class BrowserSessionManager {
         this.instance = null;
       }
 
+      if (this.signalDetector) {
+        this.signalDetector.clear();
+      }
+      if (this.sessionMetrics) {
+        this.sessionMetrics.reset();
+      }
+      if (this.backoffController) {
+        this.backoffController.stop();
+        // Intentionally do NOT resume the queue here. If automation was paused
+        // due to a detected threat, the pause should survive session recovery so
+        // the user must explicitly resume via the tray. Auto-resuming after a
+        // threat-triggered shutdown would defeat the purpose of the backoff system.
+      }
+
       this.lastActivity = null;
       this.isAuthenticated = false;
       this.sessionStartTime = null;
@@ -217,6 +282,12 @@ class BrowserSessionManager {
    */
   static async recover() {
     logger.info('Attempting session recovery');
+    if (this.signalDetector) {
+      this.signalDetector.clear();
+    }
+    if (this.sessionMetrics) {
+      this.sessionMetrics.reset();
+    }
     await this.cleanup();
     return await this.getInstance({ reinitializeIfUnhealthy: true });
   }
@@ -266,6 +337,11 @@ class BrowserSessionManager {
     this.isAuthenticated = false;
     this.sessionStartTime = null;
     this.errorCount = 0;
+    this.signalDetector = null;
+    this.sessionMetrics = null;
+    this.contentAnalyzer = null;
+    this.backoffController = null;
+    _resetContentAnalyzerForTesting();
   }
 }
 

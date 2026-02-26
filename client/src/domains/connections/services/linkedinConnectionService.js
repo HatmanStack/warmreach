@@ -6,6 +6,7 @@
 
 import { logger } from '#utils/logger.js';
 import { RandomHelpers } from '#utils/randomHelpers.js';
+import { linkedinResolver } from '../../linkedin/selectors/index.js';
 
 /**
  * Connection service for LinkedIn connection requests.
@@ -113,50 +114,14 @@ export class LinkedInConnectionService {
       const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
       const page = session.getPage();
 
-      // Check for "1st" degree indicator (using Puppeteer p-selectors)
-      const firstDegreeSelectors = [
-        '[data-test-id="distance-badge"] ::-p-text(1st)',
-        '.distance-badge ::-p-text(1st)',
-        '::-p-aria([name*="1st degree"])',
-      ];
+      const isFirst = await linkedinResolver.resolve(page, 'connection:distance-1st');
+      if (isFirst) return 'ally';
 
-      for (const selector of firstDegreeSelectors) {
-        try {
-          const element = await page.$(selector);
-          if (element) return 'ally';
-        } catch {
-          // continue
-        }
-      }
+      const isPending = await linkedinResolver.resolve(page, 'connection:pending');
+      if (isPending) return 'outgoing';
 
-      // Check for pending request (outgoing)
-      const pendingSelectors = ['button ::-p-text(Pending)', '::-p-aria([name*="Pending"])'];
-
-      for (const selector of pendingSelectors) {
-        try {
-          const element = await page.$(selector);
-          if (element) return 'outgoing';
-        } catch {
-          // continue
-        }
-      }
-
-      // Check for incoming connection request
-      const incomingSelectors = [
-        'button ::-p-text(Accept)',
-        '::-p-aria([name*="Accept"])',
-        'button ::-p-text(Respond)',
-        '::-p-aria([name*="invitation"])',
-      ];
-
-      for (const selector of incomingSelectors) {
-        try {
-          const element = await page.$(selector);
-          if (element) return 'incoming';
-        } catch {
-          // continue
-        }
-      }
+      const isIncoming = await linkedinResolver.resolve(page, 'connection:accept');
+      if (isIncoming) return 'incoming';
 
       return 'not_connected';
     } catch (error) {
@@ -174,45 +139,22 @@ export class LinkedInConnectionService {
     const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
     const page = session.getPage();
 
-    // Find connect button
-    const connectButtonSelectors = [
-      '[data-view-name="profile-actions-connect"]',
-      'button[aria-label*="Connect"]',
-      'button:has-text("Connect")',
-      '[data-test-id="connect-button"]',
-    ];
-
     let connectButton = null;
-    for (const selector of connectButtonSelectors) {
-      try {
-        connectButton = await page.waitForSelector(selector, { timeout: 3000 });
-        if (connectButton) break;
-      } catch {
-        // try next
-      }
+    try {
+      connectButton = await linkedinResolver.resolveWithWait(page, 'connection:connect-button', { timeout: 3000 });
+    } catch {
+      // Not found directly
     }
 
-    // Check "More" dropdown if direct connect not found
     if (!connectButton) {
       try {
-        const moreButton = await page.waitForSelector('button[aria-label*="More"]', {
-          timeout: 2000,
-        });
-        if (moreButton) {
-          await moreButton.click();
-          await new Promise((resolve) => setTimeout(resolve, 500));
+        const moreButton = await linkedinResolver.resolveWithWait(page, 'connection:more-button', { timeout: 2000 });
+        await moreButton.click();
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
-          for (const selector of connectButtonSelectors) {
-            try {
-              connectButton = await page.waitForSelector(selector, { timeout: 2000 });
-              if (connectButton) break;
-            } catch {
-              // continue
-            }
-          }
-        }
+        connectButton = await linkedinResolver.resolveWithWait(page, 'connection:connect-button', { timeout: 2000 });
       } catch {
-        // no more button
+        // no more button or connect button inside it
       }
     }
 
@@ -223,47 +165,27 @@ export class LinkedInConnectionService {
     await connectButton.click();
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    // Handle connection modal
     if (message) {
       try {
-        const addNoteButton = await page.waitForSelector('button:has-text("Add a note")', {
-          timeout: 3000,
-        });
-        if (addNoteButton) {
-          await addNoteButton.click();
-          await new Promise((resolve) => setTimeout(resolve, 500));
+        const addNoteButton = await linkedinResolver.resolveWithWait(page, 'connection:add-note', { timeout: 3000 });
+        await addNoteButton.click();
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
-          const noteInput = await page.waitForSelector('textarea', { timeout: 2000 });
-          if (noteInput) {
-            await noteInput.type(message, { delay: 30 });
-          }
-        }
+        const noteInput = await linkedinResolver.resolveWithWait(page, 'connection:note-input', { timeout: 2000 });
+        await noteInput.type(message, { delay: 30 });
       } catch {
         logger.debug('Could not add personalized note');
       }
     }
 
-    // Click send
-    const sendSelectors = [
-      'button[aria-label*="Send"]',
-      'button:has-text("Send")',
-      '[data-test-id="send-invitation"]',
-    ];
-
-    for (const selector of sendSelectors) {
-      try {
-        const sendButton = await page.waitForSelector(selector, { timeout: 3000 });
-        if (sendButton) {
-          await sendButton.click();
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          return true;
-        }
-      } catch {
-        // try next
-      }
+    try {
+      const sendButton = await linkedinResolver.resolveWithWait(page, 'connection:send-invitation', { timeout: 3000 });
+      await sendButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return true;
+    } catch {
+      return false;
     }
-
-    return false;
   }
 }
 

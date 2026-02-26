@@ -8,6 +8,7 @@ import { LinkedInNavigationService } from '../../navigation/services/linkedinNav
 import { LinkedInMessagingService } from '../../messaging/services/linkedinMessagingService.js';
 import { LinkedInConnectionService } from '../../connections/services/linkedinConnectionService.js';
 import { LinkedInMessageScraperService } from '../../messaging/services/linkedinMessageScraperService.js';
+import { linkedinResolver } from '../selectors/index.js';
 
 const RandomHelpers = {
   /**
@@ -447,26 +448,11 @@ export class LinkedInInteractionService {
    */
   async verifyProfilePage(page) {
     try {
-      // Look for profile-specific elements
-      // Prioritize data-view-name (stable) over class names (obfuscated)
-      const profileIndicators = [
-        '[data-view-name="profile-top-card-member-photo"]',
-        '[data-view-name="profile-top-card-verified-badge"]',
-        '[data-view-name="profile-main-level"]',
-        '[data-view-name="profile-self-view"]',
-        '[data-test-id="profile-top-card"]',
-      ];
-
-      for (const selector of profileIndicators) {
-        try {
-          const element = await page.waitForSelector(selector, { timeout: 2000 });
-          if (element) {
-            logger.debug(`Profile page verified with selector: ${selector}`);
-            return true;
-          }
-        } catch {
-          // Continue checking other selectors
-        }
+      // Look for profile-specific elements using resolver
+      const element = await linkedinResolver.resolveWithWait(page, 'nav:profile-indicator', { timeout: 2000 }).catch(() => null);
+      if (element) {
+        logger.debug('Profile page verified with resolver');
+        return true;
       }
 
       // Check URL pattern as fallback
@@ -496,23 +482,31 @@ export class LinkedInInteractionService {
       let stableSamples = 0;
       const startTs = Date.now();
 
+      const navMain = (linkedinSelectors['nav:main-content'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const navPageLoaded = (linkedinSelectors['nav:page-loaded'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const navHomepage = (linkedinSelectors['nav:homepage'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
       while (Date.now() - startTs < maxWaitMs) {
-        const metrics = await page.evaluate(() => {
+        const metrics = await page.evaluate((mainSel, loadedSel, homeSel) => {
           const ready = document.readyState; // 'loading' | 'interactive' | 'complete'
-          const main = !!document.querySelector('main, [role="main"]');
-          const scaffold =
-            !!document.querySelector('[data-view-name*="navigation-"]') ||
-            !!document.querySelector('header');
-          const nav =
-            !!document.querySelector('header') ||
-            !!document.querySelector('[data-view-name="navigation-homepage"]');
+          const main = mainSel ? mainSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
+          const scaffold = loadedSel ? loadedSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
+          const nav = homeSel ? homeSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
           const anchors = document.querySelectorAll('a[href]')?.length || 0;
           const images = document.images?.length || 0;
           const height = document.body?.scrollHeight || 0;
           const url = location.href;
-          const isCheckpoint = /checkpoint|authwall/i.test(url);
-          return { ready, main, scaffold, nav, anchors, images, height, isCheckpoint };
-        });
+          const isCheckpoint = /checkpoint|authwall|challenge|captcha/i.test(url);
+          return { ready, main, scaffold, nav, anchors, images, height, isCheckpoint, url };
+        }, navMain, navPageLoaded, navHomepage);
+
+        if (metrics.isCheckpoint) {
+          logger.warn(`Checkpoint detected at ${metrics.url} — pausing automation`);
+          const controller = this.sessionManager.getBackoffController();
+          if (controller) {
+            await controller.handleCheckpoint(metrics.url);
+          }
+        }
 
         // Fast path: base UI present and DOM not loading
         const baseUiPresent =
@@ -540,9 +534,9 @@ export class LinkedInInteractionService {
 
       // Fallback: ensure at least a key container exists before proceeding
       await Promise.race([
-        session.waitForSelector('main', { timeout: 2000 }),
-        session.waitForSelector('.scaffold-layout', { timeout: 2000 }),
-        session.waitForSelector('[data-test-id]', { timeout: 2000 }),
+        linkedinResolver.resolveWithWait(page, 'nav:main-content', { timeout: 2000 }),
+        linkedinResolver.resolveWithWait(page, 'nav:scaffold', { timeout: 2000 }),
+        linkedinResolver.resolveWithWait(page, 'nav:any-test-id', { timeout: 2000 }),
         new Promise((resolve) => setTimeout(resolve, 2000)),
       ]);
     } catch {
@@ -690,19 +684,13 @@ export class LinkedInInteractionService {
       // Add human-like delay before interaction
 
       // Look for message button on profile page
-      // Prioritize data-view-name (stable) over data-test-id (removed by LinkedIn)
-      const messageButtonSelectors = [
-        '[data-view-name="message-button"]',
-        '[aria-label="Message"]',
-        'button[aria-label*="Message"]',
-        'button[aria-label*="message"]',
-        'a[href*="/messaging/"]',
-        '[data-test-id="message-button"]',
-      ];
-      const { element: messageButton, selector: foundSelector } = await this.findElementBySelectors(
-        messageButtonSelectors,
-        3000
-      );
+      let messageButton = null;
+      let foundSelector = 'messaging:message-button';
+      try {
+        messageButton = await linkedinResolver.resolveWithWait(page, 'messaging:message-button', { timeout: 3000 });
+      } catch {
+        messageButton = null;
+      }
 
       if (messageButton) {
         // Scroll button into view if needed
@@ -748,17 +736,10 @@ export class LinkedInInteractionService {
    */
   async waitForMessagingInterface() {
     try {
-      await this.getBrowserSession();
+      const session = await this.getBrowserSession();
+      const page = session.getPage();
 
-      // Wait for messaging interface elements
-      // Prioritize role/contenteditable (semantic) over class names (obfuscated)
-      const messagingSelectors = [
-        '[contenteditable="true"][role="textbox"]',
-        '[role="textbox"]',
-        '[data-view-name*="messaging"]',
-        '[data-test-id="message-input"]',
-      ];
-      const { element: messagingElement } = await this.waitForAnySelector(messagingSelectors, 5000);
+      const messagingElement = await linkedinResolver.resolveWithWait(page, 'messaging:message-input', { timeout: 5000 }).catch(() => null);
 
       if (!messagingElement) {
         throw new Error('Messaging interface did not load properly');
@@ -795,18 +776,8 @@ export class LinkedInInteractionService {
       await this.waitForMessagingInterface();
 
       // Look for message input field
-      // Prioritize semantic selectors over class names
-      const messageInputSelectors = [
-        '[contenteditable="true"][role="textbox"]',
-        '[role="textbox"]',
-        '[aria-label*="message" i][contenteditable="true"]',
-        '[aria-label*="Write" i][contenteditable="true"]',
-        '[data-test-id="message-input"]',
-      ];
-      const { element: messageInput, selector: foundSelector } = await this.waitForAnySelector(
-        messageInputSelectors,
-        5000
-      );
+      const messageInput = await linkedinResolver.resolveWithWait(page, 'messaging:message-input', { timeout: 5000 }).catch(() => null);
+      const foundSelector = 'messaging:message-input';
 
       if (!messageInput) {
         throw new Error('Message input field not found in messaging interface');
@@ -817,16 +788,10 @@ export class LinkedInInteractionService {
       await this.clearAndTypeText(page, messageInput, messageContent);
 
       // Look for send button (paced delay before interaction)
-      // Prioritize aria-label (accessibility) over class names
-      const sendButtonSelectors = [
-        'button[aria-label*="Send" i]',
-        '[aria-label*="Send" i]',
-        'button[type="submit"]',
-        '[data-test-id="send-button"]',
-      ];
-      const { element: sendButton, selector: sendSelector } = await this._paced(1000, 2000, () =>
-        this.findElementBySelectors(sendButtonSelectors, 3000)
+      const sendButton = await this._paced(1000, 2000, () =>
+        linkedinResolver.resolveWithWait(page, 'messaging:send-button', { timeout: 3000 }).catch(() => null)
       );
+      const sendSelector = 'messaging:send-button';
 
       if (!sendButton) {
         // Try using Enter key as fallback
@@ -877,25 +842,15 @@ export class LinkedInInteractionService {
       const session = await this.getBrowserSession();
 
       // Wait for message sent indicators
-      const sentIndicators = [
-        '.msg-s-message-list-item--sent',
-        '[data-test-id="message-sent"]',
-        '.msg-conversation-card__message--sent',
-        '.messaging-conversation-item--sent',
-      ];
-
       let sentConfirmed = false;
-      for (const selector of sentIndicators) {
-        try {
-          const indicator = await session.waitForSelector(selector, { timeout: 5000 });
-          if (indicator) {
-            logger.debug(`Message sent confirmation found: ${selector}`);
-            sentConfirmed = true;
-            break;
-          }
-        } catch {
-          // Continue checking other indicators
+      try {
+        const indicator = await linkedinResolver.resolveWithWait(session.getPage(), 'messaging:sent-confirmation', { timeout: 5000 });
+        if (indicator) {
+          logger.debug(`Message sent confirmation found`);
+          sentConfirmed = true;
         }
+      } catch {
+        // Continue checking other indicators
       }
 
       if (!sentConfirmed) {
@@ -1029,30 +984,15 @@ export class LinkedInInteractionService {
       // Add human-like navigation delay
 
       // Look for "Start a post" button or similar
-      // Prioritize aria-label (accessibility) over class names
-      const startPostSelectors = [
-        'button[aria-label*="Start a post" i]',
-        '[aria-label*="Start a post" i]',
-        'div[data-placeholder*="Start a post" i]',
-        '[data-test-id="start-post-button"]',
-      ];
-
       let startPostButton = null;
 
-      // Try to find start post button with multiple selectors
-      for (const selector of startPostSelectors) {
-        try {
-          startPostButton = await session.waitForSelector(selector, { timeout: 5000 });
-          if (startPostButton) {
-            logger.debug(`Found start post button with selector: ${selector}`);
-            break;
-          }
-        } catch (err) {
-          logger.debug(`Selector failed for start post button: ${selector}`, {
-            error: err.message,
-          });
-          // Continue to next selector
-        }
+      try {
+        startPostButton = await linkedinResolver.resolveWithWait(session.getPage(), 'post:start-button', { timeout: 5000 });
+        logger.debug(`Found start post button`);
+      } catch (err) {
+        logger.debug(`Selector failed for start post button:`, {
+          error: err.message,
+        });
       }
 
       if (!startPostButton) {
@@ -1091,26 +1031,12 @@ export class LinkedInInteractionService {
       const session = await this.getBrowserSession();
 
       // Wait for post creation interface elements
-      // Prioritize semantic/accessibility selectors
-      const postCreationSelectors = [
-        '[contenteditable="true"][role="textbox"]',
-        '[aria-label*="Text editor" i]',
-        '[aria-label*="talk about" i]',
-        'div[data-placeholder*="talk about" i]',
-        '[data-test-id="post-content-input"]',
-      ];
-
       let postCreationElement = null;
-      for (const selector of postCreationSelectors) {
-        try {
-          postCreationElement = await session.waitForSelector(selector, { timeout: 8000 });
-          if (postCreationElement) {
-            logger.debug(`Post creation interface loaded, found element: ${selector}`);
-            break;
-          }
-        } catch {
-          // Continue to next selector
-        }
+      try {
+        postCreationElement = await linkedinResolver.resolveWithWait(session.getPage(), 'post:content-editor', { timeout: 8000 });
+        logger.debug(`Post creation interface loaded`);
+      } catch {
+        // Continue to next selector
       }
 
       if (!postCreationElement) {
@@ -1142,26 +1068,12 @@ export class LinkedInInteractionService {
       await this.waitForLinkedInLoad();
 
       // Look for post content input field
-      const contentInputSelectors = [
-        '[data-test-id="post-content-input"]',
-        '.ql-editor[contenteditable="true"]',
-        '[contenteditable="true"][role="textbox"]',
-        'div[data-placeholder*="What do you want to talk about"]',
-        '.share-creation-state__text-editor',
-        '[aria-label*="Text editor"]',
-      ];
-
       let contentInput = null;
-      for (const selector of contentInputSelectors) {
-        try {
-          contentInput = await session.waitForSelector(selector, { timeout: 3000 });
-          if (contentInput) {
-            logger.debug(`Found content input with selector: ${selector}`);
-            break;
-          }
-        } catch {
-          // Continue to next selector
-        }
+      try {
+        contentInput = await linkedinResolver.resolveWithWait(page, 'post:content-editor', { timeout: 3000 });
+        logger.debug(`Found content input`);
+      } catch {
+        // Continue to next selector
       }
 
       if (!contentInput) {
@@ -1214,28 +1126,12 @@ export class LinkedInInteractionService {
       const page = session.getPage();
 
       // Look for media attachment button
-      const mediaButtonSelectors = [
-        '[data-test-id="media-upload-button"]',
-        '[aria-label*="Add media"]',
-        '[aria-label*="Add photo"]',
-        '.share-actions__primary-action button[aria-label*="media"]',
-        'button[data-control-name="add_media"]',
-        '.media-upload-button',
-        'input[type="file"][accept*="image"]',
-        'button[aria-label*="Upload"]',
-      ];
-
       let mediaButton = null;
-      for (const selector of mediaButtonSelectors) {
-        try {
-          mediaButton = await session.waitForSelector(selector, { timeout: 2000 });
-          if (mediaButton) {
-            logger.debug(`Found media button with selector: ${selector}`);
-            break;
-          }
-        } catch {
-          // Continue to next selector
-        }
+      try {
+        mediaButton = await linkedinResolver.resolveWithWait(page, 'post:media-button', { timeout: 2000 });
+        logger.debug(`Found media button`);
+      } catch {
+        // Continue to next selector
       }
 
       if (!mediaButton) {
@@ -1314,35 +1210,13 @@ export class LinkedInInteractionService {
       const page = session.getPage();
 
       // 2. Wait for the modal to appear and be visible.
-      const modalSelector = '[role="dialog"], .artdeco-modal, .send-invite';
-      const modal = await page.waitForSelector(modalSelector, { visible: true, timeout: 5000 });
+      const modal = await linkedinResolver.resolveWithWait(page, 'connection:modal', { timeout: 5000 });
       if (!modal) {
         throw new Error('Connection request modal did not appear.');
       }
       logger.info('Connection modal appeared.');
 
-      // 3. Find the clickable "Send" button within the modal using DOM evaluation (Puppeteer-agnostic)
-      const sendHandle = await page.evaluateHandle((modalEl) => {
-        const lower = (s) => (s || '').toLowerCase();
-        const nodes = modalEl.querySelectorAll('button, [role="button"]');
-        for (const n of nodes) {
-          const aria = lower(n.getAttribute('aria-label'));
-          const txt = lower((n.innerText || n.textContent || '').trim());
-          if (
-            aria.includes('send without a note') ||
-            txt === 'send without a note' ||
-            aria.includes('send invitation') ||
-            txt === 'send invitation' ||
-            txt === 'send' ||
-            aria === 'send'
-          ) {
-            return n;
-          }
-        }
-        return null;
-      }, modal);
-
-      const sendButton = sendHandle?.asElement?.();
+      const sendButton = await linkedinResolver.resolveWithWait(page, 'connection:send-invitation', { timeout: 5000 }).catch(() => null);
       if (!sendButton) {
         throw new Error('Send button not found within the modal.');
       }
@@ -1352,12 +1226,10 @@ export class LinkedInInteractionService {
       await sendButton.click();
       logger.info('Clicked send button in modal.');
 
-      const confirmationSelectors = [
-        '.artdeco-toast-item',
-        'button[aria-label*="Pending"]',
-        '[data-test-id="invitation-sent-confirmation"]',
-      ];
-      await page.waitForSelector(confirmationSelectors.join(', '), { timeout: 5000 });
+      await Promise.race([
+        linkedinResolver.resolveWithWait(page, 'connection:invitation-sent', { timeout: 5000 }),
+        linkedinResolver.resolveWithWait(page, 'connection:pending', { timeout: 5000 }),
+      ]).catch(() => null);
 
       logger.info('Connection request confirmation found.');
       const requestId = `conn_req_${Date.now()}`;
@@ -1396,45 +1268,26 @@ export class LinkedInInteractionService {
     try {
       const session = await this.getBrowserSession();
 
-      // Look for indicators of existing connection
-      // Prioritize data-view-name and aria-label over class names
-      const connectedSelectors = [
-        '[data-view-name="message-button"]',
-        '[aria-label="Message"]',
-        'button[aria-label*="Message" i]',
-        '[data-test-id="message-button"]',
-      ];
-
-      const pendingSelectors = [
-        '[aria-label*="Pending" i]',
-        'button[aria-label*="Pending" i]',
-        '[data-test-id="pending-button"]',
-      ];
-
       // Check for message button (indicates already connected)
-      for (const selector of connectedSelectors) {
-        try {
-          const element = await session.waitForSelector(selector, { timeout: 1000 });
-          if (element) {
-            logger.debug(`Found connection indicator: ${selector}`);
-            return 'connected';
-          }
-        } catch {
-          // Continue checking
+      try {
+        const element = await linkedinResolver.resolveWithWait(session.getPage(), 'messaging:message-button', { timeout: 1000 });
+        if (element) {
+          logger.debug('Found connection indicator via messaging:message-button');
+          return 'connected';
         }
+      } catch {
+        // Continue checking
       }
 
       // Check for pending connection
-      for (const selector of pendingSelectors) {
-        try {
-          const element = await session.waitForSelector(selector, { timeout: 1000 });
-          if (element) {
-            logger.debug(`Found pending connection indicator: ${selector}`);
-            return 'pending';
-          }
-        } catch {
-          // Continue checking
+      try {
+        const element = await linkedinResolver.resolveWithWait(session.getPage(), 'connection:pending', { timeout: 1000 });
+        if (element) {
+          logger.debug('Found pending connection indicator via connection:pending');
+          return 'pending';
         }
+      } catch {
+        // Continue checking
       }
 
       return 'not_connected';
@@ -1453,14 +1306,8 @@ export class LinkedInInteractionService {
     try {
       const session = await this.getBrowserSession();
       const page = session.getPage();
-      // Try broader, stable containers in priority order
-      const candidateSelectors = [
-        '#profile-content main section.artdeco-card div.ph5.pb5',
-        '#profile-content main section.artdeco-card',
-        '#profile-content main',
-        'main .pv-top-card',
-        'main',
-      ];
+      const cascadeContainer = (linkedinSelectors['nav:profile-card-container'] || []);
+      const candidateSelectors = cascadeContainer.filter(s => !s.selector.includes('::-p-')).map(s => s.selector);
 
       let container = null;
       let usedSelector = null;
@@ -1482,7 +1329,7 @@ export class LinkedInInteractionService {
 
       logger.info(
         `${buttonName} container check: ${container ? 'found' : 'not found'}` +
-          `${usedSelector ? ` (${usedSelector})` : ''}`
+        `${usedSelector ? ` (${usedSelector})` : ''}`
       );
       if (!container) return false;
 
@@ -1509,21 +1356,24 @@ export class LinkedInInteractionService {
         logger.info(`connection-degree match: ${isFirst ? '1st' : 'not 1st'}`);
         return !!isFirst;
       } else if (buttonName === 'connect') {
-        const handle = await page.evaluateHandle((root) => {
+        const cascadeAll = (linkedinSelectors['connection:all-buttons'] || []);
+        const allSel = cascadeAll.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
+        const handle = await page.evaluateHandle((root, selString) => {
           const lower = (s) => (s || '').toLowerCase();
           const isVisible = (n) => {
             const r = n.getBoundingClientRect();
             const s = window.getComputedStyle(n);
             return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
           };
-          const nodes = root.querySelectorAll('button,[role="button"],.artdeco-button');
+          const nodes = root.querySelectorAll(selString || 'button');
           for (const n of nodes) {
             const aria = lower(n.getAttribute('aria-label'));
             const txt = lower((n.innerText || n.textContent || '').trim());
             if (((aria && aria.includes('connect')) || txt === 'connect') && isVisible(n)) return n;
           }
           return null;
-        }, container);
+        }, container, allSel);
         const btn = handle && handle.asElement && handle.asElement();
         if (btn) {
           await this.clickElementHumanly(page, btn);
@@ -1531,21 +1381,24 @@ export class LinkedInInteractionService {
         }
         return false;
       } else if (buttonName === 'more') {
-        const handle = await page.evaluateHandle((root) => {
+        const cascadeAll = (linkedinSelectors['connection:all-buttons'] || []);
+        const allSel = cascadeAll.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
+        const handle = await page.evaluateHandle((root, selString) => {
           const lower = (s) => (s || '').toLowerCase();
           const isVisible = (n) => {
             const r = n.getBoundingClientRect();
             const s = window.getComputedStyle(n);
             return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
           };
-          const nodes = root.querySelectorAll('button,[role="button"],.artdeco-button');
+          const nodes = root.querySelectorAll(selString || 'button');
           for (const n of nodes) {
             const aria = lower(n.getAttribute('aria-label'));
             const txt = lower((n.innerText || n.textContent || '').trim());
             if (((aria && aria.includes('more')) || txt === 'more') && isVisible(n)) return n;
           }
           return null;
-        }, container);
+        }, container, allSel);
         const btn = handle && handle.asElement && handle.asElement();
         if (btn) {
           await this.clickElementHumanly(page, btn);
@@ -1596,19 +1449,7 @@ export class LinkedInInteractionService {
       await this.waitForLinkedInLoad();
 
       // Look for post content input field
-      const contentInputSelectors = [
-        '[data-test-id="post-content-input"]',
-        '.ql-editor[contenteditable="true"]',
-        '[contenteditable="true"][role="textbox"]',
-        'div[data-placeholder*="What do you want to talk about"]',
-        '.share-creation-state__text-editor',
-        '[aria-label*="Text editor"]',
-        '.mentions-texteditor__content',
-      ];
-      const { element: contentInput } = await this.findElementBySelectors(
-        contentInputSelectors,
-        3000
-      );
+      const contentInput = await linkedinResolver.resolveWithWait(page, 'post:content-editor', { timeout: 3000 }).catch(() => null);
 
       if (!contentInput) {
         throw new Error('Post content input field not found');
@@ -1643,18 +1484,7 @@ export class LinkedInInteractionService {
       // Add human-like delay before media interaction
 
       // Look for media attachment button
-      const mediaButtonSelectors = [
-        '[data-test-id="media-button"]',
-        'button[aria-label*="Add media"]',
-        'button[aria-label*="add media"]',
-        '.share-actions-control-button[aria-label*="media"]',
-        'button[data-control-name*="media"]',
-        '.media-upload-button',
-      ];
-      const { element: mediaButton } = await this.findElementBySelectors(
-        mediaButtonSelectors,
-        2000
-      );
+      const mediaButton = await linkedinResolver.resolveWithWait(page, 'post:media-button', { timeout: 2000 }).catch(() => null);
 
       if (!mediaButton) {
         logger.warn('Media attachment button not found, skipping media upload');
@@ -1696,19 +1526,7 @@ export class LinkedInInteractionService {
       // Add human-like delay before publishing
 
       // Look for publish/post button
-      const publishButtonSelectors = [
-        'button[aria-label*="Post"]',
-        'button[aria-label*="post"]',
-        '[data-test-id="post-button"]',
-        '.share-actions__primary-action',
-        'button[data-control-name*="share.post"]',
-        'button:has-text("Post")',
-        'button[type="submit"]',
-      ];
-      const { element: publishButton } = await this.findElementBySelectors(
-        publishButtonSelectors,
-        3000
-      );
+      const publishButton = await linkedinResolver.resolveWithWait(page, 'post:publish-button', { timeout: 3000 }).catch(() => null);
 
       if (!publishButton) {
         throw new Error('Publish button not found');
@@ -1838,6 +1656,21 @@ export class LinkedInInteractionService {
    * @returns {Promise<Object>} Complete messaging result
    */
   async executeMessagingWorkflow(recipientProfileId, messageContent, options = {}) {
+    const metrics = this.sessionManager.getSessionMetrics();
+    try {
+      const result = await this._executeMessagingWorkflowInternal(recipientProfileId, messageContent, options);
+      metrics?.recordOperation(true);
+      return result;
+    } catch (error) {
+      metrics?.recordOperation(false);
+      throw error;
+    }
+  }
+
+  /**
+   * Internal implementation of messaging workflow
+   */
+  async _executeMessagingWorkflowInternal(recipientProfileId, messageContent, options = {}) {
     const context = {
       operation: 'executeMessagingWorkflow',
       recipientProfileId,
@@ -1945,6 +1778,21 @@ export class LinkedInInteractionService {
    * @returns {Promise<Object>} Complete connection result
    */
   async executeConnectionWorkflow(profileId, connectionMessage = '', options = {}) {
+    const metrics = this.sessionManager.getSessionMetrics();
+    try {
+      const result = await this._executeConnectionWorkflowInternal(profileId, connectionMessage, options);
+      metrics?.recordOperation(true);
+      return result;
+    } catch (error) {
+      metrics?.recordOperation(false);
+      throw error;
+    }
+  }
+
+  /**
+   * Internal implementation of connection workflow
+   */
+  async _executeConnectionWorkflowInternal(profileId, connectionMessage = '', options = {}) {
     const context = {
       operation: 'executeConnectionWorkflow',
       profileId,
@@ -2044,6 +1892,21 @@ export class LinkedInInteractionService {
    * @returns {Promise<Object>} Complete post creation result
    */
   async executePostCreationWorkflow(content, mediaAttachments = [], options = {}) {
+    const metrics = this.sessionManager.getSessionMetrics();
+    try {
+      const result = await this._executePostCreationWorkflowInternal(content, mediaAttachments, options);
+      metrics?.recordOperation(true);
+      return result;
+    } catch (error) {
+      metrics?.recordOperation(false);
+      throw error;
+    }
+  }
+
+  /**
+   * Internal implementation of post creation workflow
+   */
+  async _executePostCreationWorkflowInternal(content, mediaAttachments = [], options = {}) {
     const context = {
       operation: 'executePostCreationWorkflow',
       contentLength: content.length,
@@ -2134,6 +1997,21 @@ export class LinkedInInteractionService {
    * @returns {Promise<Object>} Follow result
    */
   async followProfile(profileId, options = {}) {
+    const metrics = this.sessionManager.getSessionMetrics();
+    try {
+      const result = await this._followProfileInternal(profileId, options);
+      metrics?.recordOperation(true);
+      return result;
+    } catch (error) {
+      metrics?.recordOperation(false);
+      throw error;
+    }
+  }
+
+  /**
+   * Internal implementation of follow profile
+   */
+  async _followProfileInternal(profileId, options = {}) {
     const context = {
       operation: 'followProfile',
       profileId,
@@ -2226,23 +2104,14 @@ export class LinkedInInteractionService {
       const page = session.getPage();
 
       // Look for indicators that we're already following
-      // Prioritize aria-label over class names
-      const followingIndicators = [
-        '[aria-label*="Following" i]',
-        'button[aria-label*="Following" i]',
-        '[data-test-id="following-button"]',
-      ];
-
-      for (const selector of followingIndicators) {
-        try {
-          const element = await page.waitForSelector(selector, { timeout: 1000 });
-          if (element) {
-            logger.debug(`Found following indicator: ${selector}`);
-            return true;
-          }
-        } catch {
-          // Continue checking other selectors
+      try {
+        const element = await linkedinResolver.resolveWithWait(page, 'post:following-button', { timeout: 1000 });
+        if (element) {
+          logger.debug('Found following indicator via post:following-button');
+          return true;
         }
+      } catch {
+        // Continue checking other selectors
       }
 
       return false;
@@ -2262,41 +2131,29 @@ export class LinkedInInteractionService {
       const session = await this.getBrowserSession();
       const page = session.getPage();
 
-      // Follow button selectors (in priority order)
-      // Prioritize data-view-name and aria-label over class names
-      const followButtonSelectors = [
-        '[data-view-name="relationship-building-button"]',
-        '[aria-label*="Follow" i]:not([aria-label*="Following" i])',
-        'button[aria-label*="Follow" i]:not([aria-label*="Following" i])',
-        '[data-test-id="follow-button"]',
-      ];
-
       // First try direct follow button
       let followButton = null;
       let foundSelector = null;
 
-      for (const selector of followButtonSelectors) {
-        try {
-          const element = await page.waitForSelector(selector, { timeout: 2000 });
-          if (element) {
-            // Verify it's not the "Following" button
-            const ariaLabel = await element.getAttribute('aria-label');
-            const innerText = await element.innerText();
-            if (
-              ariaLabel?.toLowerCase().includes('following') ||
-              innerText?.toLowerCase().includes('following')
-            ) {
-              logger.debug(`Skipping 'Following' button with selector: ${selector}`);
-              continue;
-            }
+      try {
+        const element = await linkedinResolver.resolveWithWait(page, 'post:follow-button', { timeout: 2000 });
+        if (element) {
+          // Verify it's not the "Following" button
+          const ariaLabel = await element.getAttribute('aria-label');
+          const innerText = await element.innerText();
+          if (
+            ariaLabel?.toLowerCase().includes('following') ||
+            innerText?.toLowerCase().includes('following')
+          ) {
+            logger.debug(`Skipping 'Following' button matched by resolver`);
+          } else {
             followButton = element;
-            foundSelector = selector;
-            logger.debug(`Found follow button with selector: ${selector}`);
-            break;
+            foundSelector = 'post:follow-button';
+            logger.debug(`Found follow button with resolver: ${foundSelector}`);
           }
-        } catch {
-          // Continue to next selector
         }
+      } catch {
+        // Continue to check dropdown
       }
 
       // If not found directly, try via "More" dropdown
@@ -2305,26 +2162,17 @@ export class LinkedInInteractionService {
         const moreFound = await this.isProfileContainer('more');
         if (moreFound) {
           // Look for follow option in dropdown (paced delay after More click)
-          const dropdownFollowSelectors = [
-            'div[role="menu"] button[aria-label*="Follow"]',
-            '.artdeco-dropdown__content button[aria-label*="Follow"]',
-            '[data-test-id="overflow-menu"] button[aria-label*="Follow"]',
-          ];
-
-          for (const selector of dropdownFollowSelectors) {
-            try {
-              const element = await this._paced(500, 1000, () =>
-                page.waitForSelector(selector, { timeout: 2000 })
-              );
-              if (element) {
-                followButton = element;
-                foundSelector = selector;
-                logger.debug(`Found follow button in dropdown with selector: ${selector}`);
-                break;
-              }
-            } catch {
-              // Continue to next selector
+          try {
+            const element = await this._paced(500, 1000, () =>
+              linkedinResolver.resolveWithWait(page, 'post:follow-from-menu', { timeout: 2000 })
+            );
+            if (element) {
+              followButton = element;
+              foundSelector = 'post:follow-from-menu';
+              logger.debug(`Found follow button in dropdown with selector: ${foundSelector}`);
             }
+          } catch {
+            // Continue 
           }
         }
       }

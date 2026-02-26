@@ -1,4 +1,4 @@
-> **Active Development** — This repo changes frequently. Expect breaking changes.
+> **Active Development** — This repo changes frequently. No stable release yet. Expect breaking changes on any commit.
 
 # WarmReach Community Edition
 

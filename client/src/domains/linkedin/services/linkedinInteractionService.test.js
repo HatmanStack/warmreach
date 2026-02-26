@@ -28,6 +28,10 @@ vi.mock('../../storage/services/dynamoDBService.js', () => ({
   },
 }));
 
+const mockMetrics = {
+  recordOperation: vi.fn(),
+};
+
 vi.mock('../../session/services/browserSessionManager.js', () => ({
   BrowserSessionManager: {
     getInstance: vi.fn(),
@@ -35,36 +39,71 @@ vi.mock('../../session/services/browserSessionManager.js', () => ({
     isSessionHealthy: vi.fn(() => true),
     getHealthStatus: vi.fn(() => ({})),
     recordError: vi.fn(),
+    getSessionMetrics: vi.fn(() => mockMetrics),
     lastActivity: null,
   },
 }));
 
 vi.mock('../../navigation/services/linkedinNavigationService.js', () => ({
-  LinkedInNavigationService: class {},
+  LinkedInNavigationService: class {
+    async navigateToProfile() { return true; }
+  },
 }));
 
 vi.mock('../../messaging/services/linkedinMessagingService.js', () => ({
-  LinkedInMessagingService: class {},
+  LinkedInMessagingService: class {
+    async navigateToMessaging() {}
+    async composeAndSendMessage() { return { deliveryStatus: 'sent' }; }
+    async scrapeConversationThread() { return []; }
+  },
 }));
 
 vi.mock('../../connections/services/linkedinConnectionService.js', () => ({
-  LinkedInConnectionService: class {},
+  LinkedInConnectionService: class {
+    async sendConnectionRequest() { return { confirmationFound: true }; }
+  },
 }));
 
 vi.mock('../../messaging/services/linkedinMessageScraperService.js', () => ({
-  LinkedInMessageScraperService: class {},
+  LinkedInMessageScraperService: class {
+    async scrapeConversationThread() { return []; }
+  },
 }));
 
 const { LinkedInInteractionService } = await import('./linkedinInteractionService.js');
 
-describe('LinkedInInteractionService anti-spam guards', () => {
+describe('LinkedInInteractionService', () => {
   let service;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     service = new LinkedInInteractionService();
   });
 
-  describe('_enforceRateLimit', () => {
+  describe('metrics recording', () => {
+    it('records success in executeMessagingWorkflow', async () => {
+      // Mock internal navigation
+      service.navigateToProfile = vi.fn().mockResolvedValue(true);
+      service.navigateToMessaging = vi.fn().mockResolvedValue();
+      service.composeAndSendMessage = vi.fn().mockResolvedValue({ deliveryStatus: 'sent' });
+      service._scrapeAndStoreConversation = vi.fn().mockResolvedValue();
+      service._reportInteraction = vi.fn();
+
+      await service.executeMessagingWorkflow('id', 'content', {});
+      
+      expect(mockMetrics.recordOperation).toHaveBeenCalledWith(true);
+    });
+
+    it('records failure in executeMessagingWorkflow', async () => {
+      service.navigateToProfile = vi.fn().mockRejectedValue(new Error('nav fail'));
+
+      await expect(service.executeMessagingWorkflow('id', 'content', {})).rejects.toThrow('nav fail');
+      
+      expect(mockMetrics.recordOperation).toHaveBeenCalledWith(false);
+    });
+  });
+
+  describe('anti-spam guards', () => {
     it('should allow actions under limits', () => {
       expect(() => service._enforceRateLimit()).not.toThrow();
       expect(service._actionLog).toHaveLength(1);

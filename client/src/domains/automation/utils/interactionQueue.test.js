@@ -219,4 +219,65 @@ describe('InteractionQueue', () => {
       expect(ids[0]).not.toBe(ids[1]);
     });
   });
+
+  describe('pause/resume', () => {
+    it('stops new jobs from starting when paused', async () => {
+      const order = [];
+      let resolveFirst;
+      const first = queue.enqueue(() => new Promise(r => { resolveFirst = r; }));
+      
+      queue.pause('test reason');
+      
+      queue.enqueue(() => { order.push('second'); });
+      
+      resolveFirst();
+      await first;
+      
+      expect(order).toEqual([]); // Second job should not have started
+      expect(queue.getQueueStatus().queuedJobs).toBe(1);
+      expect(queue.isPaused()).toBe(true);
+    });
+
+    it('resumes processing jobs when resume is called', async () => {
+      const order = [];
+      queue.pause('test reason');
+      
+      const job = queue.enqueue(() => { order.push('job'); });
+      expect(order).toEqual([]);
+      
+      queue.resume();
+      await job;
+      expect(order).toEqual(['job']);
+      expect(queue.isPaused()).toBe(false);
+    });
+
+    it('reports pause status correctly', () => {
+      const now = Date.now();
+      vi.setSystemTime(now);
+      
+      queue.pause('rate limit');
+      const status = queue.getPauseStatus();
+      
+      expect(status.paused).toBe(true);
+      expect(status.reason).toBe('rate limit');
+      expect(status.pausedAt).toBe(now);
+    });
+
+    it('is idempotent for pause and resume', () => {
+      queue.pause('reason 1');
+      queue.pause('reason 2');
+      expect(queue.getPauseStatus().reason).toBe('reason 1');
+      
+      queue.resume();
+      queue.resume();
+      expect(queue.isPaused()).toBe(false);
+    });
+
+    it('includes pause info in getQueueStatus', () => {
+      queue.pause('maintenance');
+      const status = queue.getQueueStatus();
+      expect(status.paused).toBe(true);
+      expect(status.pauseReason).toBe('maintenance');
+    });
+  });
 });

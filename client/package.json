@@ -7,6 +7,7 @@
   "imports": {
     "#utils/*": "./src/shared/utils/*",
     "#shared-config/*": "./src/shared/config/*",
+    "#shared/*": "./src/shared/*",
     "#config": "./config/index.js",
     "#routes/*": "./routes/*",
     "#schemas/*": "./schemas/*"
@@ -34,8 +35,6 @@
     "jose": "^6.1.3",
     "libsodium-wrappers-sumo": "^0.8.2",
     "puppeteer": "^24.37.5",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "tsx": "^4.19.2",
     "uuid": "^13.0.0",
     "winston": "^3.11.0",

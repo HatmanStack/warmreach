@@ -1,5 +1,4 @@
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import puppeteer from 'puppeteer';
 import type {
   Browser,
   Page,
@@ -14,17 +13,20 @@ import fs from 'fs';
 import path from 'path';
 import config from '#shared-config/index.js';
 import { logger } from '#utils/logger.js';
+import { linkedinSelectors } from '../../linkedin/selectors/index.js';
 import RandomHelpers from '#utils/randomHelpers.js';
 import {
   getCanvasNoiseScript,
   getWebGLSpoofScript,
   getAudioNoiseScript,
+  getHeadlessEvasionScript,
 } from '../utils/stealthScripts.js';
+import { loadOrCreateProfile, GPU_PROFILES, type FingerprintProfile } from '../utils/fingerprintProfile.js';
+import { responseTimingInterceptor } from '../utils/responseTimingInterceptor.js';
 
-// Apply stealth plugin if enabled
-if (config.puppeteer.enableStealth) {
-  puppeteer.use(StealthPlugin());
-}
+// The puppeteer-extra-plugin-stealth library triggers advanced LinkedIn EvalError logouts.
+// We manage our own headless evasion natively via getHeadlessEvasionScript().
+export { puppeteer };
 
 /**
  * Detect a system-installed Chrome/Chromium binary.
@@ -87,7 +89,7 @@ export class PuppeteerService {
       const displayEnv = process.env.DISPLAY || '';
       const sessionType = process.env.XDG_SESSION_TYPE || '';
       logger.info(
-        `Initializing Puppeteer browser... HEADLESS env=${process.env.HEADLESS} resolved headless=${resolvedHeadless} DISPLAY=${displayEnv || 'unset'} session=${sessionType || 'unknown'}`
+        `Initializing Puppeteer browser... HEADLESS env = ${process.env.HEADLESS} resolved headless = ${resolvedHeadless} DISPLAY = ${displayEnv || 'unset'} session = ${sessionType || 'unknown'} `
       );
 
       const launchArgs = [
@@ -120,15 +122,33 @@ export class PuppeteerService {
 
       // Resolve userDataDir for persistent profile
       let userDataDir: string | undefined;
+      let profileDir: string | undefined;
+
       if (config.puppeteer.userDataDir) {
         userDataDir = config.puppeteer.userDataDir;
+        profileDir = userDataDir;
       } else {
         try {
           // Use Electron's userData path if available
           const { app } = await import('electron');
-          userDataDir = path.join(app.getPath('userData'), 'browser-profile');
+          const baseDir = app.getPath('userData');
+          userDataDir = path.join(baseDir, 'browser-profile');
+          profileDir = baseDir;
         } catch {
           // Not running in Electron — ephemeral profile
+        }
+      }
+
+      // Load or create fingerprint profile
+      let profile: FingerprintProfile | null = null;
+      if (profileDir) {
+        try {
+          profile = loadOrCreateProfile(profileDir);
+          const rotatedAt = new Date(profile.rotatedAt);
+          const daysOld = Math.floor((Date.now() - rotatedAt.getTime()) / (1000 * 60 * 60 * 24));
+          logger.info(`[FingerprintProfile] Loaded profile (age: ${daysOld} days, rotation in ${profile.rotationIntervalDays - daysOld} days)`);
+        } catch (err) {
+          logger.error('Failed to load fingerprint profile, falling back to random:', err);
         }
       }
 
@@ -146,16 +166,20 @@ export class PuppeteerService {
 
       this.page = await this.browser!.newPage();
 
-      // Set viewport
+      // Set viewport - use profile resolution in headless mode if available
+      const viewportWidth = (profile && effectiveHeadless !== false) ? profile.screenResolution.width : config.puppeteer.viewport.width;
+      const viewportHeight = (profile && effectiveHeadless !== false) ? profile.screenResolution.height : config.puppeteer.viewport.height;
+
       await this.page.setViewport({
-        width: config.puppeteer.viewport.width,
-        height: config.puppeteer.viewport.height,
+        width: viewportWidth,
+        height: viewportHeight,
         deviceScaleFactor: 1,
         isMobile: false,
       });
 
-      // Set user agent
-      await this.page.setUserAgent(RandomHelpers.getRandomUserAgent() ?? '');
+      // Set user agent from profile or random pool
+      const ua = profile ? profile.userAgent : (RandomHelpers.getRandomUserAgent() ?? '');
+      await this.page.setUserAgent(ua);
 
       // Set default timeout
       this.page.setDefaultTimeout(config.timeouts.default);
@@ -177,24 +201,58 @@ export class PuppeteerService {
         const type = msg.type();
         const rawText = msg.text();
 
-        if (rawText.includes('net::ERR_BLOCKED_BY_CLIENT.Inspector')) {
+        const location = msg.location();
+
+        if (
+          rawText.includes('net::ERR_BLOCKED_BY_CLIENT.Inspector') ||
+          (location && location.url && location.url.includes('chrome-extension://invalid'))
+        ) {
           return;
         }
 
         if (type === 'error' || type === 'warn' || type === 'log') {
-          logger.debug(`[PAGE_${type.toUpperCase()}] ${rawText}`);
+          logger.debug(`[PAGE_${type.toUpperCase()}] ${rawText} `);
         }
       });
       this.page.on('pageerror', (err: unknown) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        logger.error(`[PAGE_EXCEPTION] ${errorMessage}`);
+        logger.error(`[PAGE_EXCEPTION] ${errorMessage} `);
       });
+
+      // Custom headless evasion (always enabled to spoof platform fingerprints regardless of head)
+      if (profile) {
+        await this.page.evaluateOnNewDocument(getHeadlessEvasionScript({
+          platform: profile.platform,
+          language: profile.language,
+          pluginCount: profile.pluginCount,
+        }));
+      } else {
+        await this.page.evaluateOnNewDocument(getHeadlessEvasionScript());
+      }
 
       // Fingerprint noise injection
       if (config.puppeteer.enableFingerprintNoise) {
-        await this.page.evaluateOnNewDocument(getCanvasNoiseScript());
-        await this.page.evaluateOnNewDocument(getWebGLSpoofScript());
-        await this.page.evaluateOnNewDocument(getAudioNoiseScript());
+        if (profile) {
+          await this.page.evaluateOnNewDocument(getCanvasNoiseScript(profile.canvasNoiseSeed));
+          await this.page.evaluateOnNewDocument(getWebGLSpoofScript(profile.gpuProfile));
+          await this.page.evaluateOnNewDocument(getAudioNoiseScript(profile.audioNoiseSeed));
+        } else {
+          // Fallback to random behavior if no profile
+          await this.page.evaluateOnNewDocument(getCanvasNoiseScript(Math.floor(Math.random() * 1000000)));
+          const randomGpu = GPU_PROFILES[Math.floor(Math.random() * GPU_PROFILES.length)]!;
+          await this.page.evaluateOnNewDocument(getWebGLSpoofScript(randomGpu));
+          await this.page.evaluateOnNewDocument(getAudioNoiseScript(Math.floor(Math.random() * 1000000)));
+        }
+      }
+
+      try {
+        const { BrowserSessionManager } = await import('../../session/services/browserSessionManager.js');
+        const signalDetector = BrowserSessionManager.getSignalDetector();
+        if (this.page && signalDetector) {
+          responseTimingInterceptor.attachToPage(this.page, signalDetector);
+        }
+      } catch {
+        logger.debug('SignalDetector not available during Puppeteer initialization');
       }
 
       logger.info('Puppeteer browser initialized successfully');
@@ -211,7 +269,7 @@ export class PuppeteerService {
     }
 
     try {
-      logger.debug(`Navigating to: ${url}`);
+      logger.debug(`Navigating to: ${url} `);
       const response = await this.page.goto(url, {
         waitUntil: 'domcontentloaded',
         timeout: config.timeouts.navigation,
@@ -223,7 +281,7 @@ export class PuppeteerService {
 
       return response;
     } catch (error) {
-      logger.error(`Failed to navigate to ${url}:`, error);
+      logger.error(`Failed to navigate to ${url}: `, error);
       throw error;
     }
   }
@@ -242,7 +300,7 @@ export class PuppeteerService {
         ...options,
       });
     } catch {
-      logger.warn(`Selector not found: ${selector}`);
+      logger.warn(`Selector not found: ${selector} `);
       return null;
     }
   }
@@ -279,7 +337,7 @@ export class PuppeteerService {
       }
       return false;
     } catch (error) {
-      logger.warn(`Failed to click selector: ${selector}`, error);
+      logger.warn(`Failed to click selector: ${selector} `, error);
       return false;
     }
   }
@@ -296,7 +354,7 @@ export class PuppeteerService {
     try {
       // Validate and normalize input text to avoid Puppeteer type errors
       if (text === null || text === undefined) {
-        logger.warn(`safeType called with null/undefined text for selector: ${selector}`);
+        logger.warn(`safeType called with null / undefined text for selector: ${selector} `);
         return false;
       }
 
@@ -305,7 +363,7 @@ export class PuppeteerService {
         try {
           inputText = String(text);
         } catch {
-          logger.warn(`safeType could not convert non-string text for selector: ${selector}`);
+          logger.warn(`safeType could not convert non - string text for selector: ${selector} `);
           return false;
         }
       } else {
@@ -322,7 +380,7 @@ export class PuppeteerService {
       }
       return false;
     } catch (error) {
-      logger.warn(`Failed to type in selector: ${selector}`, error);
+      logger.warn(`Failed to type in selector: ${selector} `, error);
       return false;
     }
   }
@@ -338,9 +396,9 @@ export class PuppeteerService {
         fullPage: true,
         ...options,
       });
-      logger.debug(`Screenshot saved: ${path}`);
+      logger.debug(`Screenshot saved: ${path} `);
     } catch (error) {
-      logger.error(`Failed to take screenshot: ${path}`, error);
+      logger.error(`Failed to take screenshot: ${path} `, error);
       throw error;
     }
   }
@@ -428,7 +486,10 @@ export class PuppeteerService {
 
         for (let i = 0; i < maxIterations; i++) {
           try {
-            const didClickShowMore = await this.page.evaluate(() => {
+            const cascadeShowMore = (linkedinSelectors['search:show-more'] || []);
+            const showMoreSel = cascadeShowMore.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
+            const didClickShowMore = await this.page.evaluate((selString) => {
               function isVisible(el: Element | null): boolean {
                 if (!el) return false;
                 const style = window.getComputedStyle(el);
@@ -442,26 +503,22 @@ export class PuppeteerService {
                 );
               }
 
-              // Try common variants of the load-more button that LinkedIn uses
-              const candidates = [
-                'button[aria-label*="Show more"]',
-                '.scaffold-finite-scroll__load-button button',
-                'button.artdeco-button',
-              ];
-
+              if (!selString) return false;
+              const candidates = selString.split(',');
               for (const sel of candidates) {
-                const btn = document.querySelector(sel) as HTMLButtonElement | null;
+                const btn = document.querySelector(sel.trim()) as HTMLButtonElement | null;
                 if (btn && isVisible(btn)) {
                   const text = (btn.textContent || '').toLowerCase();
                   const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-                  if (text.includes('show more') || aria.includes('show more')) {
+                  // We still do a partial text check just to be safe if it matched a generic button
+                  if (text.includes('show more') || aria.includes('show more') || sel.includes('show-more')) {
                     btn.click();
                     return true;
                   }
                 }
               }
               return false;
-            });
+            }, showMoreSel);
 
             if (!didClickShowMore) {
               await this.page.evaluate(() => {
@@ -500,7 +557,7 @@ export class PuppeteerService {
         const ids = new Set<string>();
         const debugInfo: string[] = [];
 
-        debugInfo.push(`Total anchors found: ${anchors.length}`);
+        debugInfo.push(`Total anchors found: ${anchors.length} `);
 
         for (const a of anchors) {
           const rawHref = a.getAttribute('href') || '';
@@ -526,7 +583,7 @@ export class PuppeteerService {
             continue;
           }
 
-          debugInfo.push(`LinkedIn href: ${href}`);
+          debugInfo.push(`LinkedIn href: ${href} `);
 
           try {
             href = decodeURIComponent(href);
@@ -538,7 +595,7 @@ export class PuppeteerService {
           const match = href.match(/\/in\/([^\/?#]+)/i);
           if (match && match[1]) {
             ids.add(match[1]);
-            debugInfo.push(`Extracted ID: ${match[1]}`);
+            debugInfo.push(`Extracted ID: ${match[1]} `);
           }
         }
 
@@ -608,6 +665,7 @@ export class PuppeteerService {
 
   async close(): Promise<void> {
     try {
+      responseTimingInterceptor.detach();
       if (this.browser) {
         await this.browser.close();
         this.browser = null;

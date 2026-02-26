@@ -4,6 +4,8 @@ import RandomHelpers from '#utils/randomHelpers.js';
 import DynamoDBService from '../../storage/services/dynamoDBService.js';
 import { decryptSealboxB64Tag } from '#utils/crypto.js';
 import type { PuppeteerService } from '../../automation/services/puppeteerService.js';
+import { linkedinResolver, linkedinSelectors } from '../selectors/index.js';
+import { BrowserSessionManager } from '../../session/services/browserSessionManager.js';
 
 /**
  * Connection type options
@@ -59,6 +61,23 @@ export class LinkedInService {
     return await fn();
   }
 
+  /**
+   * Private helper to run content analysis and record metrics
+   */
+  private async _analyze(context: { expectedContent?: 'search-results' | 'profile'; action?: string } = {}): Promise<void> {
+    try {
+      const page = this.puppeteer.getPage();
+      const detector = BrowserSessionManager.getSignalDetector();
+      const analyzer = BrowserSessionManager.getContentAnalyzer();
+      
+      if (page && detector && analyzer) {
+        await analyzer.analyzePage(page, detector, context);
+      }
+    } catch (err) {
+      logger.debug('Content analysis failed (non-blocking)', err);
+    }
+  }
+
   async login(
     username: string | null | undefined,
     password: string | null | undefined,
@@ -105,23 +124,22 @@ export class LinkedInService {
 
       await this.puppeteer.goto(`${config.linkedin.baseUrl}/login`);
 
-      // Fill username
-      const usernameSuccess = await this.puppeteer.safeType('#username', loginUsername);
-      if (!usernameSuccess) {
-        throw new Error('Failed to enter username');
+      const page = this.puppeteer.getPage();
+      if (!page) {
+        throw new Error('Browser page not available');
       }
+
+      // Fill username
+      const usernameInput = await linkedinResolver.resolveWithWait(page, 'nav:login-username', { timeout: 5000 });
+      await usernameInput.type(loginUsername);
 
       // Fill password
-      const passwordSuccess = await this.puppeteer.safeType('#password', loginPassword);
-      if (!passwordSuccess) {
-        throw new Error('Failed to enter password');
-      }
+      const passwordInput = await linkedinResolver.resolveWithWait(page, 'nav:login-password', { timeout: 5000 });
+      await passwordInput.type(loginPassword);
 
       // Click login button
-      const loginSuccess = await this.puppeteer.safeClick('form button[type="submit"]');
-      if (!loginSuccess) {
-        throw new Error('Failed to click login button');
-      }
+      const loginButton = await linkedinResolver.resolveWithWait(page, 'nav:login-submit', { timeout: 5000 });
+      await loginButton.click();
 
       if (recursion) {
         logger.warn(
@@ -130,17 +148,13 @@ export class LinkedInService {
       }
 
       // Post-login: do a short readiness probe instead of long navigation waits
-      const page = this.puppeteer.getPage();
-      if (!page) {
-        throw new Error('Browser page not available');
-      }
 
       const shortCapMs = Math.min(8000, config.timeouts?.navigation || 15000);
       const start = Date.now();
       try {
         await Promise.race([
           page.waitForFunction(() => document.readyState === 'complete', { timeout: shortCapMs }),
-          page.waitForSelector('header, [data-view-name="navigation-homepage"]', {
+          linkedinResolver.resolveWithWait(page, 'nav:homepage', {
             timeout: shortCapMs / 2,
           }),
         ]);
@@ -153,18 +167,10 @@ export class LinkedInService {
       logger.debug(`Post-login readiness probe took ${spent}ms`);
 
       // After login, wait for a common homepage selector to allow time for security challenges (2FA, checkpoint, captcha)
-      const homepageSelector = [
-        '[data-view-name="navigation-homepage"]',
-        '[data-view-name="identity-module"]',
-        '[data-view-name="identity-self-profile"]',
-        'header',
-      ].join(', ');
-
-      // Timeout of 0 means "wait indefinitely" - this is intentional to allow users
-      // to manually complete 2FA/CAPTCHA challenges.
       const loginWaitMs = config.timeouts?.login ?? 0;
       try {
-        await page.waitForSelector(homepageSelector, { visible: true, timeout: loginWaitMs });
+        const timeoutArg = loginWaitMs === 0 ? 0 : loginWaitMs;
+        await linkedinResolver.resolveWithWait(page, 'nav:homepage', { timeout: timeoutArg });
         logger.info(
           'Homepage element detected after login; security challenge (if any) likely resolved.'
         );
@@ -172,6 +178,9 @@ export class LinkedInService {
         logger.error('Homepage selector did not appear within the configured login timeout.', e);
         throw e;
       }
+
+      // Content analysis after login
+      await this._analyze({ action: 'login' });
 
       logger.info('Login process completed');
       return true;
@@ -233,6 +242,9 @@ export class LinkedInService {
       } catch {
         logger.warn('Timed out waiting for company parameter in URL');
       }
+
+      // Analyze search results content
+      await this._analyze({ expectedContent: 'search-results', action: 'search' });
 
       if (extractedCompanyNumber) {
         logger.info(`Extracted company number: ${extractedCompanyNumber}`);
@@ -302,6 +314,9 @@ export class LinkedInService {
         logger.warn('Timed out waiting for geoUrn parameter in URL');
       }
 
+      // Analyze search results content
+      await this._analyze({ expectedContent: 'search-results', action: 'search' });
+
       if (extractedGeoNumber) {
         logger.info(`Extracted geo number: ${extractedGeoNumber}`);
       } else {
@@ -319,23 +334,16 @@ export class LinkedInService {
     const page = this.puppeteer.getPage();
     if (!page) return false;
 
-    const selectors = [
-      `::-p-aria(${filterName})`,
-      `button[aria-label="${filterName} filter"]`,
-      `button[aria-label*="${filterName}"]`,
-    ];
-
-    for (const selector of selectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 5000 });
-        const success = await this.puppeteer.safeClick(selector);
-        if (success) {
-          logger.debug(`Clicked filter "${filterName}" with: ${selector}`);
-          return true;
-        }
-      } catch {
-        logger.debug(`Filter selector failed: ${selector}`);
-      }
+    try {
+      const button = await linkedinResolver.resolveWithWait(page, 'search:filter-button', {
+        timeout: 5000,
+        params: { filterName }
+      });
+      await button.click();
+      logger.debug(`Clicked filter "${filterName}" with resolver`);
+      return true;
+    } catch {
+      logger.debug(`Filter selector failed for: ${filterName}`);
     }
 
     // Fallback: find by text content in both buttons and labels
@@ -368,28 +376,15 @@ export class LinkedInService {
     const page = this.puppeteer.getPage();
     if (!page) return false;
 
-    const inputSelectors = [
-      'input[aria-label*="Add a company"]',
-      'input[aria-label*="Add a location"]',
-      'input[placeholder*="Add a"]',
-      'input[role="combobox"]',
-      '[role="listbox"] input',
-      'fieldset input[type="text"]',
-    ];
-
-    for (const selector of inputSelectors) {
-      try {
-        const element = await page.$(selector);
-        if (element) {
-          await element.click({ count: 3 });
-          await page.keyboard.press('Backspace');
-          await element.type(text, { delay: 50 });
-          logger.debug(`Typed "${text}" in filter input: ${selector}`);
-          return true;
-        }
-      } catch {
-        logger.debug(`Filter input selector failed: ${selector}`);
-      }
+    try {
+      const element = await linkedinResolver.resolveWithWait(page, 'search:filter-input', { timeout: 2000 });
+      await element.click({ count: 3 });
+      await page.keyboard.press('Backspace');
+      await element.type(text, { delay: 50 });
+      logger.debug(`Typed "${text}" in filter input with resolver`);
+      return true;
+    } catch {
+      logger.debug(`Filter input selector failed`);
     }
 
     logger.warn('Could not find filter input field');
@@ -400,20 +395,24 @@ export class LinkedInService {
     const page = this.puppeteer.getPage();
     if (!page) return false;
 
-    const suggestionSelectors = [
-      '[role="listbox"] [role="option"]',
-      '[role="listbox"] li',
-      '.basic-typeahead__triggered-content li',
-      'div[data-basic-filter-parameter-values] label',
-      'fieldset label',
-    ];
+    try {
+      await linkedinResolver.resolveWithWait(page, 'search:filter-suggestions', { timeout: 5000 });
+    } catch {
+      logger.debug('Suggestion selector failed to find items');
+      return false;
+    }
 
-    for (const selector of suggestionSelectors) {
+    const cascade = linkedinSelectors['search:filter-suggestions'] || [];
+    for (const strat of cascade) {
+      const selector = strat.selector;
+      if (selector.includes('::-p-')) continue;
+
       try {
-        await page.waitForSelector(selector, { timeout: 5000 });
         const clicked = await page.evaluate(
           (sel: string, text: string) => {
             const items = Array.from(document.querySelectorAll(sel));
+            if (items.length === 0) return false;
+
             const exactMatch = items.find(
               (item) => item.textContent?.trim().toLowerCase() === text.toLowerCase()
             );
@@ -421,6 +420,7 @@ export class LinkedInService {
               item.textContent?.trim().toLowerCase().includes(text.toLowerCase())
             );
             const target = exactMatch || partialMatch;
+
             if (target) {
               const input = target.querySelector('input') as HTMLInputElement | null;
               if (input) {
@@ -437,11 +437,11 @@ export class LinkedInService {
         );
 
         if (clicked) {
-          logger.debug(`Selected suggestion for "${searchText}" with: ${selector}`);
+          logger.debug(`Selected suggestion for "${searchText}" with strategy: ${strat.strategy}`);
           return true;
         }
       } catch {
-        logger.debug(`Suggestion selector failed: ${selector}`);
+        // continue
       }
     }
 
@@ -453,25 +453,13 @@ export class LinkedInService {
     const page = this.puppeteer.getPage();
     if (!page) return false;
 
-    const selectors = [
-      '::-p-aria(Show results)',
-      '::-p-aria(Apply current filter)',
-      'button[aria-label*="Apply"]',
-      'button[aria-label*="Show results"]',
-      'button[data-control-name="filter_show_results"]',
-    ];
-
-    for (const selector of selectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 3000 });
-        const success = await this.puppeteer.safeClick(selector);
-        if (success) {
-          logger.debug(`Clicked "Show results" with: ${selector}`);
-          return true;
-        }
-      } catch {
-        // try next
-      }
+    try {
+      const button = await linkedinResolver.resolveWithWait(page, 'search:apply-filter', { timeout: 3000 });
+      await button.click();
+      logger.debug(`Clicked "Show results" with resolver`);
+      return true;
+    } catch {
+      // try fallback below
     }
 
     // Fallback: find by button text
@@ -508,6 +496,9 @@ export class LinkedInService {
     extractedGeoNumber: string | null = null
   ): Promise<{ links: string[]; pictureUrls: Record<string, string> }> {
     try {
+      const page = this.puppeteer.getPage();
+      if (!page) throw new Error('Page missing');
+
       // Build URL conditionally based on available parameters
       const urlParts = [`${config.linkedin.baseUrl}/search/results/people/?`];
       const queryParams: string[] = [];
@@ -533,8 +524,18 @@ export class LinkedInService {
 
       await this.puppeteer.goto(url);
 
+      // Analyze search results content
+      await this._analyze({ expectedContent: 'search-results', action: 'search' });
+
       // Wait for content to load
-      const hasContent = await this.puppeteer.waitForSelector('ul li', { timeout: 5000 });
+      let hasContent = false;
+      try {
+        await linkedinResolver.resolveWithWait(page, 'search:result-items', { timeout: 5000 });
+        hasContent = true;
+      } catch {
+        // no content
+      }
+
       if (!hasContent) {
         logger.warn(`No content found on page ${pageNumber}`);
         return { links: [], pictureUrls: {} };
@@ -589,12 +590,19 @@ export class LinkedInService {
         throw new Error('Browser page not available');
       }
 
+      // Analyze profile content
+      await this._analyze({ expectedContent: 'profile' });
+
       const currentUrl = page.url();
 
       // Detection of security challenges
       const pageContent = await page.content();
       if (currentUrl.includes('checkpoint') || /captcha|verify/i.test(pageContent)) {
-        logger.warn('Landed on a checkpoint or captcha page - may require manual intervention');
+        logger.warn('Checkpoint detected — pausing automation and notifying user');
+        const controller = BrowserSessionManager.getBackoffController();
+        if (controller) {
+          await controller.handleCheckpoint(currentUrl);
+        }
       }
 
       let score = 0;
@@ -606,18 +614,26 @@ export class LinkedInService {
       const countedSet = new Set<string>();
 
       for (let i = 0; i < historyToCheck; i++) {
-        const timeSelector = 'span[aria-hidden="true"], p[componentkey]';
-        await this.puppeteer.waitForSelector(timeSelector, { timeout: 5000 });
+        try {
+          await linkedinResolver.resolveWithWait(page, 'profile:activity-time', { timeout: 5000 });
+        } catch {
+          // ignore
+        }
+
+        const timeSelectors = (linkedinSelectors['profile:activity-time'] as Array<{ strategy: string, selector: string }>)
+          .filter(s => !s.selector.includes('::-p-'))
+          .map(s => s.selector)
+          .join(', ');
 
         const result = await page.evaluate(
-          (existingCounts: ActivityCounts, countedArr: string[]) => {
+          (existingCounts: ActivityCounts, countedArr: string[], timeSel: string) => {
             const timeframes: Record<string, RegExp> = {
               hour: /\b([1-9]|1[0-9]|2[0-3])h\b/i,
               day: /\b([1-6])d\b/i,
               week: /\b([1-4])w\b/i,
             };
             const elements = Array.from(
-              document.querySelectorAll('span[aria-hidden="true"], p[componentkey]')
+              document.querySelectorAll(timeSel)
             );
             const updatedCounts = { ...existingCounts };
             const newCounted: string[] = [];
@@ -637,7 +653,8 @@ export class LinkedInService {
             return { updatedCounts, newCounted };
           },
           totalCounts,
-          Array.from(countedSet)
+          Array.from(countedSet),
+          timeSelectors
         );
 
         Object.assign(totalCounts, result.updatedCounts);
@@ -698,22 +715,22 @@ export class LinkedInService {
 
     for (let i = 0; i < maxScrolls; i++) {
       try {
-        const currentConnectionCount = await page.evaluate(() => {
-          const selectors = [
-            'a[href*="/in/"]',
-            '[data-view-name="connections-profile"]',
-            '[data-view-name="people-search-result"]',
-            '[data-test-id="connection-card"]',
-          ];
+        const cascade = (linkedinSelectors['search:profile-links'] as Array<{ strategy: string, selector: string }>) || [];
+        const connectionSelectors = cascade
+          .filter(s => !s.selector.includes('::-p-'))
+          .map(s => s.selector)
+          .join(', ');
 
+        const currentConnectionCount = await page.evaluate((selString: string) => {
           let totalCount = 0;
-          selectors.forEach((selector) => {
-            const elements = document.querySelectorAll(selector);
+          if (!selString) return 0;
+          selString.split(',').forEach((selector) => {
+            const elements = document.querySelectorAll(selector.trim());
             totalCount = Math.max(totalCount, elements.length);
           });
 
           return totalCount;
-        });
+        }, connectionSelectors);
 
         if (currentConnectionCount > previousConnectionCount) {
           logger.debug(

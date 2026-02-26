@@ -21,15 +21,24 @@ import {
   getCanvasNoiseScript,
   getWebGLSpoofScript,
   getAudioNoiseScript,
+  getHeadlessEvasionScript,
 } from './src/domains/automation/utils/stealthScripts.ts';
+import { loadOrCreateProfile, GPU_PROFILES } from './src/domains/automation/utils/fingerprintProfile.ts';
 import RandomHelpers from './src/shared/utils/randomHelpers.js';
 
-const stealthEnabled = (process.env.PUPPETEER_STEALTH ?? 'true').toLowerCase() !== 'false';
+const stealthEnabled = false; // Completely stripping puppeteer-extra-plugin-stealth
 if (stealthEnabled) {
-  puppeteer.use(StealthPlugin());
-  console.log('Stealth plugin enabled');
+  const stealth = StealthPlugin();
+
+  // LinkedIn is detecting one of the evasions. We will disable them one by one.
+  // The most common triggers for advanced bot scripts are navigator.webdriver and chrome.runtime
+  stealth.enabledEvasions.delete('chrome.runtime');
+  stealth.enabledEvasions.delete('iframe.contentWindow');
+
+  puppeteer.use(stealth);
+  console.log('Stealth plugin enabled (Selective Evasion: chrome.runtime, iframe.contentWindow DISABLED)');
 } else {
-  console.log('Stealth plugin disabled (PUPPETEER_STEALTH=false)');
+  console.log('Stealth plugin disabled (using Custom Evasion Scripts instead)');
 }
 
 // Detect system Chrome/Chromium (same logic as PuppeteerService)
@@ -105,12 +114,34 @@ page.on('console', (msg) => {
   const type = msg.type();
   const rawText = msg.text();
 
-  if (rawText.includes('net::ERR_BLOCKED_BY_CLIENT.Inspector')) {
+  const location = msg.location();
+  if (
+    rawText.includes('net::ERR_BLOCKED_BY_CLIENT.Inspector') ||
+    (location && location.url && location.url.includes('chrome-extension://invalid'))
+  ) {
     return;
   }
 
   if (type === 'error' || type === 'warning' || type === 'log') {
-    const text = `[PAGE_${type.toUpperCase()}] ${rawText}\n`;
+    let text = `[PAGE_${type.toUpperCase()}] ${rawText}`;
+
+    // Attempt to extract stack traces from the arguments if it's an EvalError or generic Exception
+    const args = msg.args();
+    if (args && args.length > 0 && typeof args[0].remoteObject === 'function') {
+      const remoteObj = args[0].remoteObject();
+      if (remoteObj && remoteObj.description) {
+        text += `\n    -> Details: ${remoteObj.description}`;
+      }
+    } else {
+      // Fallback: log the location where the console message originated
+      const location = msg.location();
+      if (location && location.url) {
+        text += `\n    -> Source: ${location.url}:${location.lineNumber}:${location.columnNumber}`;
+      }
+    }
+
+    text += '\n';
+
     console.log(text.trim());
     fs.appendFileSync(logFile, text);
   }
@@ -121,32 +152,64 @@ page.on('pageerror', (err) => {
   fs.appendFileSync(logFile, text);
 });
 
+// Load or create fingerprint profile if requested
+const useProfile = process.env.FINGERPRINT_PROFILE === '1';
+let profile = null;
+if (useProfile) {
+  const profileDir = './inspect-profile/';
+  profile = loadOrCreateProfile(profileDir);
+  console.log(`[FingerprintProfile] Using persistent profile from ${profileDir}`);
+  console.log(`[FingerprintProfile] Seed: ${profile.seed.slice(0, 8)}...`);
+  console.log(`[FingerprintProfile] UA: ${profile.userAgent}`);
+  console.log(`[FingerprintProfile] GPU: ${profile.gpuProfile.renderer}`);
+}
+
 // Random user agent
-const userAgent = RandomHelpers.getRandomUserAgent() ?? '';
+const userAgent = profile ? profile.userAgent : (RandomHelpers.getRandomUserAgent() ?? '');
 await page.setUserAgent(userAgent);
 
 // Request interception: block chrome-extension:// requests
-await page.setRequestInterception(true);
-page.on('request', (req) => {
-  if (req.url().startsWith('chrome-extension://')) {
-    req.abort('blockedbyclient');
-  } else {
-    req.continue();
-  }
-});
+// await page.setRequestInterception(true);
+// page.on('request', (req) => {
+//   if (req.url().startsWith('chrome-extension://')) {
+//     req.abort('blockedbyclient');
+//   } else {
+//     req.continue();
+//   }
+// });
 
-// Fingerprint noise injection
+// Fingerprint noise injection and headless evasion
 const noiseEnabled = (process.env.PUPPETEER_FINGERPRINT_NOISE ?? 'true').toLowerCase() !== 'false';
+
+// Always apply custom headless evasion since we disabled the stealth plugin
+if (profile) {
+  await page.evaluateOnNewDocument(getHeadlessEvasionScript({
+    platform: profile.platform,
+    language: profile.language,
+    pluginCount: profile.pluginCount,
+  }));
+} else {
+  await page.evaluateOnNewDocument(getHeadlessEvasionScript());
+}
+
 if (noiseEnabled) {
-  await page.evaluateOnNewDocument(getCanvasNoiseScript());
-  await page.evaluateOnNewDocument(getWebGLSpoofScript());
-  await page.evaluateOnNewDocument(getAudioNoiseScript());
-  console.log('Fingerprint noise injection enabled');
+  if (profile) {
+    await page.evaluateOnNewDocument(getCanvasNoiseScript(profile.canvasNoiseSeed));
+    await page.evaluateOnNewDocument(getWebGLSpoofScript(profile.gpuProfile));
+    await page.evaluateOnNewDocument(getAudioNoiseScript(profile.audioNoiseSeed));
+    console.log('Fingerprint profile noise injected.');
+  } else {
+    await page.evaluateOnNewDocument(getCanvasNoiseScript(Math.floor(Math.random() * 1000000)));
+    await page.evaluateOnNewDocument(getWebGLSpoofScript(GPU_PROFILES[Math.floor(Math.random() * GPU_PROFILES.length)]));
+    await page.evaluateOnNewDocument(getAudioNoiseScript(Math.floor(Math.random() * 1000000)));
+    console.log('Random session noise injected.');
+  }
 } else {
   console.log('Fingerprint noise disabled (PUPPETEER_FINGERPRINT_NOISE=false)');
 }
 
-await page.setViewport({ width: 1400, height: 900 });
+const viewport = profile ? { width: profile.screenResolution.width, height: profile.screenResolution.height } : { width: 1400, height: 900 };
+await page.setViewport(viewport);
 
 console.log('Browser launched — navigating to linkedin.com');
 await page.goto('https://www.linkedin.com', { waitUntil: 'domcontentloaded' });

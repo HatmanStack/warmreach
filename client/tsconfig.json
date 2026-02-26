@@ -8,6 +8,7 @@
     "checkJs": false,
     "strict": true,
     "outDir": "./dist",
+    "rootDir": ".",
     "declaration": true,
     "declarationMap": true,
     "esModuleInterop": true,
@@ -24,6 +25,7 @@
     "paths": {
       "#utils/*": ["./src/shared/utils/*"],
       "#shared-config/*": ["./src/shared/config/*"],
+      "#shared/*": ["./src/shared/*"],
       "#config": ["./config/index.js"],
       "#routes/*": ["./routes/*"],
       "#schemas/*": ["./schemas/*"]

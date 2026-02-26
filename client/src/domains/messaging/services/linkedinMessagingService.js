@@ -5,6 +5,7 @@
  */
 
 import { logger } from '#utils/logger.js';
+import { linkedinResolver } from '../../linkedin/selectors/index.js';
 
 /**
  * Messaging service for LinkedIn direct messages.
@@ -95,27 +96,9 @@ export class LinkedInMessagingService {
     const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
     const page = session.getPage();
 
-    const messageButtonSelectors = [
-      '[data-view-name="message-button"]',
-      'button[aria-label*="Message"]',
-      'button:has-text("Message")',
-      '[data-test-id="message-button"]',
-    ];
-
-    for (const selector of messageButtonSelectors) {
-      try {
-        const button = await page.waitForSelector(selector, { timeout: 3000 });
-        if (button) {
-          await button.click();
-          await this.waitForMessagingInterface();
-          return;
-        }
-      } catch {
-        // try next selector
-      }
-    }
-
-    throw new Error('Could not find message button');
+    const button = await linkedinResolver.resolveWithWait(page, 'messaging:message-button', { timeout: 10000 });
+    await button.click();
+    await this.waitForMessagingInterface();
   }
 
   /**
@@ -126,23 +109,7 @@ export class LinkedInMessagingService {
     const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
     const page = session.getPage();
 
-    const inputSelectors = [
-      '[data-test-id="message-input"]',
-      '[role="textbox"][aria-label*="message"]',
-      '.msg-form__contenteditable',
-      'div[contenteditable="true"]',
-    ];
-
-    for (const selector of inputSelectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 5000 });
-        return;
-      } catch {
-        // try next
-      }
-    }
-
-    throw new Error('Messaging interface did not load');
+    await linkedinResolver.resolveWithWait(page, 'messaging:message-input', { timeout: 10000 });
   }
 
   /**
@@ -154,53 +121,14 @@ export class LinkedInMessagingService {
     const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
     const page = session.getPage();
 
-    // Find message input
-    const inputSelectors = [
-      '[data-test-id="message-input"]',
-      '[role="textbox"][aria-label*="message"]',
-      '.msg-form__contenteditable',
-      'div[contenteditable="true"]',
-    ];
-
-    let inputElement = null;
-    for (const selector of inputSelectors) {
-      try {
-        inputElement = await page.waitForSelector(selector, { timeout: 2000 });
-        if (inputElement) break;
-      } catch {
-        // try next
-      }
-    }
-
-    if (!inputElement) {
-      throw new Error('Could not find message input field');
-    }
+    const inputElement = await linkedinResolver.resolveWithWait(page, 'messaging:message-input', { timeout: 10000 });
 
     // Type message
     await inputElement.click();
     await inputElement.type(messageContent, { delay: 30 });
 
-    // Find and click send button
-    const sendButtonSelectors = [
-      '[data-test-id="send-button"]',
-      'button[type="submit"]',
-      'button:has-text("Send")',
-      '[aria-label*="Send"]',
-    ];
-
-    for (const selector of sendButtonSelectors) {
-      try {
-        const sendButton = await page.waitForSelector(selector, { timeout: 2000 });
-        if (sendButton) {
-          await sendButton.click();
-          return;
-        }
-      } catch {
-        // try next
-      }
-    }
-
-    throw new Error('Could not find send button');
+    const sendButton = await linkedinResolver.resolveWithWait(page, 'messaging:send-button', { timeout: 10000 });
+    await sendButton.click();
   }
 
   /**
@@ -215,22 +143,8 @@ export class LinkedInMessagingService {
       // Wait for sent indicator or input to clear
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
-      // Check if message appears in conversation
-      const sentIndicators = [
-        '.msg-s-message-list__event--last-event',
-        '[data-test-id="message-sent"]',
-      ];
-
-      for (const selector of sentIndicators) {
-        try {
-          const indicator = await page.$(selector);
-          if (indicator) return true;
-        } catch {
-          // continue
-        }
-      }
-
-      return false; // No sent indicator found
+      const indicator = await linkedinResolver.resolve(page, 'messaging:sent-confirmation');
+      return !!indicator;
     } catch {
       return false;
     }

@@ -3,91 +3,87 @@ import {
   getCanvasNoiseScript,
   getWebGLSpoofScript,
   getAudioNoiseScript,
-} from './stealthScripts.js';
+  getHeadlessEvasionScript,
+} from './stealthScripts';
 
 describe('stealthScripts', () => {
   describe('getCanvasNoiseScript', () => {
-    it('returns a non-empty string', () => {
-      const script = getCanvasNoiseScript();
-      expect(script).toBeTruthy();
-      expect(typeof script).toBe('string');
+    it('requires a seed parameter', () => {
+      // @ts-ignore
+      const script = getCanvasNoiseScript(12345);
+      expect(script).toContain('12345');
     });
 
-    it('returns valid JavaScript', () => {
-      expect(() => new Function(getCanvasNoiseScript())).not.toThrow();
+    it('is deterministic for the same seed', () => {
+      const script1 = getCanvasNoiseScript(12345);
+      const script2 = getCanvasNoiseScript(12345);
+      expect(script1).toBe(script2);
     });
 
-    it('wraps toDataURL and toBlob', () => {
-      const script = getCanvasNoiseScript();
-      expect(script).toContain('toDataURL');
-      expect(script).toContain('toBlob');
+    it('is different for different seeds', () => {
+      const script1 = getCanvasNoiseScript(12345);
+      const script2 = getCanvasNoiseScript(54321);
+      expect(script1).not.toBe(script2);
     });
 
-    it('uses a clone canvas instead of mutating the source', () => {
-      const script = getCanvasNoiseScript();
-      expect(script).toContain('noisyExport');
-      expect(script).toContain("document.createElement('canvas')");
-    });
-
-    it('applies noise to R, G, and B channels', () => {
-      const script = getCanvasNoiseScript();
-      // Loop over 3 channels: for (let ch = 0; ch < 3; ch++)
-      expect(script).toContain('ch < 3');
+    it('embeds a PRNG and does not use Math.random() for noise', () => {
+      const script = getCanvasNoiseScript(12345);
+      expect(script).not.toContain('Math.random()');
     });
   });
 
   describe('getWebGLSpoofScript', () => {
-    it('returns a non-empty string', () => {
-      const script = getWebGLSpoofScript();
-      expect(script).toBeTruthy();
-      expect(typeof script).toBe('string');
-    });
-
-    it('returns valid JavaScript', () => {
-      expect(() => new Function(getWebGLSpoofScript())).not.toThrow();
-    });
-
-    it('intercepts UNMASKED_VENDOR_WEBGL and UNMASKED_RENDERER_WEBGL', () => {
-      const script = getWebGLSpoofScript();
-      expect(script).toContain('0x9245');
-      expect(script).toContain('0x9246');
-    });
-
-    it('uses a pool of GPU profiles selected randomly', () => {
-      const script = getWebGLSpoofScript();
-      expect(script).toContain('gpuProfiles');
-      expect(script).toContain('Math.random()');
-    });
-
-    it('includes modern GPU models', () => {
-      const script = getWebGLSpoofScript();
-      expect(script).toContain('RTX 3060');
-      expect(script).toContain('RTX 4070');
-      expect(script).toContain('Radeon RX');
-    });
-
-    it('handles both WebGL1 and WebGL2 contexts', () => {
-      const script = getWebGLSpoofScript();
-      expect(script).toContain('WebGLRenderingContext');
-      expect(script).toContain('WebGL2RenderingContext');
+    it('requires a GPU profile parameter', () => {
+      const profile = { vendor: 'CustomVendor', renderer: 'CustomRenderer' };
+      const script = getWebGLSpoofScript(profile);
+      expect(script).toContain('CustomVendor');
+      expect(script).toContain('CustomRenderer');
+      expect(script).not.toContain('gpuProfiles');
     });
   });
 
   describe('getAudioNoiseScript', () => {
-    it('returns a non-empty string', () => {
-      const script = getAudioNoiseScript();
-      expect(script).toBeTruthy();
-      expect(typeof script).toBe('string');
+    it('requires a seed parameter', () => {
+      const script = getAudioNoiseScript(12345);
+      expect(script).toContain('12345');
     });
 
-    it('returns valid JavaScript', () => {
-      expect(() => new Function(getAudioNoiseScript())).not.toThrow();
+    it('is deterministic for the same seed', () => {
+      const script1 = getAudioNoiseScript(12345);
+      const script2 = getAudioNoiseScript(12345);
+      expect(script1).toBe(script2);
     });
 
-    it('wraps OfflineAudioContext.startRendering', () => {
-      const script = getAudioNoiseScript();
-      expect(script).toContain('OfflineAudioContext');
-      expect(script).toContain('startRendering');
+    it('does not use Math.random() for noise', () => {
+      const script = getAudioNoiseScript(12345);
+      expect(script).not.toContain('Math.random()');
+    });
+  });
+
+  describe('getHeadlessEvasionScript', () => {
+    it('accepts profile options', () => {
+      const script = getHeadlessEvasionScript({
+        platform: 'Win32',
+        language: 'en-US',
+        pluginCount: 5,
+      });
+      expect(script).toContain('Win32');
+      expect(script).toContain('en-US');
+      // Should find something like [1, 2, 3, 4, 5] or an array of length 5
+      expect(script).toContain('Array(5)');
+    });
+
+    it('spoofs navigator.platform', () => {
+      const script = getHeadlessEvasionScript({ platform: 'Linux x86_64' });
+      expect(script).toContain('platform');
+      expect(script).toContain('Linux x86_64');
+    });
+
+    it('spoofs navigator.language and languages', () => {
+      const script = getHeadlessEvasionScript({ language: 'en-GB' });
+      expect(script).toContain('language');
+      expect(script).toContain('en-GB');
+      expect(script).toContain('en'); // fallback language
     });
   });
 });

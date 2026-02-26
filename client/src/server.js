@@ -127,13 +127,16 @@ app.get('/health', async (req, res) => {
     const configStatus = ConfigInitializer.getInitializationStatus();
     const queueStatus = linkedInInteractionQueue.getQueueStatus();
     const sessionHealth = await BrowserSessionManager.getHealthStatus();
+    const signalDetector = BrowserSessionManager.getSignalDetector();
+    const sessionMetrics = BrowserSessionManager.getSessionMetrics();
+    const backoffController = BrowserSessionManager.getBackoffController();
 
     // Determine overall health based on components
     const memoryPressure = queueStatus.memoryPressure;
-    const isHealthy = !memoryPressure.isUnderPressure && configStatus.configurationValid !== false;
+    const isHealthy = !memoryPressure.isUnderPressure && configStatus.configurationValid !== false && !queueStatus.paused;
 
     res.json({
-      status: isHealthy ? 'healthy' : 'degraded',
+      status: isHealthy ? 'healthy' : (queueStatus.paused ? 'paused' : 'degraded'),
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       environment: config.nodeEnv,
@@ -157,6 +160,15 @@ app.get('/health', async (req, res) => {
         queuedJobs: queueStatus.queuedJobs,
         totalJobsTracked: queueStatus.totalJobsTracked,
         concurrency: queueStatus.concurrency,
+        paused: queueStatus.paused,
+        pauseReason: queueStatus.pauseReason,
+        pausedAt: queueStatus.pausedAt,
+      },
+      automation: {
+        threatLevel: signalDetector?.assess().threatLevel || 0,
+        signals: signalDetector?.getMetrics() || {},
+        metrics: sessionMetrics?.getMetrics() || {},
+        backoff: backoffController?.getStatus() || {},
       },
       memory: {
         raw: process.memoryUsage(),

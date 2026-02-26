@@ -30,6 +30,18 @@ vi.mock('#shared-config/index.js', () => ({
       pageNumberStart: 1,
       pageNumberEnd: 100,
     },
+    linkedinInteractions: {
+      sessionTimeout: 30 * 60 * 1000,
+      maxConcurrentInteractions: 5,
+      rateLimitMax: 100,
+      rateLimitWindow: 60 * 60 * 1000,
+      retryAttempts: 3,
+      humanDelayMin: 1000,
+      humanDelayMax: 3000,
+      navigationTimeout: 30000,
+      elementWaitTimeout: 5000,
+      maxSessionErrors: 3,
+    },
     puppeteer: {
       headless: true,
       slowMo: 50,
@@ -47,7 +59,7 @@ vi.mock('#shared-config/index.js', () => ({
 // Mock DynamoDBService (relative path import)
 vi.mock('../../storage/services/dynamoDBService.js', () => ({
   default: class MockDynamoDBService {
-    constructor() {}
+    constructor() { }
     updateContactStatus() {
       return Promise.resolve();
     }
@@ -60,12 +72,21 @@ vi.mock('../../storage/services/dynamoDBService.js', () => ({
 // Mock LinkedInContactService (relative path import)
 vi.mock('./linkedinContactService.js', () => ({
   default: class MockLinkedInContactService {
-    constructor() {}
+    constructor() { }
     processContact() {
       return Promise.resolve();
     }
   },
 }));
+
+vi.mock('../selectors/index.js', () => ({
+  linkedinResolver: {
+    resolveWithWait: vi.fn(),
+    resolve: vi.fn(),
+  },
+  linkedinSelectors: {}
+}));
+import { linkedinResolver } from '../selectors/index.js';
 
 // Create mock PuppeteerService (wrapper around puppeteer page)
 function createMockPuppeteerService() {
@@ -107,6 +128,12 @@ describe('LinkedInService', () => {
     vi.clearAllMocks();
     mockPuppeteer = createMockPuppeteerService();
     service = new LinkedInService(mockPuppeteer);
+
+    linkedinResolver.resolveWithWait.mockResolvedValue({
+      type: vi.fn(),
+      click: vi.fn()
+    });
+    linkedinResolver.resolve.mockResolvedValue(null);
   });
 
   describe('constructor', () => {
@@ -126,14 +153,19 @@ describe('LinkedInService', () => {
     });
 
     it('types username and password', async () => {
+      const mockType = vi.fn();
+      linkedinResolver.resolveWithWait.mockResolvedValue({ type: mockType, click: vi.fn() });
       await service.login('user@test.com', 'pass123');
-      expect(mockPuppeteer.safeType).toHaveBeenCalledWith('#username', 'user@test.com');
-      expect(mockPuppeteer.safeType).toHaveBeenCalledWith('#password', 'pass123');
+      expect(linkedinResolver.resolveWithWait).toHaveBeenCalledWith(expect.anything(), 'nav:login-username', expect.anything());
+      expect(mockType).toHaveBeenCalledWith('user@test.com');
+      expect(mockType).toHaveBeenCalledWith('pass123');
     });
 
     it('clicks login button', async () => {
+      const mockClick = vi.fn();
+      linkedinResolver.resolveWithWait.mockResolvedValue({ type: vi.fn(), click: mockClick });
       await service.login('user@test.com', 'pass123');
-      expect(mockPuppeteer.safeClick).toHaveBeenCalledWith('form button[type="submit"]');
+      expect(mockClick).toHaveBeenCalled();
     });
 
     it('throws when username is missing', async () => {
@@ -145,10 +177,8 @@ describe('LinkedInService', () => {
     });
 
     it('throws when safeType fails for username', async () => {
-      mockPuppeteer.safeType.mockResolvedValueOnce(false);
-      await expect(service.login('user@test.com', 'pass123')).rejects.toThrow(
-        'Failed to enter username'
-      );
+      linkedinResolver.resolveWithWait.mockRejectedValueOnce(new Error('timeout'));
+      await expect(service.login('user@test.com', 'pass123')).rejects.toThrow();
     });
 
     it('attempts decryption when credentials ciphertext provided', async () => {
@@ -157,9 +187,12 @@ describe('LinkedInService', () => {
         JSON.stringify({ email: 'decrypted@test.com', password: 'decryptedpass' })
       );
 
+      const mockType = vi.fn();
+      linkedinResolver.resolveWithWait.mockResolvedValue({ type: mockType, click: vi.fn() });
+
       await service.login(null, null, false, 'sealbox_x25519:b64:encrypted');
       expect(decryptSealboxB64Tag).toHaveBeenCalledWith('sealbox_x25519:b64:encrypted');
-      expect(mockPuppeteer.safeType).toHaveBeenCalledWith('#username', 'decrypted@test.com');
+      expect(mockType).toHaveBeenCalledWith('decrypted@test.com');
     });
   });
 
@@ -282,7 +315,7 @@ describe('LinkedInService', () => {
     });
 
     it('returns empty result when no content found', async () => {
-      mockPuppeteer.waitForSelector.mockResolvedValue(false);
+      linkedinResolver.resolveWithWait.mockRejectedValue(new Error('timeout'));
 
       const result = await service.getLinksFromPeoplePage(1, '12345');
       expect(result).toEqual({ links: [], pictureUrls: {} });

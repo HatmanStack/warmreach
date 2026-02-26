@@ -7,6 +7,7 @@
 
 import { logger } from '#utils/logger.js';
 import config from '#shared-config/index.js';
+import { linkedinResolver, linkedinSelectors } from '../../linkedin/selectors/index.js';
 
 /**
  * Navigation service for LinkedIn page interactions.
@@ -101,26 +102,16 @@ export class LinkedInNavigationService {
    */
   async verifyProfilePage(page) {
     try {
-      const profileIndicators = [
-        '[data-view-name="profile-top-card-member-photo"]',
-        '[data-view-name="profile-top-card-verified-badge"]',
-        '[data-view-name="profile-main-level"]',
-        '[data-view-name="profile-self-view"]',
-        '[data-test-id="profile-top-card"]',
-      ];
-
-      for (const selector of profileIndicators) {
-        try {
-          const element = await page.waitForSelector(selector, { timeout: 2000 });
-          if (element) {
-            logger.debug(`Profile page verified with selector: ${selector}`);
-            return true;
-          }
-        } catch {
-          // Continue checking other selectors
-        }
+      const element = await linkedinResolver.resolveWithWait(page, 'nav:profile-indicator', { timeout: 2000 });
+      if (element) {
+        logger.debug('Profile page verified with resolver');
+        return true;
       }
+    } catch {
+      // Continue checking URL pattern as fallback
+    }
 
+    try {
       // Check URL pattern as fallback
       const currentUrl = page.url();
       return currentUrl.includes('/in/') || currentUrl.includes('/profile/');
@@ -148,23 +139,31 @@ export class LinkedInNavigationService {
       let stableSamples = 0;
       const startTs = Date.now();
 
+      const navMain = (linkedinSelectors['nav:main-content'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const navPageLoaded = (linkedinSelectors['nav:page-loaded'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const navHomepage = (linkedinSelectors['nav:homepage'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
       while (Date.now() - startTs < maxWaitMs) {
-        const metrics = await page.evaluate(() => {
+        const metrics = await page.evaluate((mainSel, loadedSel, homeSel) => {
           const ready = document.readyState;
-          const main = !!document.querySelector('main, [role="main"]');
-          const scaffold =
-            !!document.querySelector('[data-view-name*="navigation-"]') ||
-            !!document.querySelector('header');
-          const nav =
-            !!document.querySelector('header') ||
-            !!document.querySelector('[data-view-name="navigation-homepage"]');
+          const main = mainSel ? mainSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
+          const scaffold = loadedSel ? loadedSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
+          const nav = homeSel ? homeSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
           const anchors = document.querySelectorAll('a[href]')?.length || 0;
           const images = document.images?.length || 0;
           const height = document.body?.scrollHeight || 0;
           const url = location.href;
-          const isCheckpoint = /checkpoint|authwall/i.test(url);
-          return { ready, main, scaffold, nav, anchors, images, height, isCheckpoint };
-        });
+          const isCheckpoint = /checkpoint|authwall|challenge|captcha/i.test(url);
+          return { ready, main, scaffold, nav, anchors, images, height, isCheckpoint, url };
+        }, navMain, navPageLoaded, navHomepage);
+
+        if (metrics.isCheckpoint) {
+          logger.warn(`Checkpoint detected at ${metrics.url} — pausing automation`);
+          const controller = this.sessionManager.getBackoffController();
+          if (controller) {
+            await controller.handleCheckpoint(metrics.url);
+          }
+        }
 
         const baseUiPresent =
           (metrics.main || metrics.scaffold || metrics.nav) && metrics.ready !== 'loading';
@@ -190,9 +189,9 @@ export class LinkedInNavigationService {
 
       // Fallback: ensure at least a key container exists
       await Promise.race([
-        session.waitForSelector('main', { timeout: 2000 }),
-        session.waitForSelector('.scaffold-layout', { timeout: 2000 }),
-        session.waitForSelector('[data-test-id]', { timeout: 2000 }),
+        linkedinResolver.resolveWithWait(page, 'nav:main-content', { timeout: 2000 }),
+        linkedinResolver.resolveWithWait(page, 'nav:scaffold', { timeout: 2000 }),
+        linkedinResolver.resolveWithWait(page, 'nav:any-test-id', { timeout: 2000 }),
         new Promise((resolve) => setTimeout(resolve, 2000)),
       ]);
     } catch {

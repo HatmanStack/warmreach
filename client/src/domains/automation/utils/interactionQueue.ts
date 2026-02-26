@@ -110,6 +110,9 @@ class InteractionQueue {
   private activeCount: number;
   private jobs: Map<string, JobRecord>;
   private lastTtlCleanup: number;
+  private _paused: boolean = false;
+  private _pauseReason: string | null = null;
+  private _pausedAt: number | null = null;
 
   constructor(options: InteractionQueueOptions = {}) {
     // Force serialization for current single-Page architecture
@@ -122,6 +125,51 @@ class InteractionQueue {
     this.activeCount = 0;
     this.jobs = new Map();
     this.lastTtlCleanup = Date.now();
+  }
+
+  /**
+   * Pause the queue.
+   * New jobs can be enqueued, but they won't start until resume() is called.
+   * The currently running job is NOT aborted.
+   */
+  pause(reason: string): void {
+    if (this._paused) return;
+    this._paused = true;
+    this._pauseReason = reason;
+    this._pausedAt = Date.now();
+    logger.info(`[InteractionQueue] Paused: ${reason}`);
+  }
+
+  /**
+   * Resume the queue and start processing jobs.
+   */
+  resume(): void {
+    if (!this._paused) return;
+    const elapsed = Date.now() - (this._pausedAt || Date.now());
+    logger.info(`[InteractionQueue] Resumed (was paused for ${elapsed}ms: ${this._pauseReason})`);
+    this._paused = false;
+    this._pauseReason = null;
+    this._pausedAt = null;
+    this._dequeueNext();
+  }
+
+  /**
+   * Check if the queue is paused.
+   */
+  isPaused(): boolean {
+    return this._paused;
+  }
+
+  /**
+   * Get the current pause status.
+   */
+  getPauseStatus(): { paused: boolean; reason: string | null; pausedAt: number | null; queuedJobs: number } {
+    return {
+      paused: this._paused,
+      reason: this._pauseReason,
+      pausedAt: this._pausedAt,
+      queuedJobs: this.queue.length,
+    };
   }
 
   /**
@@ -159,13 +207,16 @@ class InteractionQueue {
    * Get queue status for health checks.
    * @returns Queue status
    */
-  getQueueStatus(): QueueStatus {
+  getQueueStatus(): QueueStatus & { paused: boolean; pauseReason: string | null; pausedAt: number | null } {
     return {
       activeJobs: this.activeCount,
       queuedJobs: this.queue.length,
       totalJobsTracked: this.jobs.size,
       concurrency: this.concurrency,
       memoryPressure: this.checkMemoryPressure(),
+      paused: this._paused,
+      pauseReason: this._pauseReason,
+      pausedAt: this._pausedAt,
     };
   }
 
@@ -289,6 +340,7 @@ class InteractionQueue {
    * Dequeue and run the next job if capacity allows.
    */
   private _dequeueNext(): void {
+    if (this._paused) return;
     while (this.activeCount < this.concurrency && this.queue.length > 0) {
       const next = this.queue.shift();
       if (!next) break;

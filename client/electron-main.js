@@ -13,6 +13,8 @@ import { fileURLToPath } from 'url';
 import { WsClient } from './src/transport/wsClient.js';
 import { handleExecuteCommand } from './src/transport/commandRouter.js';
 import { CredentialStore } from './src/credentials/credentialStore.js';
+import { BrowserSessionManager } from './src/domains/session/services/browserSessionManager.js';
+import './src/server.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -85,57 +87,106 @@ function openSettingsWindow() {
 
 // --- Tray ---
 
+function updateTrayMenu() {
+  if (!tray) return;
+
+  const controller = BrowserSessionManager.getBackoffController();
+  const status = controller?.getStatus() || { queuePaused: false, threatLevel: 0 };
+  const pauseStatus = status.pauseStatus || { paused: false, reason: null };
+
+  const menuTemplate = [
+    {
+      label: `Automation: ${pauseStatus.paused ? 'PAUSED' : 'Running'}`,
+      enabled: false,
+    },
+  ];
+
+  if (pauseStatus.paused) {
+    menuTemplate.push({
+      label: `Reason: ${pauseStatus.reason || 'Manual'}`,
+      enabled: false,
+    });
+    menuTemplate.push({
+      label: 'Resume Automation',
+      click: async () => {
+        await controller?.resume();
+        updateTrayMenu();
+      },
+    });
+  } else {
+    menuTemplate.push({
+      label: 'Pause Automation',
+      click: () => {
+        controller?.pause('Manual pause from tray');
+        updateTrayMenu();
+      },
+    });
+  }
+
+  if (status.threatLevel > 0) {
+    menuTemplate.push({
+      label: `Threat Level: ${status.threatLevel}/60`,
+      enabled: false,
+    });
+  }
+
+  menuTemplate.push({ type: 'separator' });
+  menuTemplate.push({
+    label: 'Open WarmReach',
+    click: () => shell.openExternal(APP_URL),
+  });
+  menuTemplate.push({
+    label: 'Settings',
+    click: () => openSettingsWindow(),
+  });
+  menuTemplate.push({ type: 'separator' });
+  menuTemplate.push({
+    label: 'About WarmReach Agent',
+    click: () => {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'About WarmReach Agent',
+        message: `WarmReach Agent v${app.getVersion()}`,
+        detail: 'LinkedIn automation agent for WarmReach.\nhttps://warmreach.com',
+        buttons: ['OK'],
+      });
+    },
+  });
+  menuTemplate.push({
+    label: 'Check for Updates',
+    click: () => {
+      autoUpdater.checkForUpdates().catch((err) => {
+        dialog.showMessageBox({
+          type: 'error',
+          title: 'Update Check Failed',
+          message: 'Could not check for updates.',
+          detail: err.message,
+        });
+      });
+    },
+  });
+  menuTemplate.push({ type: 'separator' });
+  menuTemplate.push({
+    label: 'Quit',
+    click: () => {
+      wsClient?.close();
+      app.quit();
+    },
+  });
+
+  const contextMenu = Menu.buildFromTemplate(menuTemplate);
+  tray.setContextMenu(contextMenu);
+}
+
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'electron-resources', 'trayIcon.png'));
   tray = new Tray(icon);
   tray.setToolTip('WarmReach Agent');
 
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Open WarmReach',
-      click: () => shell.openExternal(APP_URL),
-    },
-    {
-      label: 'Settings',
-      click: () => openSettingsWindow(),
-    },
-    { type: 'separator' },
-    {
-      label: 'About WarmReach Agent',
-      click: () => {
-        dialog.showMessageBox({
-          type: 'info',
-          title: 'About WarmReach Agent',
-          message: `WarmReach Agent v${app.getVersion()}`,
-          detail: 'LinkedIn automation agent for WarmReach.\nhttps://warmreach.com',
-          buttons: ['OK'],
-        });
-      },
-    },
-    {
-      label: 'Check for Updates',
-      click: () => {
-        autoUpdater.checkForUpdates().catch((err) => {
-          dialog.showMessageBox({
-            type: 'error',
-            title: 'Update Check Failed',
-            message: 'Could not check for updates.',
-            detail: err.message,
-          });
-        });
-      },
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        wsClient?.close();
-        app.quit();
-      },
-    },
-  ]);
-
-  tray.setContextMenu(contextMenu);
+  updateTrayMenu();
+  
+  // Periodically update the menu to reflect backoff status
+  setInterval(updateTrayMenu, 10000);
 }
 
 // --- WebSocket ---

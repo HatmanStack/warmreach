@@ -6,6 +6,7 @@
  */
 
 import { logger } from '#utils/logger.js';
+import { linkedinResolver, linkedinSelectors } from '../../linkedin/selectors/index.js';
 
 const MAX_MESSAGES_PER_EDGE = 100;
 
@@ -155,24 +156,12 @@ export class LinkedInMessageScraperService {
       timeout: 30000,
     });
 
-    // Wait for conversation list to appear
-    const listSelectors = [
-      '.msg-conversations-container__conversations-list',
-      '[data-view-name*="conversation"]',
-      '.msg-conversation-listitem',
-      'ul.msg-conversations-container__conversations-list',
-    ];
-
-    for (const selector of listSelectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 8000 });
-        return;
-      } catch {
-        // try next
-      }
+    try {
+      await linkedinResolver.resolveWithWait(page, 'messaging:conversation-list', { timeout: 8000 });
+      return;
+    } catch {
+      logger.warn('Could not confirm messaging page loaded via selectors');
     }
-
-    logger.warn('Could not confirm messaging page loaded via selectors');
   }
 
   /**
@@ -186,18 +175,18 @@ export class LinkedInMessageScraperService {
     let stableRounds = 0;
 
     for (let i = 0; i < maxScrolls; i++) {
-      const currentCount = await page.evaluate(() => {
-        const listSelectors = [
-          '.msg-conversations-container__conversations-list li',
-          '.msg-conversation-listitem',
-          'li[class*="msg-conversation"]',
-        ];
-        for (const sel of listSelectors) {
-          const items = document.querySelectorAll(sel);
-          if (items.length > 0) return items.length;
-        }
-        return 0;
-      });
+      const cascadeItem = (linkedinSelectors['messaging:conversation-items'] || []);
+      const itemSel = cascadeItem.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
+      const currentCount = await page.evaluate((selString) => {
+        let max = 0;
+        if (!selString) return 0;
+        selString.split(',').forEach(sel => {
+          const items = document.querySelectorAll(sel.trim());
+          if (items.length > max) max = items.length;
+        });
+        return max;
+      }, itemSel);
 
       if (currentCount === previousCount) {
         stableRounds++;
@@ -212,21 +201,21 @@ export class LinkedInMessageScraperService {
       }
       previousCount = currentCount;
 
+      const cascadeContainer = (linkedinSelectors['messaging:conversation-list'] || []);
+      const containerSel = cascadeContainer.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
       // Scroll the conversation list container
-      await page.evaluate(() => {
-        const containerSelectors = [
-          '.msg-conversations-container__conversations-list',
-          '.msg-conversations-container',
-          '[class*="msg-conversations"]',
-        ];
-        for (const sel of containerSelectors) {
-          const container = document.querySelector(sel);
+      await page.evaluate((selString) => {
+        if (!selString) return;
+        const selectors = selString.split(',');
+        for (const sel of selectors) {
+          const container = document.querySelector(sel.trim());
           if (container) {
             container.scrollTop = container.scrollHeight;
             return;
           }
         }
-      });
+      }, containerSel);
 
       await this._delay(800, 1500);
     }
@@ -239,17 +228,16 @@ export class LinkedInMessageScraperService {
   async _extractConversationEntries() {
     const page = await this._getPage();
 
-    return await page.evaluate(() => {
-      const entries = [];
-      const itemSelectors = [
-        '.msg-conversation-listitem',
-        'li[class*="msg-conversation"]',
-        '[data-view-name*="conversation"]',
-      ];
+    const cascadeItem = (linkedinSelectors['messaging:conversation-items'] || []);
+    const itemSel = cascadeItem.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
 
+    return await page.evaluate((selString) => {
+      const entries = [];
+      if (!selString) return entries;
+      const selectors = selString.split(',');
       let items = [];
-      for (const sel of itemSelectors) {
-        items = Array.from(document.querySelectorAll(sel));
+      for (const sel of selectors) {
+        items = Array.from(document.querySelectorAll(sel.trim()));
         if (items.length > 0) break;
       }
 
@@ -269,7 +257,7 @@ export class LinkedInMessageScraperService {
       });
 
       return entries;
-    });
+    }, itemSel);
   }
 
   /**
@@ -279,15 +267,14 @@ export class LinkedInMessageScraperService {
   async _clickConversation(entry) {
     const page = await this._getPage();
 
-    await page.evaluate((idx) => {
-      const itemSelectors = [
-        '.msg-conversation-listitem',
-        'li[class*="msg-conversation"]',
-        '[data-view-name*="conversation"]',
-      ];
+    const cascadeItem = (linkedinSelectors['messaging:conversation-items'] || []);
+    const itemSel = cascadeItem.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
 
-      for (const sel of itemSelectors) {
-        const items = document.querySelectorAll(sel);
+    await page.evaluate((idx, selString) => {
+      if (!selString) return;
+      const selectors = selString.split(',');
+      for (const sel of selectors) {
+        const items = document.querySelectorAll(sel.trim());
         if (items.length > idx) {
           // Click the item or its first clickable child
           const clickable = items[idx].querySelector('a') || items[idx];
@@ -295,22 +282,14 @@ export class LinkedInMessageScraperService {
           return;
         }
       }
-    }, entry.index);
+    }, entry.index, itemSel);
 
     // Wait for message thread to load
-    const threadSelectors = [
-      '.msg-s-message-list',
-      '[class*="msg-s-message-list"]',
-      '[role="list"]',
-    ];
-
-    for (const selector of threadSelectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 5000 });
-        return;
-      } catch {
-        // try next
-      }
+    try {
+      await linkedinResolver.resolveWithWait(page, 'messaging:message-list', { timeout: 5000 });
+      return;
+    } catch {
+      // try next
     }
   }
 
@@ -324,18 +303,18 @@ export class LinkedInMessageScraperService {
     let stableRounds = 0;
 
     for (let i = 0; i < maxScrolls; i++) {
-      const currentCount = await page.evaluate(() => {
-        const msgSelectors = [
-          '.msg-s-event-listitem',
-          '[data-view-name*="message"]',
-          '.msg-s-message-list__event',
-        ];
-        for (const sel of msgSelectors) {
-          const items = document.querySelectorAll(sel);
-          if (items.length > 0) return items.length;
-        }
-        return 0;
-      });
+      const cascadeItem = (linkedinSelectors['messaging:message-events'] || []);
+      const itemSel = cascadeItem.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
+      const currentCount = await page.evaluate((selString) => {
+        let max = 0;
+        if (!selString) return 0;
+        selString.split(',').forEach(sel => {
+          const items = document.querySelectorAll(sel.trim());
+          if (items.length > max) max = items.length;
+        });
+        return max;
+      }, itemSel);
 
       if (currentCount === previousCount) {
         stableRounds++;
@@ -345,17 +324,21 @@ export class LinkedInMessageScraperService {
       }
       previousCount = currentCount;
 
+      const cascadeContainer = (linkedinSelectors['messaging:message-list'] || []);
+      const containerSel = cascadeContainer.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
       // Scroll the thread container up
-      await page.evaluate(() => {
-        const containerSelectors = ['.msg-s-message-list', '[class*="msg-s-message-list"]'];
-        for (const sel of containerSelectors) {
-          const container = document.querySelector(sel);
+      await page.evaluate((selString) => {
+        if (!selString) return;
+        const selectors = selString.split(',');
+        for (const sel of selectors) {
+          const container = document.querySelector(sel.trim());
           if (container) {
             container.scrollTop = 0;
             return;
           }
         }
-      });
+      }, containerSel);
 
       await this._delay(800, 1200);
     }
@@ -368,17 +351,22 @@ export class LinkedInMessageScraperService {
   async _extractMessages() {
     const page = await this._getPage();
 
-    return await page.evaluate(() => {
+    const cascadeEvents = (linkedinSelectors['messaging:message-events'] || []);
+    const eventsSel = cascadeEvents.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
+    const cascadeTime = (linkedinSelectors['messaging:timestamp'] || []);
+    const timeSel = cascadeTime.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
+    const cascadeOther = (linkedinSelectors['messaging:other-message'] || []);
+    const otherSel = cascadeOther.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+
+    return await page.evaluate((eventsSel, timeSel, otherSel) => {
       const messages = [];
-      const itemSelectors = [
-        '.msg-s-event-listitem',
-        '[data-view-name*="message"]',
-        '.msg-s-message-list__event',
-      ];
+      if (!eventsSel) return messages;
 
       let items = [];
-      for (const sel of itemSelectors) {
-        items = Array.from(document.querySelectorAll(sel));
+      for (const sel of eventsSel.split(',')) {
+        items = Array.from(document.querySelectorAll(sel.trim()));
         if (items.length > 0) break;
       }
 
@@ -403,9 +391,15 @@ export class LinkedInMessageScraperService {
         // Extract timestamp — only use exact datetime, never synthesize scrape time
         let timestamp = null;
         let timestampApproximate = false;
-        const timeEl =
-          item.querySelector('time[datetime]') ||
-          item.querySelector('.msg-s-message-list__time-heading');
+        let timeEl = null;
+
+        if (timeSel) {
+          for (const sel of timeSel.split(',')) {
+            timeEl = item.querySelector(sel.trim());
+            if (timeEl) break;
+          }
+        }
+
         if (timeEl) {
           const dt = timeEl.getAttribute('datetime');
           if (dt) {
@@ -418,10 +412,15 @@ export class LinkedInMessageScraperService {
         }
 
         // Determine sender: presence of "other" class indicates inbound
-        const isInbound =
-          item.classList.contains('msg-s-event-listitem--other') ||
-          item.querySelector('.msg-s-event-listitem--other') !== null ||
-          item.closest('.msg-s-event-listitem--other') !== null;
+        let isInbound = false;
+        if (otherSel) {
+          for (const sel of otherSel.split(',')) {
+            if (item.matches && item.matches(sel.trim()) || item.querySelector(sel.trim()) !== null || item.closest(sel.trim()) !== null) {
+              isInbound = true;
+              break;
+            }
+          }
+        }
 
         messages.push({
           id: `msg-${Date.now()}-${index}`,
@@ -433,7 +432,7 @@ export class LinkedInMessageScraperService {
       });
 
       return messages;
-    });
+    }, eventsSel, timeSel, otherSel);
   }
 
   /**
