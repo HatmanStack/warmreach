@@ -59,7 +59,7 @@ vi.mock('#shared-config/index.js', () => ({
 // Mock DynamoDBService (relative path import)
 vi.mock('../../storage/services/dynamoDBService.js', () => ({
   default: class MockDynamoDBService {
-    constructor() { }
+    constructor() {}
     updateContactStatus() {
       return Promise.resolve();
     }
@@ -72,7 +72,7 @@ vi.mock('../../storage/services/dynamoDBService.js', () => ({
 // Mock LinkedInContactService (relative path import)
 vi.mock('./linkedinContactService.js', () => ({
   default: class MockLinkedInContactService {
-    constructor() { }
+    constructor() {}
     processContact() {
       return Promise.resolve();
     }
@@ -84,7 +84,7 @@ vi.mock('../selectors/index.js', () => ({
     resolveWithWait: vi.fn(),
     resolve: vi.fn(),
   },
-  linkedinSelectors: {}
+  linkedinSelectors: {},
 }));
 import { linkedinResolver } from '../selectors/index.js';
 
@@ -131,7 +131,7 @@ describe('LinkedInService', () => {
 
     linkedinResolver.resolveWithWait.mockResolvedValue({
       type: vi.fn(),
-      click: vi.fn()
+      click: vi.fn(),
     });
     linkedinResolver.resolve.mockResolvedValue(null);
   });
@@ -156,7 +156,11 @@ describe('LinkedInService', () => {
       const mockType = vi.fn();
       linkedinResolver.resolveWithWait.mockResolvedValue({ type: mockType, click: vi.fn() });
       await service.login('user@test.com', 'pass123');
-      expect(linkedinResolver.resolveWithWait).toHaveBeenCalledWith(expect.anything(), 'nav:login-username', expect.anything());
+      expect(linkedinResolver.resolveWithWait).toHaveBeenCalledWith(
+        expect.anything(),
+        'nav:login-username',
+        expect.anything()
+      );
       expect(mockType).toHaveBeenCalledWith('user@test.com');
       expect(mockType).toHaveBeenCalledWith('pass123');
     });

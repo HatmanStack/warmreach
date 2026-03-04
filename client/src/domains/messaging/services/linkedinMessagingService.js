@@ -96,7 +96,9 @@ export class LinkedInMessagingService {
     const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
     const page = session.getPage();
 
-    const button = await linkedinResolver.resolveWithWait(page, 'messaging:message-button', { timeout: 10000 });
+    const button = await linkedinResolver.resolveWithWait(page, 'messaging:message-button', {
+      timeout: 10000,
+    });
     await button.click();
     await this.waitForMessagingInterface();
   }
@@ -121,13 +123,17 @@ export class LinkedInMessagingService {
     const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
     const page = session.getPage();
 
-    const inputElement = await linkedinResolver.resolveWithWait(page, 'messaging:message-input', { timeout: 10000 });
+    const inputElement = await linkedinResolver.resolveWithWait(page, 'messaging:message-input', {
+      timeout: 10000,
+    });
 
     // Type message
     await inputElement.click();
     await inputElement.type(messageContent, { delay: 30 });
 
-    const sendButton = await linkedinResolver.resolveWithWait(page, 'messaging:send-button', { timeout: 10000 });
+    const sendButton = await linkedinResolver.resolveWithWait(page, 'messaging:send-button', {
+      timeout: 10000,
+    });
     await sendButton.click();
   }
 

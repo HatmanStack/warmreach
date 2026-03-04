@@ -133,16 +133,14 @@ export function getAudioNoiseScript(seed: number): string {
  * transparently to avoid detection by advanced bot scripts that flag puppeteer-extra-plugin-stealth.
  * @param options Profile data for spoofing
  */
-export function getHeadlessEvasionScript(options: {
-  platform?: string;
-  language?: string;
-  pluginCount?: number;
-} = {}): string {
-  const {
-    platform = 'Win32',
-    language = 'en-US',
-    pluginCount = 3
-  } = options;
+export function getHeadlessEvasionScript(
+  options: {
+    platform?: string;
+    language?: string;
+    pluginCount?: number;
+  } = {}
+): string {
+  const { platform = 'Win32', language = 'en-US', pluginCount = 3 } = options;
 
   return `(() => {
     // 1. Spoof navigator.webdriver safely

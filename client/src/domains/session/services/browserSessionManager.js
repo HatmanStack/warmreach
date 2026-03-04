@@ -10,7 +10,10 @@ import { logger } from '#utils/logger.js';
 import ConfigManager from '#shared-config/configManager.js';
 import { SignalDetector } from '../../automation/utils/signalDetector.js';
 import { SessionMetrics } from '../../automation/utils/sessionMetrics.js';
-import { getContentAnalyzer, _resetContentAnalyzerForTesting } from '../../automation/utils/contentSignalAnalyzer.js';
+import {
+  getContentAnalyzer,
+  _resetContentAnalyzerForTesting,
+} from '../../automation/utils/contentSignalAnalyzer.js';
 import { BackoffController } from '../../automation/utils/backoffController.js';
 import { linkedInInteractionQueue } from '../../automation/utils/interactionQueue.js';
 import { linkedinResolver } from '../../linkedin/selectors/index.js';
@@ -115,7 +118,7 @@ class BrowserSessionManager {
       this.signalDetector = new SignalDetector();
       this.sessionMetrics = new SessionMetrics(this.signalDetector);
       this.contentAnalyzer = getContentAnalyzer(linkedinResolver);
-      
+
       // Initialize and start backoff controller
       this.backoffController = new BackoffController(this.signalDetector, linkedInInteractionQueue);
       this.backoffController.start();

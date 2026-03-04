@@ -49,23 +49,35 @@ class LambdaApiServiceFacade {
   }
 
   // --- Analytics & LLM API ---
-  async getMessagingInsights(forceRecompute = false): ReturnType<typeof analyticsApiService.getMessagingInsights> {
+  async getMessagingInsights(
+    forceRecompute = false
+  ): ReturnType<typeof analyticsApiService.getMessagingInsights> {
     return analyticsApiService.getMessagingInsights(forceRecompute);
   }
 
-  async analyzeMessagePatterns(stats: Record<string, unknown>, sampleMessages: Record<string, unknown>[]): ReturnType<typeof analyticsApiService.analyzeMessagePatterns> {
+  async analyzeMessagePatterns(
+    stats: Record<string, unknown>,
+    sampleMessages: Record<string, unknown>[]
+  ): ReturnType<typeof analyticsApiService.analyzeMessagePatterns> {
     return analyticsApiService.analyzeMessagePatterns(stats, sampleMessages);
   }
 
-  async getAnalyticsDashboard(days = 30): ReturnType<typeof analyticsApiService.getAnalyticsDashboard> {
+  async getAnalyticsDashboard(
+    days = 30
+  ): ReturnType<typeof analyticsApiService.getAnalyticsDashboard> {
     return analyticsApiService.getAnalyticsDashboard(days);
   }
 
-  async storeMessageInsights(insights: string[]): ReturnType<typeof analyticsApiService.storeMessageInsights> {
+  async storeMessageInsights(
+    insights: string[]
+  ): ReturnType<typeof analyticsApiService.storeMessageInsights> {
     return analyticsApiService.storeMessageInsights(insights);
   }
 
-  async sendLLMRequest(operation: string, params: Record<string, unknown> = {}): ReturnType<typeof analyticsApiService.sendLLMRequest> {
+  async sendLLMRequest(
+    operation: string,
+    params: Record<string, unknown> = {}
+  ): ReturnType<typeof analyticsApiService.sendLLMRequest> {
     return analyticsApiService.sendLLMRequest(operation, params);
   }
 
@@ -74,16 +86,25 @@ class LambdaApiServiceFacade {
     return profileApiService.getUserProfile();
   }
 
-  async updateUserProfile(profile: Partial<UserProfile>): ReturnType<typeof profileApiService.updateUserProfile> {
+  async updateUserProfile(
+    profile: Partial<UserProfile>
+  ): ReturnType<typeof profileApiService.updateUserProfile> {
     return profileApiService.updateUserProfile(profile);
   }
 
-  async createUserProfile(profile: Omit<UserProfile, 'user_id' | 'created_at' | 'updated_at'>): ReturnType<typeof profileApiService.createUserProfile> {
+  async createUserProfile(
+    profile: Omit<UserProfile, 'user_id' | 'created_at' | 'updated_at'>
+  ): ReturnType<typeof profileApiService.createUserProfile> {
     return profileApiService.createUserProfile(profile);
   }
 
   // Backwards compatibility for arbitrary operations
-  async makeRequest<T>(endpoint: string, operation: string, params: Record<string, unknown> = {}, options: { signal?: AbortSignal } = {}): Promise<T> {
+  async makeRequest<T>(
+    endpoint: string,
+    operation: string,
+    params: Record<string, unknown> = {},
+    options: { signal?: AbortSignal } = {}
+  ): Promise<T> {
     return httpClient.makeRequest<T>(endpoint, operation, params, options);
   }
 }

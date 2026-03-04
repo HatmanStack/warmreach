@@ -32,16 +32,19 @@ describe('SessionMetrics', () => {
       // Record 10 operations, 4 failures (40%)
       for (let i = 0; i < 6; i++) metrics.recordOperation(true);
       for (let i = 0; i < 4; i++) metrics.recordOperation(false);
-      
+
       expect(metrics.getErrorRate()).toBe(0.4);
-      expect(mockDetector.recordContentSignal).toHaveBeenCalledWith('high-error-rate', expect.any(String));
+      expect(mockDetector.recordContentSignal).toHaveBeenCalledWith(
+        'high-error-rate',
+        expect.any(String)
+      );
     });
 
     it('does not trigger signal if under minimum operation count', () => {
       // Record 4 operations, 2 failures (50%)
       for (let i = 0; i < 2; i++) metrics.recordOperation(true);
       for (let i = 0; i < 2; i++) metrics.recordOperation(false);
-      
+
       expect(metrics.getErrorRate()).toBe(0.5);
       expect(mockDetector.recordContentSignal).not.toHaveBeenCalled();
     });
@@ -49,7 +52,7 @@ describe('SessionMetrics', () => {
     it('filters operations by window', () => {
       for (let i = 0; i < 5; i++) metrics.recordOperation(false);
       expect(metrics.getErrorRate()).toBe(1.0);
-      
+
       // Advance 6 minutes (beyond 5m window)
       vi.advanceTimersByTime(6 * 60 * 1000);
       expect(metrics.getErrorRate()).toBe(0);
@@ -60,9 +63,12 @@ describe('SessionMetrics', () => {
     it('triggers signal after multiple checkpoints', () => {
       metrics.recordCheckpoint(); // 1st is fine
       expect(mockDetector.recordContentSignal).not.toHaveBeenCalled();
-      
+
       metrics.recordCheckpoint(); // 2nd triggers
-      expect(mockDetector.recordContentSignal).toHaveBeenCalledWith('frequent-checkpoints', expect.any(String));
+      expect(mockDetector.recordContentSignal).toHaveBeenCalledWith(
+        'frequent-checkpoints',
+        expect.any(String)
+      );
     });
   });
 
@@ -71,9 +77,12 @@ describe('SessionMetrics', () => {
       metrics.recordLoginRedirect();
       metrics.recordLoginRedirect();
       expect(mockDetector.recordContentSignal).not.toHaveBeenCalled();
-      
+
       metrics.recordLoginRedirect(); // 3rd triggers (threshold is 2)
-      expect(mockDetector.recordContentSignal).toHaveBeenCalledWith('frequent-login-redirects', expect.any(String));
+      expect(mockDetector.recordContentSignal).toHaveBeenCalledWith(
+        'frequent-login-redirects',
+        expect.any(String)
+      );
     });
   });
 

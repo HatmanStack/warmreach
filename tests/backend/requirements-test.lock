@@ -27,7 +27,9 @@ charset-normalizer==3.4.4
 coverage==7.13.4
     # via pytest-cov
 cryptography==46.0.5
-    # via moto
+    # via
+    #   moto
+    #   pyjwt
 distro==1.9.0
     # via openai
 h11==0.16.0
@@ -73,6 +75,8 @@ pydantic-core==2.41.5
     # via pydantic
 pygments==2.19.2
     # via pytest
+pyjwt==2.9.0
+    # via -r requirements-test.txt
 pytest==9.0.2
     # via
     #   -r requirements-test.txt

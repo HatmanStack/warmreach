@@ -141,18 +141,24 @@ export class LinkedInConnectionService {
 
     let connectButton = null;
     try {
-      connectButton = await linkedinResolver.resolveWithWait(page, 'connection:connect-button', { timeout: 3000 });
+      connectButton = await linkedinResolver.resolveWithWait(page, 'connection:connect-button', {
+        timeout: 3000,
+      });
     } catch {
       // Not found directly
     }
 
     if (!connectButton) {
       try {
-        const moreButton = await linkedinResolver.resolveWithWait(page, 'connection:more-button', { timeout: 2000 });
+        const moreButton = await linkedinResolver.resolveWithWait(page, 'connection:more-button', {
+          timeout: 2000,
+        });
         await moreButton.click();
         await new Promise((resolve) => setTimeout(resolve, 500));
 
-        connectButton = await linkedinResolver.resolveWithWait(page, 'connection:connect-button', { timeout: 2000 });
+        connectButton = await linkedinResolver.resolveWithWait(page, 'connection:connect-button', {
+          timeout: 2000,
+        });
       } catch {
         // no more button or connect button inside it
       }
@@ -167,11 +173,15 @@ export class LinkedInConnectionService {
 
     if (message) {
       try {
-        const addNoteButton = await linkedinResolver.resolveWithWait(page, 'connection:add-note', { timeout: 3000 });
+        const addNoteButton = await linkedinResolver.resolveWithWait(page, 'connection:add-note', {
+          timeout: 3000,
+        });
         await addNoteButton.click();
         await new Promise((resolve) => setTimeout(resolve, 500));
 
-        const noteInput = await linkedinResolver.resolveWithWait(page, 'connection:note-input', { timeout: 2000 });
+        const noteInput = await linkedinResolver.resolveWithWait(page, 'connection:note-input', {
+          timeout: 2000,
+        });
         await noteInput.type(message, { delay: 30 });
       } catch {
         logger.debug('Could not add personalized note');
@@ -179,7 +189,11 @@ export class LinkedInConnectionService {
     }
 
     try {
-      const sendButton = await linkedinResolver.resolveWithWait(page, 'connection:send-invitation', { timeout: 3000 });
+      const sendButton = await linkedinResolver.resolveWithWait(
+        page,
+        'connection:send-invitation',
+        { timeout: 3000 }
+      );
       await sendButton.click();
       await new Promise((resolve) => setTimeout(resolve, 1000));
       return true;

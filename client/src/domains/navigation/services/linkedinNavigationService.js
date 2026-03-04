@@ -102,7 +102,9 @@ export class LinkedInNavigationService {
    */
   async verifyProfilePage(page) {
     try {
-      const element = await linkedinResolver.resolveWithWait(page, 'nav:profile-indicator', { timeout: 2000 });
+      const element = await linkedinResolver.resolveWithWait(page, 'nav:profile-indicator', {
+        timeout: 2000,
+      });
       if (element) {
         logger.debug('Profile page verified with resolver');
         return true;
@@ -139,23 +141,43 @@ export class LinkedInNavigationService {
       let stableSamples = 0;
       const startTs = Date.now();
 
-      const navMain = (linkedinSelectors['nav:main-content'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
-      const navPageLoaded = (linkedinSelectors['nav:page-loaded'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
-      const navHomepage = (linkedinSelectors['nav:homepage'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const navMain = (linkedinSelectors['nav:main-content'] || [])
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
+      const navPageLoaded = (linkedinSelectors['nav:page-loaded'] || [])
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
+      const navHomepage = (linkedinSelectors['nav:homepage'] || [])
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
 
       while (Date.now() - startTs < maxWaitMs) {
-        const metrics = await page.evaluate((mainSel, loadedSel, homeSel) => {
-          const ready = document.readyState;
-          const main = mainSel ? mainSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
-          const scaffold = loadedSel ? loadedSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
-          const nav = homeSel ? homeSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
-          const anchors = document.querySelectorAll('a[href]')?.length || 0;
-          const images = document.images?.length || 0;
-          const height = document.body?.scrollHeight || 0;
-          const url = location.href;
-          const isCheckpoint = /checkpoint|authwall|challenge|captcha/i.test(url);
-          return { ready, main, scaffold, nav, anchors, images, height, isCheckpoint, url };
-        }, navMain, navPageLoaded, navHomepage);
+        const metrics = await page.evaluate(
+          (mainSel, loadedSel, homeSel) => {
+            const ready = document.readyState;
+            const main = mainSel
+              ? mainSel.split(',').some((sel) => !!document.querySelector(sel.trim()))
+              : false;
+            const scaffold = loadedSel
+              ? loadedSel.split(',').some((sel) => !!document.querySelector(sel.trim()))
+              : false;
+            const nav = homeSel
+              ? homeSel.split(',').some((sel) => !!document.querySelector(sel.trim()))
+              : false;
+            const anchors = document.querySelectorAll('a[href]')?.length || 0;
+            const images = document.images?.length || 0;
+            const height = document.body?.scrollHeight || 0;
+            const url = location.href;
+            const isCheckpoint = /checkpoint|authwall|challenge|captcha/i.test(url);
+            return { ready, main, scaffold, nav, anchors, images, height, isCheckpoint, url };
+          },
+          navMain,
+          navPageLoaded,
+          navHomepage
+        );
 
         if (metrics.isCheckpoint) {
           logger.warn(`Checkpoint detected at ${metrics.url} — pausing automation`);

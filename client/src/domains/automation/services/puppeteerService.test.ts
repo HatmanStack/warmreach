@@ -67,23 +67,25 @@ describe('PuppeteerService', () => {
 
     expect(fingerprintProfile.loadOrCreateProfile).toHaveBeenCalled();
     expect(page.setUserAgent).toHaveBeenCalledWith('Mock UA');
-    
+
     // Check if stealth scripts were called with profile data
     const evalCalls = vi.mocked(page.evaluateOnNewDocument).mock.calls;
-    
+
     // Headless evasion
-    expect(evalCalls.some(call => call[0].includes('WinMock') && call[0].includes('en-Mock'))).toBe(true);
+    expect(
+      evalCalls.some((call) => call[0].includes('WinMock') && call[0].includes('en-Mock'))
+    ).toBe(true);
     // Canvas
-    expect(evalCalls.some(call => call[0].includes('123'))).toBe(true);
+    expect(evalCalls.some((call) => call[0].includes('123'))).toBe(true);
     // WebGL
-    expect(evalCalls.some(call => call[0].includes('V') && call[0].includes('R'))).toBe(true);
+    expect(evalCalls.some((call) => call[0].includes('V') && call[0].includes('R'))).toBe(true);
     // Audio
-    expect(evalCalls.some(call => call[0].includes('456'))).toBe(true);
+    expect(evalCalls.some((call) => call[0].includes('456'))).toBe(true);
   });
 
   it('falls back to random behavior if no profile is available', async () => {
     vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
-        throw new Error('No profile');
+      throw new Error('No profile');
     });
 
     const page = await service.initialize();

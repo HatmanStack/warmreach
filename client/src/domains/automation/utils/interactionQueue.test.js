@@ -224,15 +224,22 @@ describe('InteractionQueue', () => {
     it('stops new jobs from starting when paused', async () => {
       const order = [];
       let resolveFirst;
-      const first = queue.enqueue(() => new Promise(r => { resolveFirst = r; }));
-      
+      const first = queue.enqueue(
+        () =>
+          new Promise((r) => {
+            resolveFirst = r;
+          })
+      );
+
       queue.pause('test reason');
-      
-      queue.enqueue(() => { order.push('second'); });
-      
+
+      queue.enqueue(() => {
+        order.push('second');
+      });
+
       resolveFirst();
       await first;
-      
+
       expect(order).toEqual([]); // Second job should not have started
       expect(queue.getQueueStatus().queuedJobs).toBe(1);
       expect(queue.isPaused()).toBe(true);
@@ -241,10 +248,12 @@ describe('InteractionQueue', () => {
     it('resumes processing jobs when resume is called', async () => {
       const order = [];
       queue.pause('test reason');
-      
-      const job = queue.enqueue(() => { order.push('job'); });
+
+      const job = queue.enqueue(() => {
+        order.push('job');
+      });
       expect(order).toEqual([]);
-      
+
       queue.resume();
       await job;
       expect(order).toEqual(['job']);
@@ -254,10 +263,10 @@ describe('InteractionQueue', () => {
     it('reports pause status correctly', () => {
       const now = Date.now();
       vi.setSystemTime(now);
-      
+
       queue.pause('rate limit');
       const status = queue.getPauseStatus();
-      
+
       expect(status.paused).toBe(true);
       expect(status.reason).toBe('rate limit');
       expect(status.pausedAt).toBe(now);
@@ -267,7 +276,7 @@ describe('InteractionQueue', () => {
       queue.pause('reason 1');
       queue.pause('reason 2');
       expect(queue.getPauseStatus().reason).toBe('reason 1');
-      
+
       queue.resume();
       queue.resume();
       expect(queue.isPaused()).toBe(false);

@@ -26,7 +26,7 @@ describe('SignalDetector', () => {
       for (let i = 0; i < 10; i++) {
         detector.recordResponseTiming('https://www.linkedin.com/api', 200);
       }
-      
+
       detector.recordResponseTiming('https://www.linkedin.com/api', 300);
       const assessment = detector.assess();
       expect(assessment.signals.length).toBe(0);
@@ -36,7 +36,7 @@ describe('SignalDetector', () => {
       for (let i = 0; i < 10; i++) {
         detector.recordResponseTiming('https://www.linkedin.com/api', 200);
       }
-      
+
       detector.recordResponseTiming('https://www.linkedin.com/api', 450);
       const assessment = detector.assess();
       expect(assessment.signals[0].type).toBe('slow-response');
@@ -47,7 +47,7 @@ describe('SignalDetector', () => {
       for (let i = 0; i < 10; i++) {
         detector.recordResponseTiming('https://www.linkedin.com/api', 200);
       }
-      
+
       detector.recordResponseTiming('https://www.linkedin.com/api', 900);
       const assessment = detector.assess();
       expect(assessment.signals[0].severity).toBe('medium');
@@ -85,7 +85,7 @@ describe('SignalDetector', () => {
       detector.recordHttpStatus('https://api/1', 429);
       detector.recordHttpStatus('https://api/2', 429);
       detector.recordHttpStatus('https://api/3', 429);
-      
+
       const assessment = detector.assess();
       expect(assessment.shouldPause).toBe(true);
       expect(assessment.reason).toContain('3 high-severity signals');
@@ -99,7 +99,7 @@ describe('SignalDetector', () => {
       detector.recordHttpStatus('api', 500); // medium (5)
       detector.recordHttpStatus('api', 500); // medium (5)
       detector.recordHttpStatus('api', 500); // medium (5)
-      
+
       const assessment = detector.assess();
       expect(assessment.threatLevel).toBe(60);
       expect(assessment.shouldPause).toBe(true);
@@ -108,10 +108,10 @@ describe('SignalDetector', () => {
     it('evicts old signals from assessment window', () => {
       detector.recordContentSignal('checkpoint-detected', 'url');
       expect(detector.assess().shouldPause).toBe(true);
-      
+
       // Advance 11 minutes
       vi.advanceTimersByTime(11 * 60 * 1000);
-      
+
       const assessment = detector.assess();
       expect(assessment.shouldPause).toBe(false);
       expect(assessment.signals.length).toBe(0);

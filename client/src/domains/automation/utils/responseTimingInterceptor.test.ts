@@ -15,7 +15,9 @@ describe('ResponseTimingInterceptor', () => {
   beforeEach(() => {
     callbacks = {};
     mockPage = {
-      on: vi.fn((event, cb) => { callbacks[event] = cb; }),
+      on: vi.fn((event, cb) => {
+        callbacks[event] = cb;
+      }),
       off: vi.fn(),
     };
     mockDetector = {
@@ -40,11 +42,11 @@ describe('ResponseTimingInterceptor', () => {
 
   it('records timing and status for LinkedIn requests', () => {
     interceptor.attachToPage(mockPage, mockDetector);
-    
+
     const mockRequest = {
       url: () => 'https://www.linkedin.com/voyager/api/metadata',
     };
-    
+
     const mockResponse = {
       url: () => 'https://www.linkedin.com/voyager/api/metadata',
       status: () => 200,
@@ -53,13 +55,13 @@ describe('ResponseTimingInterceptor', () => {
 
     // Simulate request start
     callbacks['request'](mockRequest);
-    
+
     // Advance time
     vi.advanceTimersByTime(250);
-    
+
     // Simulate response
     callbacks['response'](mockResponse);
-    
+
     expect(mockDetector.recordResponseTiming).toHaveBeenCalledWith(
       'https://www.linkedin.com/voyager/api/metadata',
       250
@@ -72,36 +74,36 @@ describe('ResponseTimingInterceptor', () => {
 
   it('ignores non-LinkedIn requests', () => {
     interceptor.attachToPage(mockPage, mockDetector);
-    
+
     const mockRequest = {
       url: () => 'https://google-analytics.com/collect',
     };
-    
+
     callbacks['request'](mockRequest);
     expect(mockDetector.recordResponseTiming).not.toHaveBeenCalled();
   });
 
   it('ignores static assets', () => {
     interceptor.attachToPage(mockPage, mockDetector);
-    
+
     const mockRequest = {
       url: () => 'https://static.licdn.com/sc/h/css-bundle.css',
     };
-    
+
     callbacks['request'](mockRequest);
     expect(mockDetector.recordResponseTiming).not.toHaveBeenCalled();
   });
 
   it('cleans up pending requests on failure', () => {
     interceptor.attachToPage(mockPage, mockDetector);
-    
+
     const mockRequest = {
       url: () => 'https://www.linkedin.com/api',
     };
-    
+
     callbacks['request'](mockRequest);
     callbacks['requestfailed'](mockRequest);
-    
+
     // Try to finish it anyway (should be ignored)
     const mockResponse = {
       url: () => 'https://www.linkedin.com/api',
@@ -109,7 +111,7 @@ describe('ResponseTimingInterceptor', () => {
       request: () => mockRequest,
     };
     callbacks['response'](mockResponse);
-    
+
     expect(mockDetector.recordResponseTiming).not.toHaveBeenCalled();
   });
 

@@ -8,21 +8,21 @@ import { postSelectors } from './postSelectors.js';
 import { profileSelectors } from './profileSelectors.js';
 
 export {
-    messagingSelectors,
-    connectionSelectors,
-    navigationSelectors,
-    searchSelectors,
-    postSelectors,
-    profileSelectors,
+  messagingSelectors,
+  connectionSelectors,
+  navigationSelectors,
+  searchSelectors,
+  postSelectors,
+  profileSelectors,
 };
 
 export const linkedinSelectors: SelectorRegistry = {
-    ...messagingSelectors,
-    ...connectionSelectors,
-    ...navigationSelectors,
-    ...searchSelectors,
-    ...postSelectors,
-    ...profileSelectors,
+  ...messagingSelectors,
+  ...connectionSelectors,
+  ...navigationSelectors,
+  ...searchSelectors,
+  ...postSelectors,
+  ...profileSelectors,
 };
 
 export const linkedinResolver = new SelectorResolver(linkedinSelectors);

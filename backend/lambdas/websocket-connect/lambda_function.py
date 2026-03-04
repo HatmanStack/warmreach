@@ -40,28 +40,47 @@ def _get_jwks_client():
 def _validate_jwt(token: str) -> dict | None:
     """Validate Cognito JWT and return claims, or None if invalid.
 
-    Uses python-jose if available, otherwise falls back to manual JWK validation.
-    For Lambda deployment, install python-jose[cryptography] in requirements.txt.
+    Uses PyJWT if available, otherwise falls back to manual JWK validation.
+    For Lambda deployment, install PyJWT[crypto]==2.9.0 in requirements.txt.
     """
     try:
-        from jose import JWTError
-        from jose import jwt as jose_jwt
+        import jwt
     except ImportError:
-        logger.error('python-jose not installed - JWT validation will fail')
+        logger.error('PyJWT not installed - JWT validation will fail')
         return None
 
     try:
         jwks = _get_jwks_client()
-        claims = jose_jwt.decode(
+        unverified_header = jwt.get_unverified_header(token)
+        kid = unverified_header.get('kid')
+        if not kid:
+            logger.warning('JWT missing kid in header')
+            return None
+
+        # Find matching key in JWKS
+        matching_key = None
+        for key in jwks.get('keys', []):
+            if key.get('kid') == kid:
+                matching_key = key
+                break
+
+        if not matching_key:
+            logger.warning(f'No matching key found in JWKS for kid: {kid}')
+            return None
+
+        # Construct RSA public key object
+        public_key = jwt.algorithms.RSAAlgorithm.from_jwk(matching_key)
+
+        # Decode with explicit algorithm restriction (fix for CVE-2025-61152)
+        claims = jwt.decode(
             token,
-            jwks,
+            key=public_key,
             algorithms=['RS256'],
-            audience=None,  # Cognito access tokens don't have aud
             issuer=_cognito_issuer,
             options={'verify_aud': False},
         )
         return claims
-    except JWTError as e:
+    except jwt.InvalidTokenError as e:
         logger.warning(f'JWT validation failed: {e}')
         return None
     except Exception as e:

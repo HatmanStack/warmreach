@@ -28,13 +28,34 @@ export interface FingerprintProfile {
 }
 
 export const GPU_PROFILES = [
-  { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-  { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-  { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-  { vendor: 'Google Inc. (AMD)', renderer: 'ANGLE (AMD, AMD Radeon RX 6700 XT Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-  { vendor: 'Google Inc. (AMD)', renderer: 'ANGLE (AMD, AMD Radeon RX 7800 XT Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-  { vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel, Intel(R) UHD Graphics 770 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-  { vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+  {
+    vendor: 'Google Inc. (NVIDIA)',
+    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+  },
+  {
+    vendor: 'Google Inc. (NVIDIA)',
+    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+  },
+  {
+    vendor: 'Google Inc. (NVIDIA)',
+    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+  },
+  {
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon RX 6700 XT Direct3D11 vs_5_0 ps_5_0, D3D11)',
+  },
+  {
+    vendor: 'Google Inc. (AMD)',
+    renderer: 'ANGLE (AMD, AMD Radeon RX 7800 XT Direct3D11 vs_5_0 ps_5_0, D3D11)',
+  },
+  {
+    vendor: 'Google Inc. (Intel)',
+    renderer: 'ANGLE (Intel, Intel(R) UHD Graphics 770 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+  },
+  {
+    vendor: 'Google Inc. (Intel)',
+    renderer: 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)',
+  },
   { vendor: 'Google Inc. (Apple)', renderer: 'ANGLE (Apple, Apple M1 Pro, OpenGL 4.1)' },
   { vendor: 'Google Inc. (Apple)', renderer: 'ANGLE (Apple, Apple M2, OpenGL 4.1)' },
 ];
@@ -102,8 +123,12 @@ export function generateFingerprintProfile(existing?: FingerprintProfile): Finge
 
 export function rotateProfile(existing: FingerprintProfile): FingerprintProfile {
   const newProfile = generateFingerprintProfile(existing);
-  const ageDays = Math.floor((Date.now() - new Date(existing.rotatedAt).getTime()) / (1000 * 60 * 60 * 24));
-  logger.info(`[FingerprintProfile] Rotated profile (age: ${ageDays} days, new seed: ${newProfile.seed.slice(0, 8)}...)`);
+  const ageDays = Math.floor(
+    (Date.now() - new Date(existing.rotatedAt).getTime()) / (1000 * 60 * 60 * 24)
+  );
+  logger.info(
+    `[FingerprintProfile] Rotated profile (age: ${ageDays} days, new seed: ${newProfile.seed.slice(0, 8)}...)`
+  );
   return newProfile;
 }
 
@@ -114,7 +139,7 @@ export function loadOrCreateProfile(profileDir: string): FingerprintProfile {
     try {
       const data = fs.readFileSync(profilePath, 'utf8');
       const profile = JSON.parse(data) as FingerprintProfile;
-      
+
       const rotatedAt = new Date(profile.rotatedAt).getTime();
       const now = Date.now();
       const daysSinceRotation = (now - rotatedAt) / (1000 * 60 * 60 * 24);

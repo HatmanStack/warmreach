@@ -165,3 +165,200 @@ class TestWebSocketConnect:
         ).get('Item')
         assert new_item is not None
         assert new_item['userSub'] == 'user-123'
+
+
+def _generate_test_jwks():
+    """Generate an RSA key pair and return (private_key, jwks_dict, kid)."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.backends import default_backend
+    import jwt as pyjwt
+    import json
+
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+        backend=default_backend(),
+    )
+    public_key = private_key.public_key()
+    kid = 'test-key-1'
+
+    # Build JWKS
+    jwk_dict = json.loads(pyjwt.algorithms.RSAAlgorithm.to_jwk(public_key))
+    jwk_dict['kid'] = kid
+    jwk_dict['use'] = 'sig'
+    jwks = {'keys': [jwk_dict]}
+
+    return private_key, jwks, kid
+
+
+class TestValidateJwt:
+    def test_valid_token_returns_claims(self):
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm='RS256',
+            headers={'kid': kid}
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks):
+            claims = module._validate_jwt(token)
+
+        assert claims is not None
+        assert claims['sub'] == 'user-123'
+
+    def test_expired_token_returns_none(self):
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) - 3600,
+            },
+            private_key,
+            algorithm='RS256',
+            headers={'kid': kid}
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks):
+            claims = module._validate_jwt(token)
+
+        assert claims is None
+
+    def test_wrong_issuer_returns_none(self):
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'iss': 'https://wrong-issuer.com',
+                'exp': int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm='RS256',
+            headers={'kid': kid}
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks):
+            claims = module._validate_jwt(token)
+
+        assert claims is None
+
+    def test_invalid_signature_returns_none(self):
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        # Sign with a different key
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.backends import default_backend
+        wrong_private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+            backend=default_backend(),
+        )
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) + 3600,
+            },
+            wrong_private_key,
+            algorithm='RS256',
+            headers={'kid': kid}
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks):
+            claims = module._validate_jwt(token)
+
+        assert claims is None
+
+    def test_unmatched_kid_returns_none(self):
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm='RS256',
+            headers={'kid': 'wrong-kid'}
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks):
+            claims = module._validate_jwt(token)
+
+        assert claims is None
+
+    def test_missing_kid_in_header_returns_none(self):
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm='RS256'
+            # headers={'kid': ...} is omitted
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks):
+            claims = module._validate_jwt(token)
+
+        assert claims is None
+
+    def test_alg_none_rejected(self):
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        # Craft alg=none token
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) + 3600,
+            },
+            None,
+            algorithm=None
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks):
+            claims = module._validate_jwt(token)
+
+        assert claims is None

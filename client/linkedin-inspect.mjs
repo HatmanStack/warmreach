@@ -3,20 +3,28 @@
 /**
  * Launch a non-headless Puppeteer browser for manual LinkedIn fingerprint inspection.
  *
- * Usage:  node client/linkedin-inspect.mjs
+ * Usage:
+ *   cd client && node --import tsx linkedin-inspect.mjs            # normal (Puppeteer launch)
+ *   cd client && node --import tsx linkedin-inspect.mjs --connect  # connect to existing Chrome
  *
- * The browser opens with the full stealth mitigation stack active (stealth plugin +
- * canvas/WebGL/audio fingerprint noise, request interception, random user agent,
- * system Chrome detection), matching what PuppeteerService uses in production.
+ * --connect mode:
+ *   Launches Chrome as a normal process with --remote-debugging-port, then attaches
+ *   Puppeteer via connect(). This avoids Puppeteer's launch-time automation flags
+ *   and may reduce CDP fingerprint surface that triggers LinkedIn EvalError logouts.
+ *
  * Close the browser window or press Ctrl-C to exit.
  *
- * Set PUPPETEER_STEALTH=false to disable stealth plugin for comparison testing.
- * Set PUPPETEER_FINGERPRINT_NOISE=false to disable canvas/WebGL/audio noise.
+ * Environment variables:
+ *   PUPPETEER_FINGERPRINT_NOISE=false   Disable canvas/WebGL/audio noise
+ *   FINGERPRINT_PROFILE=1               Use persistent fingerprint profile
+ *   PUPPETEER_USER_DATA_DIR=<path>      Persistent Chrome profile directory
+ *   CHROME_EXECUTABLE_PATH=<path>       Custom Chrome binary path
+ *   CONNECT_PORT=<port>                 Remote debugging port (default: 9222)
  */
 
 import fs from 'fs';
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { spawn } from 'child_process';
+import puppeteer from 'puppeteer';
 import {
   getCanvasNoiseScript,
   getWebGLSpoofScript,
@@ -26,20 +34,7 @@ import {
 import { loadOrCreateProfile, GPU_PROFILES } from './src/domains/automation/utils/fingerprintProfile.ts';
 import RandomHelpers from './src/shared/utils/randomHelpers.js';
 
-const stealthEnabled = false; // Completely stripping puppeteer-extra-plugin-stealth
-if (stealthEnabled) {
-  const stealth = StealthPlugin();
-
-  // LinkedIn is detecting one of the evasions. We will disable them one by one.
-  // The most common triggers for advanced bot scripts are navigator.webdriver and chrome.runtime
-  stealth.enabledEvasions.delete('chrome.runtime');
-  stealth.enabledEvasions.delete('iframe.contentWindow');
-
-  puppeteer.use(stealth);
-  console.log('Stealth plugin enabled (Selective Evasion: chrome.runtime, iframe.contentWindow DISABLED)');
-} else {
-  console.log('Stealth plugin disabled (using Custom Evasion Scripts instead)');
-}
+const connectMode = process.argv.includes('--connect');
 
 // Detect system Chrome/Chromium (same logic as PuppeteerService)
 function detectSystemChrome() {
@@ -73,38 +68,88 @@ function detectSystemChrome() {
 const executablePath = detectSystemChrome();
 const userDataDir = process.env.PUPPETEER_USER_DATA_DIR || undefined;
 
-const launchOptions = {
-  headless: false,
-  defaultViewport: null, // use window size
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage', // Prevent shared memory crashes on Linux (heavy pages)
-    '--disable-accelerated-2d-canvas',
-    '--no-zygote',
-    '--start-maximized',
-    '--window-size=1400,900',
-
-    // Strip automation indicators
-    '--disable-blink-features=AutomationControlled',
-
-    // Clean profile — no extensions loaded
-    '--disable-extensions',
-    '--disable-default-apps',
-    '--disable-component-extensions-with-background-pages',
-
-    // Disable infobars ("Chrome is being controlled by automated test software")
-    '--disable-infobars',
-  ],
-  ignoreDefaultArgs: ['--enable-automation'],
-  ...(executablePath ? { executablePath } : {}),
-  ...(userDataDir ? { userDataDir } : {}),
-};
-
 if (executablePath) console.log(`Using system Chrome: ${executablePath}`);
 if (userDataDir) console.log(`Using persistent profile: ${userDataDir}`);
 
-const browser = await puppeteer.launch(launchOptions);
+// --- Browser acquisition ---
+let browser;
+let chromeProcess;
+
+if (connectMode) {
+  const port = process.env.CONNECT_PORT || '9222';
+  const chromePath = executablePath;
+  if (!chromePath) {
+    console.error('--connect requires a system Chrome. Set CHROME_EXECUTABLE_PATH or install Chrome/Chromium.');
+    process.exit(1);
+  }
+
+  const chromeArgs = [
+    `--remote-debugging-port=${port}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-blink-features=AutomationControlled',
+    '--disable-infobars',
+    '--start-maximized',
+    '--window-size=1400,900',
+    ...(userDataDir ? [`--user-data-dir=${userDataDir}`] : []),
+  ];
+
+  console.log(`Launching Chrome with --remote-debugging-port=${port}...`);
+  chromeProcess = spawn(chromePath, chromeArgs, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  });
+
+  // Wait for DevTools to be ready
+  const wsEndpoint = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Chrome did not start within 10s')), 10000);
+    let stderr = '';
+
+    chromeProcess.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      // Chrome prints "DevTools listening on ws://..." to stderr
+      const match = stderr.match(/DevTools listening on (ws:\/\/\S+)/);
+      if (match) {
+        clearTimeout(timeout);
+        resolve(match[1]);
+      }
+    });
+
+    chromeProcess.on('exit', (code) => {
+      clearTimeout(timeout);
+      reject(new Error(`Chrome exited with code ${code}. stderr:\n${stderr}`));
+    });
+  });
+
+  console.log(`Connecting to ${wsEndpoint}`);
+  browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint, defaultViewport: null });
+  console.log('Connected to Chrome (no Puppeteer launch flags)');
+} else {
+  console.log('Using standard Puppeteer launch');
+  const launchOptions = {
+    headless: false,
+    defaultViewport: null,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-zygote',
+      '--start-maximized',
+      '--window-size=1400,900',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-extensions',
+      '--disable-default-apps',
+      '--disable-component-extensions-with-background-pages',
+      '--disable-infobars',
+    ],
+    ignoreDefaultArgs: ['--enable-automation'],
+    ...(executablePath ? { executablePath } : {}),
+    ...(userDataDir ? { userDataDir } : {}),
+  };
+
+  browser = await puppeteer.launch(launchOptions);
+}
 
 const page = (await browser.pages())[0] || (await browser.newPage());
 
@@ -164,64 +209,72 @@ if (useProfile) {
   console.log(`[FingerprintProfile] GPU: ${profile.gpuProfile.renderer}`);
 }
 
-// Random user agent
 const userAgent = profile ? profile.userAgent : (RandomHelpers.getRandomUserAgent() ?? '');
-await page.setUserAgent(userAgent);
-
-// Request interception: block chrome-extension:// requests
-// await page.setRequestInterception(true);
-// page.on('request', (req) => {
-//   if (req.url().startsWith('chrome-extension://')) {
-//     req.abort('blockedbyclient');
-//   } else {
-//     req.continue();
-//   }
-// });
-
-// Fingerprint noise injection and headless evasion
 const noiseEnabled = (process.env.PUPPETEER_FINGERPRINT_NOISE ?? 'true').toLowerCase() !== 'false';
+const viewport = profile ? { width: profile.screenResolution.width, height: profile.screenResolution.height } : { width: 1400, height: 900 };
 
-// Always apply custom headless evasion since we disabled the stealth plugin
-if (profile) {
-  await page.evaluateOnNewDocument(getHeadlessEvasionScript({
-    platform: profile.platform,
-    language: profile.language,
-    pluginCount: profile.pluginCount,
-  }));
-} else {
-  await page.evaluateOnNewDocument(getHeadlessEvasionScript());
+// Stable noise seeds for the session (reused across all tabs)
+const canvasSeed = profile?.canvasNoiseSeed ?? Math.floor(Math.random() * 1000000);
+const audioSeed = profile?.audioNoiseSeed ?? Math.floor(Math.random() * 1000000);
+const gpuProfile = profile?.gpuProfile ?? GPU_PROFILES[Math.floor(Math.random() * GPU_PROFILES.length)];
+
+// Inject evasion scripts on a page — called for initial page and every new tab
+async function injectEvasionScripts(targetPage) {
+  await targetPage.setUserAgent(userAgent);
+  await targetPage.setViewport(viewport);
+
+  if (profile) {
+    await targetPage.evaluateOnNewDocument(getHeadlessEvasionScript({
+      platform: profile.platform,
+      language: profile.language,
+      pluginCount: profile.pluginCount,
+    }));
+  } else {
+    await targetPage.evaluateOnNewDocument(getHeadlessEvasionScript());
+  }
+
+  if (noiseEnabled) {
+    await targetPage.evaluateOnNewDocument(getCanvasNoiseScript(canvasSeed));
+    await targetPage.evaluateOnNewDocument(getWebGLSpoofScript(gpuProfile));
+    await targetPage.evaluateOnNewDocument(getAudioNoiseScript(audioSeed));
+  }
 }
 
-if (noiseEnabled) {
-  if (profile) {
-    await page.evaluateOnNewDocument(getCanvasNoiseScript(profile.canvasNoiseSeed));
-    await page.evaluateOnNewDocument(getWebGLSpoofScript(profile.gpuProfile));
-    await page.evaluateOnNewDocument(getAudioNoiseScript(profile.audioNoiseSeed));
-    console.log('Fingerprint profile noise injected.');
-  } else {
-    await page.evaluateOnNewDocument(getCanvasNoiseScript(Math.floor(Math.random() * 1000000)));
-    await page.evaluateOnNewDocument(getWebGLSpoofScript(GPU_PROFILES[Math.floor(Math.random() * GPU_PROFILES.length)]));
-    await page.evaluateOnNewDocument(getAudioNoiseScript(Math.floor(Math.random() * 1000000)));
-    console.log('Random session noise injected.');
+// Inject on the initial page
+await injectEvasionScripts(page);
+
+// Auto-inject on every new tab (e.g. "open link in new tab")
+browser.on('targetcreated', async (target) => {
+  if (target.type() !== 'page') return;
+  try {
+    const newPage = await target.page();
+    if (!newPage) return;
+    console.log('[new tab] Injecting evasion scripts');
+    await injectEvasionScripts(newPage);
+  } catch {
+    // Target may close before we can attach
   }
+});
+
+if (noiseEnabled) {
+  console.log(profile ? 'Fingerprint profile noise injected.' : 'Random session noise injected.');
 } else {
   console.log('Fingerprint noise disabled (PUPPETEER_FINGERPRINT_NOISE=false)');
 }
 
-const viewport = profile ? { width: profile.screenResolution.width, height: profile.screenResolution.height } : { width: 1400, height: 900 };
-await page.setViewport(viewport);
-
-console.log('Browser launched — navigating to linkedin.com');
+console.log(`Browser ready (${connectMode ? 'connect' : 'launch'} mode) — navigating to linkedin.com`);
 await page.goto('https://www.linkedin.com', { waitUntil: 'domcontentloaded' });
 
 // Keep process alive until the browser is closed
 browser.on('disconnected', () => {
   console.log('Browser closed.');
+  if (chromeProcess && !chromeProcess.killed) chromeProcess.kill();
   process.exit(0);
 });
 
 // Handle Ctrl-C gracefully
 process.on('SIGINT', async () => {
   console.log('\nShutting down...');
-  await browser.close();
+  try { await browser.close(); } catch { /* already closed */ }
+  if (chromeProcess && !chromeProcess.killed) chromeProcess.kill();
 });

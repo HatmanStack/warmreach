@@ -21,7 +21,11 @@ import {
   getAudioNoiseScript,
   getHeadlessEvasionScript,
 } from '../utils/stealthScripts.js';
-import { loadOrCreateProfile, GPU_PROFILES, type FingerprintProfile } from '../utils/fingerprintProfile.js';
+import {
+  loadOrCreateProfile,
+  GPU_PROFILES,
+  type FingerprintProfile,
+} from '../utils/fingerprintProfile.js';
 import { responseTimingInterceptor } from '../utils/responseTimingInterceptor.js';
 
 // The puppeteer-extra-plugin-stealth library triggers advanced LinkedIn EvalError logouts.
@@ -39,16 +43,16 @@ function detectSystemChrome(): string | undefined {
   const candidates =
     process.platform === 'win32'
       ? [
-        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      ]
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        ]
       : [
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/google-chrome',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/chromium',
-        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      ];
+          '/usr/bin/google-chrome-stable',
+          '/usr/bin/google-chrome',
+          '/usr/bin/chromium-browser',
+          '/usr/bin/chromium',
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        ];
 
   for (const candidate of candidates) {
     try {
@@ -113,7 +117,7 @@ export class PuppeteerService {
 
       // If user asked for UI but no DISPLAY is available, warn and keep headless to avoid crash
       const effectiveHeadless: boolean | 'shell' =
-        (resolvedHeadless || !displayEnv) ? 'shell' : false;
+        resolvedHeadless || !displayEnv ? 'shell' : false;
       if (!resolvedHeadless && !displayEnv) {
         logger.warn(
           'HEADLESS=false requested but DISPLAY is not set. Browser UI cannot be shown in this environment. Running headless instead.'
@@ -146,7 +150,9 @@ export class PuppeteerService {
           profile = loadOrCreateProfile(profileDir);
           const rotatedAt = new Date(profile.rotatedAt);
           const daysOld = Math.floor((Date.now() - rotatedAt.getTime()) / (1000 * 60 * 60 * 24));
-          logger.info(`[FingerprintProfile] Loaded profile (age: ${daysOld} days, rotation in ${profile.rotationIntervalDays - daysOld} days)`);
+          logger.info(
+            `[FingerprintProfile] Loaded profile (age: ${daysOld} days, rotation in ${profile.rotationIntervalDays - daysOld} days)`
+          );
         } catch (err) {
           logger.error('Failed to load fingerprint profile, falling back to random:', err);
         }
@@ -167,8 +173,14 @@ export class PuppeteerService {
       this.page = await this.browser!.newPage();
 
       // Set viewport - use profile resolution in headless mode if available
-      const viewportWidth = (profile && effectiveHeadless !== false) ? profile.screenResolution.width : config.puppeteer.viewport.width;
-      const viewportHeight = (profile && effectiveHeadless !== false) ? profile.screenResolution.height : config.puppeteer.viewport.height;
+      const viewportWidth =
+        profile && effectiveHeadless !== false
+          ? profile.screenResolution.width
+          : config.puppeteer.viewport.width;
+      const viewportHeight =
+        profile && effectiveHeadless !== false
+          ? profile.screenResolution.height
+          : config.puppeteer.viewport.height;
 
       await this.page.setViewport({
         width: viewportWidth,
@@ -221,11 +233,13 @@ export class PuppeteerService {
 
       // Custom headless evasion (always enabled to spoof platform fingerprints regardless of head)
       if (profile) {
-        await this.page.evaluateOnNewDocument(getHeadlessEvasionScript({
-          platform: profile.platform,
-          language: profile.language,
-          pluginCount: profile.pluginCount,
-        }));
+        await this.page.evaluateOnNewDocument(
+          getHeadlessEvasionScript({
+            platform: profile.platform,
+            language: profile.language,
+            pluginCount: profile.pluginCount,
+          })
+        );
       } else {
         await this.page.evaluateOnNewDocument(getHeadlessEvasionScript());
       }
@@ -238,15 +252,20 @@ export class PuppeteerService {
           await this.page.evaluateOnNewDocument(getAudioNoiseScript(profile.audioNoiseSeed));
         } else {
           // Fallback to random behavior if no profile
-          await this.page.evaluateOnNewDocument(getCanvasNoiseScript(Math.floor(Math.random() * 1000000)));
+          await this.page.evaluateOnNewDocument(
+            getCanvasNoiseScript(Math.floor(Math.random() * 1000000))
+          );
           const randomGpu = GPU_PROFILES[Math.floor(Math.random() * GPU_PROFILES.length)]!;
           await this.page.evaluateOnNewDocument(getWebGLSpoofScript(randomGpu));
-          await this.page.evaluateOnNewDocument(getAudioNoiseScript(Math.floor(Math.random() * 1000000)));
+          await this.page.evaluateOnNewDocument(
+            getAudioNoiseScript(Math.floor(Math.random() * 1000000))
+          );
         }
       }
 
       try {
-        const { BrowserSessionManager } = await import('../../session/services/browserSessionManager.js');
+        const { BrowserSessionManager } =
+          await import('../../session/services/browserSessionManager.js');
         const signalDetector = BrowserSessionManager.getSignalDetector();
         if (this.page && signalDetector) {
           responseTimingInterceptor.attachToPage(this.page, signalDetector);
@@ -486,8 +505,11 @@ export class PuppeteerService {
 
         for (let i = 0; i < maxIterations; i++) {
           try {
-            const cascadeShowMore = (linkedinSelectors['search:show-more'] || []);
-            const showMoreSel = cascadeShowMore.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+            const cascadeShowMore = linkedinSelectors['search:show-more'] || [];
+            const showMoreSel = cascadeShowMore
+              .filter((s) => !s.selector.includes('::-p-'))
+              .map((s) => s.selector)
+              .join(', ');
 
             const didClickShowMore = await this.page.evaluate((selString) => {
               function isVisible(el: Element | null): boolean {
@@ -511,7 +533,11 @@ export class PuppeteerService {
                   const text = (btn.textContent || '').toLowerCase();
                   const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
                   // We still do a partial text check just to be safe if it matched a generic button
-                  if (text.includes('show more') || aria.includes('show more') || sel.includes('show-more')) {
+                  if (
+                    text.includes('show more') ||
+                    aria.includes('show more') ||
+                    sel.includes('show-more')
+                  ) {
                     btn.click();
                     return true;
                   }

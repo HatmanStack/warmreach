@@ -6,9 +6,7 @@ import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('CommandService');
 
-const COMMAND_API_URL =
-  import.meta.env.VITE_API_GATEWAY_URL ||
-  'https://2c6mr2rri0.execute-api.us-west-2.amazonaws.com/prod';
+const COMMAND_API_URL = import.meta.env.VITE_API_GATEWAY_URL || '';
 
 export type CommandStatus = 'idle' | 'dispatching' | 'executing' | 'completed' | 'failed';
 

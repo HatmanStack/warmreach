@@ -26,11 +26,14 @@ export class SessionMetrics {
   private readonly checkpointThreshold: number;
   private readonly loginRedirectThreshold: number;
 
-  constructor(private detector: SignalDetector, options: SessionMetricsOptions = {}) {
+  constructor(
+    private detector: SignalDetector,
+    options: SessionMetricsOptions = {}
+  ) {
     this.errorRateWindowMs = options.errorRateWindowMs || 5 * 60 * 1000; // 5 minutes
     this.checkpointWindowMs = options.checkpointWindowMs || 30 * 60 * 1000; // 30 minutes
     this.loginRedirectWindowMs = options.loginRedirectWindowMs || 10 * 60 * 1000; // 10 minutes
-    
+
     this.errorRateThreshold = options.errorRateThreshold || 0.3; // 30%
     this.checkpointThreshold = options.checkpointThreshold || 1; // Any more than 1
     this.loginRedirectThreshold = options.loginRedirectThreshold || 2; // More than 2
@@ -46,7 +49,10 @@ export class SessionMetrics {
 
     const rate = this.getErrorRate();
     if (rate > this.errorRateThreshold && this._getOperationCount() >= 5) {
-      this.detector.recordContentSignal('high-error-rate', `Error rate is ${Math.round(rate * 100)}%`);
+      this.detector.recordContentSignal(
+        'high-error-rate',
+        `Error rate is ${Math.round(rate * 100)}%`
+      );
     }
   }
 
@@ -60,7 +66,10 @@ export class SessionMetrics {
 
     const count = this.getCheckpointCount();
     if (count > this.checkpointThreshold) {
-      this.detector.recordContentSignal('frequent-checkpoints', `${count} checkpoints in last 30 minutes`);
+      this.detector.recordContentSignal(
+        'frequent-checkpoints',
+        `${count} checkpoints in last 30 minutes`
+      );
     }
   }
 
@@ -74,7 +83,10 @@ export class SessionMetrics {
 
     const count = this.getLoginRedirectCount();
     if (count > this.loginRedirectThreshold) {
-      this.detector.recordContentSignal('frequent-login-redirects', `${count} login redirects in last 10 minutes`);
+      this.detector.recordContentSignal(
+        'frequent-login-redirects',
+        `${count} login redirects in last 10 minutes`
+      );
     }
   }
 
@@ -83,10 +95,10 @@ export class SessionMetrics {
    */
   getErrorRate(): number {
     const windowStart = Date.now() - this.errorRateWindowMs;
-    const recentOps = this.operations.filter(op => op.timestamp >= windowStart);
+    const recentOps = this.operations.filter((op) => op.timestamp >= windowStart);
     if (recentOps.length === 0) return 0;
 
-    const failures = recentOps.filter(op => !op.success).length;
+    const failures = recentOps.filter((op) => !op.success).length;
     return failures / recentOps.length;
   }
 
@@ -95,7 +107,7 @@ export class SessionMetrics {
    */
   getCheckpointCount(): number {
     const windowStart = Date.now() - this.checkpointWindowMs;
-    return this.checkpoints.filter(ts => ts >= windowStart).length;
+    return this.checkpoints.filter((ts) => ts >= windowStart).length;
   }
 
   /**
@@ -103,7 +115,7 @@ export class SessionMetrics {
    */
   getLoginRedirectCount(): number {
     const windowStart = Date.now() - this.loginRedirectWindowMs;
-    return this.loginRedirects.filter(ts => ts >= windowStart).length;
+    return this.loginRedirects.filter((ts) => ts >= windowStart).length;
   }
 
   /**
@@ -127,17 +139,21 @@ export class SessionMetrics {
 
   private _getOperationCount(): number {
     const windowStart = Date.now() - this.errorRateWindowMs;
-    return this.operations.filter(op => op.timestamp >= windowStart).length;
+    return this.operations.filter((op) => op.timestamp >= windowStart).length;
   }
 
   private _cleanup(): void {
     const now = Date.now();
-    const maxWindow = Math.max(this.errorRateWindowMs, this.checkpointWindowMs, this.loginRedirectWindowMs);
+    const maxWindow = Math.max(
+      this.errorRateWindowMs,
+      this.checkpointWindowMs,
+      this.loginRedirectWindowMs
+    );
     const expiry = now - maxWindow;
 
-    this.operations = this.operations.filter(op => op.timestamp >= expiry);
-    this.checkpoints = this.checkpoints.filter(ts => ts >= expiry);
-    this.loginRedirects = this.loginRedirects.filter(ts => ts >= expiry);
+    this.operations = this.operations.filter((op) => op.timestamp >= expiry);
+    this.checkpoints = this.checkpoints.filter((ts) => ts >= expiry);
+    this.loginRedirects = this.loginRedirects.filter((ts) => ts >= expiry);
   }
 }
 

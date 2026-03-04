@@ -28,7 +28,7 @@ export class NotificationService {
 
   private async _getNotificationClass(): Promise<typeof import('electron').Notification | null> {
     if (this.isElectronAttempted) return this.NotificationClass;
-    
+
     this.isElectronAttempted = true;
     try {
       const electron = await import('electron');

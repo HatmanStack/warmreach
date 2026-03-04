@@ -163,7 +163,12 @@ class InteractionQueue {
   /**
    * Get the current pause status.
    */
-  getPauseStatus(): { paused: boolean; reason: string | null; pausedAt: number | null; queuedJobs: number } {
+  getPauseStatus(): {
+    paused: boolean;
+    reason: string | null;
+    pausedAt: number | null;
+    queuedJobs: number;
+  } {
     return {
       paused: this._paused,
       reason: this._pauseReason,
@@ -207,7 +212,11 @@ class InteractionQueue {
    * Get queue status for health checks.
    * @returns Queue status
    */
-  getQueueStatus(): QueueStatus & { paused: boolean; pauseReason: string | null; pausedAt: number | null } {
+  getQueueStatus(): QueueStatus & {
+    paused: boolean;
+    pauseReason: string | null;
+    pausedAt: number | null;
+  } {
     return {
       activeJobs: this.activeCount,
       queuedJobs: this.queue.length,

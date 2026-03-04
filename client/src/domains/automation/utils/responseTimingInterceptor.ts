@@ -94,17 +94,28 @@ export class ResponseTimingInterceptor {
   private _isMeaningfulLinkedInRequest(url: string): boolean {
     try {
       const urlObj = new URL(url);
-      
+
       // Only include LinkedIn domains
       if (!urlObj.hostname.includes('linkedin.com')) {
         return false;
       }
 
       const pathname = urlObj.pathname.toLowerCase();
-      
+
       // Exclude static assets
-      const excludedExtensions = ['.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.woff', '.woff2', '.ico'];
-      if (excludedExtensions.some(ext => pathname.endsWith(ext))) {
+      const excludedExtensions = [
+        '.js',
+        '.css',
+        '.png',
+        '.jpg',
+        '.jpeg',
+        '.gif',
+        '.svg',
+        '.woff',
+        '.woff2',
+        '.ico',
+      ];
+      if (excludedExtensions.some((ext) => pathname.endsWith(ext))) {
         return false;
       }
 

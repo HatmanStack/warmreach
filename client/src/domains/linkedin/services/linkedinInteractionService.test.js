@@ -46,27 +46,37 @@ vi.mock('../../session/services/browserSessionManager.js', () => ({
 
 vi.mock('../../navigation/services/linkedinNavigationService.js', () => ({
   LinkedInNavigationService: class {
-    async navigateToProfile() { return true; }
+    async navigateToProfile() {
+      return true;
+    }
   },
 }));
 
 vi.mock('../../messaging/services/linkedinMessagingService.js', () => ({
   LinkedInMessagingService: class {
     async navigateToMessaging() {}
-    async composeAndSendMessage() { return { deliveryStatus: 'sent' }; }
-    async scrapeConversationThread() { return []; }
+    async composeAndSendMessage() {
+      return { deliveryStatus: 'sent' };
+    }
+    async scrapeConversationThread() {
+      return [];
+    }
   },
 }));
 
 vi.mock('../../connections/services/linkedinConnectionService.js', () => ({
   LinkedInConnectionService: class {
-    async sendConnectionRequest() { return { confirmationFound: true }; }
+    async sendConnectionRequest() {
+      return { confirmationFound: true };
+    }
   },
 }));
 
 vi.mock('../../messaging/services/linkedinMessageScraperService.js', () => ({
   LinkedInMessageScraperService: class {
-    async scrapeConversationThread() { return []; }
+    async scrapeConversationThread() {
+      return [];
+    }
   },
 }));
 
@@ -90,15 +100,17 @@ describe('LinkedInInteractionService', () => {
       service._reportInteraction = vi.fn();
 
       await service.executeMessagingWorkflow('id', 'content', {});
-      
+
       expect(mockMetrics.recordOperation).toHaveBeenCalledWith(true);
     });
 
     it('records failure in executeMessagingWorkflow', async () => {
       service.navigateToProfile = vi.fn().mockRejectedValue(new Error('nav fail'));
 
-      await expect(service.executeMessagingWorkflow('id', 'content', {})).rejects.toThrow('nav fail');
-      
+      await expect(service.executeMessagingWorkflow('id', 'content', {})).rejects.toThrow(
+        'nav fail'
+      );
+
       expect(mockMetrics.recordOperation).toHaveBeenCalledWith(false);
     });
   });

@@ -56,9 +56,9 @@ describe('BackoffController', () => {
         signals: [{ type: 'http-429', severity: 'high' }],
         threatLevel: 60,
       });
-      
+
       await controller.assessAndAct();
-      
+
       expect(mockQueue.pause).toHaveBeenCalledWith('Too many 429s');
       expect(notificationService.notifyBackoffPause).toHaveBeenCalled();
     });
@@ -70,9 +70,9 @@ describe('BackoffController', () => {
         signals: [{ type: 'checkpoint-detected', severity: 'critical' }],
         threatLevel: 50,
       });
-      
+
       await controller.assessAndAct();
-      
+
       expect(mockQueue.pause).toHaveBeenCalled();
       expect(notificationService.notifyCheckpoint).toHaveBeenCalled();
     });
@@ -80,7 +80,7 @@ describe('BackoffController', () => {
     it('does not pause if already paused', async () => {
       mockQueue.isPaused.mockReturnValue(true);
       mockDetector.assess.mockReturnValue({ shouldPause: true, reason: 'Test' });
-      
+
       await controller.assessAndAct();
       expect(mockQueue.pause).not.toHaveBeenCalled();
     });
@@ -90,7 +90,7 @@ describe('BackoffController', () => {
     it('immediately pauses and notifies', async () => {
       const url = 'https://linkedin.com/checkpoint/123';
       await controller.handleCheckpoint(url);
-      
+
       expect(mockQueue.pause).toHaveBeenCalledWith('Checkpoint detected');
       expect(notificationService.notifyCheckpoint).toHaveBeenCalled();
       expect(mockDetector.recordContentSignal).toHaveBeenCalledWith('checkpoint-detected', url);
@@ -106,9 +106,9 @@ describe('BackoffController', () => {
   describe('resume', () => {
     it('resumes the queue and clears detector', async () => {
       mockQueue.isPaused.mockReturnValue(true);
-      
+
       await controller.resume();
-      
+
       expect(mockQueue.resume).toHaveBeenCalled();
       expect(mockDetector.clear).toHaveBeenCalled();
       expect(notificationService.notifyResumed).toHaveBeenCalled();
@@ -120,7 +120,7 @@ describe('BackoffController', () => {
       controller.start(1000);
       vi.advanceTimersByTime(1500);
       expect(mockDetector.assess).toHaveBeenCalledTimes(1);
-      
+
       controller.stop();
       vi.advanceTimersByTime(1500);
       expect(mockDetector.assess).toHaveBeenCalledTimes(1); // No more calls

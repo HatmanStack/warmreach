@@ -9,7 +9,7 @@ vi.mock('#utils/logger.js', () => ({
 const mockShow = vi.fn();
 const mockIsSupported = vi.fn(() => true);
 
-const MockNotificationSpy = vi.fn().mockImplementation(function() {
+const MockNotificationSpy = vi.fn().mockImplementation(function () {
   return {
     show: mockShow,
   };
@@ -41,21 +41,23 @@ describe('NotificationService', () => {
   describe('notify', () => {
     it('creates and shows a native notification when available', async () => {
       await service.notify({ title: 'Test', body: 'Message' });
-      
-      expect(MockNotificationSpy).toHaveBeenCalledWith(expect.objectContaining({
-        title: 'Test',
-        body: 'Message',
-      }));
+
+      expect(MockNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Test',
+          body: 'Message',
+        })
+      );
       expect(mockShow).toHaveBeenCalled();
     });
 
     it('rate limits notifications (max 1 per 30s)', async () => {
       await service.notify({ title: 'First', body: 'Msg' });
       await service.notify({ title: 'Second', body: 'Msg' });
-      
+
       expect(MockNotificationSpy).toHaveBeenCalledTimes(1);
       expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('Rate limited'));
-      
+
       // Advance time by 31s
       vi.advanceTimersByTime(31000);
       await service.notify({ title: 'Third', body: 'Msg' });
@@ -71,48 +73,60 @@ describe('NotificationService', () => {
 
     it('uses different urgency levels', async () => {
       await service.notify({ title: 'Low', body: 'Msg', urgency: 'low' });
-      expect(MockNotificationSpy).toHaveBeenCalledWith(expect.objectContaining({
-        silent: true,
-      }));
+      expect(MockNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          silent: true,
+        })
+      );
     });
 
     it('falls back to logging if Notification is not supported', async () => {
       mockIsSupported.mockReturnValueOnce(false);
       await service.notify({ title: 'Unsupported', body: 'Msg' });
-      
-      expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('[Notification] Unsupported: Msg'));
+
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.stringContaining('[Notification] Unsupported: Msg')
+      );
     });
 
     it('logs with warn level for critical notifications when falling back', async () => {
       mockIsSupported.mockReturnValueOnce(false);
       await service.notify({ title: 'Critical', body: 'Msg', urgency: 'critical' });
-      
-      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('[Notification] Critical: Msg'));
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('[Notification] Critical: Msg')
+      );
     });
   });
 
   describe('convenience methods', () => {
     it('notifyCheckpoint sends correct content', async () => {
       await service.notifyCheckpoint();
-      expect(MockNotificationSpy).toHaveBeenCalledWith(expect.objectContaining({
-        title: 'WarmReach — Action Required',
-        silent: false,
-      }));
+      expect(MockNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'WarmReach — Action Required',
+          silent: false,
+        })
+      );
     });
 
     it('notifyBackoffPause sends correct content', async () => {
       await service.notifyBackoffPause('some reason');
-      expect(MockNotificationSpy).toHaveBeenCalledWith(expect.objectContaining({
-        body: expect.stringContaining('some reason'),
-      }));
+      expect(MockNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining('some reason'),
+        })
+      );
     });
 
     it('notifyResumed sends correct content', async () => {
       await service.notifyResumed();
-      expect(MockNotificationSpy).toHaveBeenCalledWith(expect.objectContaining({
-        title: 'WarmReach — Resumed',
-        silent: true,
-      }));
+      expect(MockNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'WarmReach — Resumed',
+          silent: true,
+        })
+      );
     });
   });
 });

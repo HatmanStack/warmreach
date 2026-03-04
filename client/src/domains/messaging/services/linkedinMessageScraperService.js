@@ -157,7 +157,9 @@ export class LinkedInMessageScraperService {
     });
 
     try {
-      await linkedinResolver.resolveWithWait(page, 'messaging:conversation-list', { timeout: 8000 });
+      await linkedinResolver.resolveWithWait(page, 'messaging:conversation-list', {
+        timeout: 8000,
+      });
       return;
     } catch {
       logger.warn('Could not confirm messaging page loaded via selectors');
@@ -175,13 +177,16 @@ export class LinkedInMessageScraperService {
     let stableRounds = 0;
 
     for (let i = 0; i < maxScrolls; i++) {
-      const cascadeItem = (linkedinSelectors['messaging:conversation-items'] || []);
-      const itemSel = cascadeItem.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const cascadeItem = linkedinSelectors['messaging:conversation-items'] || [];
+      const itemSel = cascadeItem
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
 
       const currentCount = await page.evaluate((selString) => {
         let max = 0;
         if (!selString) return 0;
-        selString.split(',').forEach(sel => {
+        selString.split(',').forEach((sel) => {
           const items = document.querySelectorAll(sel.trim());
           if (items.length > max) max = items.length;
         });
@@ -201,8 +206,11 @@ export class LinkedInMessageScraperService {
       }
       previousCount = currentCount;
 
-      const cascadeContainer = (linkedinSelectors['messaging:conversation-list'] || []);
-      const containerSel = cascadeContainer.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const cascadeContainer = linkedinSelectors['messaging:conversation-list'] || [];
+      const containerSel = cascadeContainer
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
 
       // Scroll the conversation list container
       await page.evaluate((selString) => {
@@ -228,8 +236,11 @@ export class LinkedInMessageScraperService {
   async _extractConversationEntries() {
     const page = await this._getPage();
 
-    const cascadeItem = (linkedinSelectors['messaging:conversation-items'] || []);
-    const itemSel = cascadeItem.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+    const cascadeItem = linkedinSelectors['messaging:conversation-items'] || [];
+    const itemSel = cascadeItem
+      .filter((s) => !s.selector.includes('::-p-'))
+      .map((s) => s.selector)
+      .join(', ');
 
     return await page.evaluate((selString) => {
       const entries = [];
@@ -267,22 +278,29 @@ export class LinkedInMessageScraperService {
   async _clickConversation(entry) {
     const page = await this._getPage();
 
-    const cascadeItem = (linkedinSelectors['messaging:conversation-items'] || []);
-    const itemSel = cascadeItem.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+    const cascadeItem = linkedinSelectors['messaging:conversation-items'] || [];
+    const itemSel = cascadeItem
+      .filter((s) => !s.selector.includes('::-p-'))
+      .map((s) => s.selector)
+      .join(', ');
 
-    await page.evaluate((idx, selString) => {
-      if (!selString) return;
-      const selectors = selString.split(',');
-      for (const sel of selectors) {
-        const items = document.querySelectorAll(sel.trim());
-        if (items.length > idx) {
-          // Click the item or its first clickable child
-          const clickable = items[idx].querySelector('a') || items[idx];
-          clickable.click();
-          return;
+    await page.evaluate(
+      (idx, selString) => {
+        if (!selString) return;
+        const selectors = selString.split(',');
+        for (const sel of selectors) {
+          const items = document.querySelectorAll(sel.trim());
+          if (items.length > idx) {
+            // Click the item or its first clickable child
+            const clickable = items[idx].querySelector('a') || items[idx];
+            clickable.click();
+            return;
+          }
         }
-      }
-    }, entry.index, itemSel);
+      },
+      entry.index,
+      itemSel
+    );
 
     // Wait for message thread to load
     try {
@@ -303,13 +321,16 @@ export class LinkedInMessageScraperService {
     let stableRounds = 0;
 
     for (let i = 0; i < maxScrolls; i++) {
-      const cascadeItem = (linkedinSelectors['messaging:message-events'] || []);
-      const itemSel = cascadeItem.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const cascadeItem = linkedinSelectors['messaging:message-events'] || [];
+      const itemSel = cascadeItem
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
 
       const currentCount = await page.evaluate((selString) => {
         let max = 0;
         if (!selString) return 0;
-        selString.split(',').forEach(sel => {
+        selString.split(',').forEach((sel) => {
           const items = document.querySelectorAll(sel.trim());
           if (items.length > max) max = items.length;
         });
@@ -324,8 +345,11 @@ export class LinkedInMessageScraperService {
       }
       previousCount = currentCount;
 
-      const cascadeContainer = (linkedinSelectors['messaging:message-list'] || []);
-      const containerSel = cascadeContainer.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const cascadeContainer = linkedinSelectors['messaging:message-list'] || [];
+      const containerSel = cascadeContainer
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
 
       // Scroll the thread container up
       await page.evaluate((selString) => {
@@ -351,88 +375,106 @@ export class LinkedInMessageScraperService {
   async _extractMessages() {
     const page = await this._getPage();
 
-    const cascadeEvents = (linkedinSelectors['messaging:message-events'] || []);
-    const eventsSel = cascadeEvents.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+    const cascadeEvents = linkedinSelectors['messaging:message-events'] || [];
+    const eventsSel = cascadeEvents
+      .filter((s) => !s.selector.includes('::-p-'))
+      .map((s) => s.selector)
+      .join(', ');
 
-    const cascadeTime = (linkedinSelectors['messaging:timestamp'] || []);
-    const timeSel = cascadeTime.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+    const cascadeTime = linkedinSelectors['messaging:timestamp'] || [];
+    const timeSel = cascadeTime
+      .filter((s) => !s.selector.includes('::-p-'))
+      .map((s) => s.selector)
+      .join(', ');
 
-    const cascadeOther = (linkedinSelectors['messaging:other-message'] || []);
-    const otherSel = cascadeOther.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+    const cascadeOther = linkedinSelectors['messaging:other-message'] || [];
+    const otherSel = cascadeOther
+      .filter((s) => !s.selector.includes('::-p-'))
+      .map((s) => s.selector)
+      .join(', ');
 
-    return await page.evaluate((eventsSel, timeSel, otherSel) => {
-      const messages = [];
-      if (!eventsSel) return messages;
+    return await page.evaluate(
+      (eventsSel, timeSel, otherSel) => {
+        const messages = [];
+        if (!eventsSel) return messages;
 
-      let items = [];
-      for (const sel of eventsSel.split(',')) {
-        items = Array.from(document.querySelectorAll(sel.trim()));
-        if (items.length > 0) break;
-      }
-
-      items.forEach((item, index) => {
-        // Extract content
-        const contentSelectors = [
-          '.msg-s-event-listitem__body',
-          'p[dir="ltr"]',
-          '.msg-s-event__content',
-        ];
-        let content = '';
-        for (const sel of contentSelectors) {
-          const el = item.querySelector(sel);
-          if (el && el.textContent.trim()) {
-            content = el.textContent.trim();
-            break;
-          }
+        let items = [];
+        for (const sel of eventsSel.split(',')) {
+          items = Array.from(document.querySelectorAll(sel.trim()));
+          if (items.length > 0) break;
         }
 
-        if (!content) return; // Skip non-message events (e.g., connection requests)
-
-        // Extract timestamp — only use exact datetime, never synthesize scrape time
-        let timestamp = null;
-        let timestampApproximate = false;
-        let timeEl = null;
-
-        if (timeSel) {
-          for (const sel of timeSel.split(',')) {
-            timeEl = item.querySelector(sel.trim());
-            if (timeEl) break;
-          }
-        }
-
-        if (timeEl) {
-          const dt = timeEl.getAttribute('datetime');
-          if (dt) {
-            timestamp = dt;
-          } else if (timeEl.textContent) {
-            // Relative text like "3 hours ago" — not a reliable ISO timestamp
-            timestamp = timeEl.textContent.trim();
-            timestampApproximate = true;
-          }
-        }
-
-        // Determine sender: presence of "other" class indicates inbound
-        let isInbound = false;
-        if (otherSel) {
-          for (const sel of otherSel.split(',')) {
-            if (item.matches && item.matches(sel.trim()) || item.querySelector(sel.trim()) !== null || item.closest(sel.trim()) !== null) {
-              isInbound = true;
+        items.forEach((item, index) => {
+          // Extract content
+          const contentSelectors = [
+            '.msg-s-event-listitem__body',
+            'p[dir="ltr"]',
+            '.msg-s-event__content',
+          ];
+          let content = '';
+          for (const sel of contentSelectors) {
+            const el = item.querySelector(sel);
+            if (el && el.textContent.trim()) {
+              content = el.textContent.trim();
               break;
             }
           }
-        }
 
-        messages.push({
-          id: `msg-${Date.now()}-${index}`,
-          content,
-          timestamp,
-          timestampApproximate,
-          sender: isInbound ? 'inbound' : 'outbound',
+          if (!content) return; // Skip non-message events (e.g., connection requests)
+
+          // Extract timestamp — only use exact datetime, never synthesize scrape time
+          let timestamp = null;
+          let timestampApproximate = false;
+          let timeEl = null;
+
+          if (timeSel) {
+            for (const sel of timeSel.split(',')) {
+              timeEl = item.querySelector(sel.trim());
+              if (timeEl) break;
+            }
+          }
+
+          if (timeEl) {
+            const dt = timeEl.getAttribute('datetime');
+            if (dt) {
+              timestamp = dt;
+            } else if (timeEl.textContent) {
+              // Relative text like "3 hours ago" — not a reliable ISO timestamp
+              timestamp = timeEl.textContent.trim();
+              timestampApproximate = true;
+            }
+          }
+
+          // Determine sender: presence of "other" class indicates inbound
+          let isInbound = false;
+          if (otherSel) {
+            for (const sel of otherSel.split(',')) {
+              if (
+                (item.matches && item.matches(sel.trim())) ||
+                item.querySelector(sel.trim()) !== null ||
+                item.closest(sel.trim()) !== null
+              ) {
+                isInbound = true;
+                break;
+              }
+            }
+          }
+
+          messages.push({
+            id: `msg-${Date.now()}-${index}`,
+            content,
+            timestamp,
+            timestampApproximate,
+            sender: isInbound ? 'inbound' : 'outbound',
+          });
         });
-      });
 
-      return messages;
-    }, eventsSel, timeSel, otherSel);
+        return messages;
+      },
+      eventsSel,
+      timeSel,
+      otherSel
+    );
   }
 
   /**

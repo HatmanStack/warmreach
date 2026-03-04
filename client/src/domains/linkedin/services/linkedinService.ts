@@ -64,12 +64,14 @@ export class LinkedInService {
   /**
    * Private helper to run content analysis and record metrics
    */
-  private async _analyze(context: { expectedContent?: 'search-results' | 'profile'; action?: string } = {}): Promise<void> {
+  private async _analyze(
+    context: { expectedContent?: 'search-results' | 'profile'; action?: string } = {}
+  ): Promise<void> {
     try {
       const page = this.puppeteer.getPage();
       const detector = BrowserSessionManager.getSignalDetector();
       const analyzer = BrowserSessionManager.getContentAnalyzer();
-      
+
       if (page && detector && analyzer) {
         await analyzer.analyzePage(page, detector, context);
       }
@@ -130,15 +132,21 @@ export class LinkedInService {
       }
 
       // Fill username
-      const usernameInput = await linkedinResolver.resolveWithWait(page, 'nav:login-username', { timeout: 5000 });
+      const usernameInput = await linkedinResolver.resolveWithWait(page, 'nav:login-username', {
+        timeout: 5000,
+      });
       await usernameInput.type(loginUsername);
 
       // Fill password
-      const passwordInput = await linkedinResolver.resolveWithWait(page, 'nav:login-password', { timeout: 5000 });
+      const passwordInput = await linkedinResolver.resolveWithWait(page, 'nav:login-password', {
+        timeout: 5000,
+      });
       await passwordInput.type(loginPassword);
 
       // Click login button
-      const loginButton = await linkedinResolver.resolveWithWait(page, 'nav:login-submit', { timeout: 5000 });
+      const loginButton = await linkedinResolver.resolveWithWait(page, 'nav:login-submit', {
+        timeout: 5000,
+      });
       await loginButton.click();
 
       if (recursion) {
@@ -337,7 +345,7 @@ export class LinkedInService {
     try {
       const button = await linkedinResolver.resolveWithWait(page, 'search:filter-button', {
         timeout: 5000,
-        params: { filterName }
+        params: { filterName },
       });
       await button.click();
       logger.debug(`Clicked filter "${filterName}" with resolver`);
@@ -377,7 +385,9 @@ export class LinkedInService {
     if (!page) return false;
 
     try {
-      const element = await linkedinResolver.resolveWithWait(page, 'search:filter-input', { timeout: 2000 });
+      const element = await linkedinResolver.resolveWithWait(page, 'search:filter-input', {
+        timeout: 2000,
+      });
       await element.click({ count: 3 });
       await page.keyboard.press('Backspace');
       await element.type(text, { delay: 50 });
@@ -454,7 +464,9 @@ export class LinkedInService {
     if (!page) return false;
 
     try {
-      const button = await linkedinResolver.resolveWithWait(page, 'search:apply-filter', { timeout: 3000 });
+      const button = await linkedinResolver.resolveWithWait(page, 'search:apply-filter', {
+        timeout: 3000,
+      });
       await button.click();
       logger.debug(`Clicked "Show results" with resolver`);
       return true;
@@ -620,9 +632,14 @@ export class LinkedInService {
           // ignore
         }
 
-        const timeSelectors = (linkedinSelectors['profile:activity-time'] as Array<{ strategy: string, selector: string }>)
-          .filter(s => !s.selector.includes('::-p-'))
-          .map(s => s.selector)
+        const timeSelectors = (
+          linkedinSelectors['profile:activity-time'] as Array<{
+            strategy: string;
+            selector: string;
+          }>
+        )
+          .filter((s) => !s.selector.includes('::-p-'))
+          .map((s) => s.selector)
           .join(', ');
 
         const result = await page.evaluate(
@@ -632,9 +649,7 @@ export class LinkedInService {
               day: /\b([1-6])d\b/i,
               week: /\b([1-4])w\b/i,
             };
-            const elements = Array.from(
-              document.querySelectorAll(timeSel)
-            );
+            const elements = Array.from(document.querySelectorAll(timeSel));
             const updatedCounts = { ...existingCounts };
             const newCounted: string[] = [];
 
@@ -715,10 +730,14 @@ export class LinkedInService {
 
     for (let i = 0; i < maxScrolls; i++) {
       try {
-        const cascade = (linkedinSelectors['search:profile-links'] as Array<{ strategy: string, selector: string }>) || [];
+        const cascade =
+          (linkedinSelectors['search:profile-links'] as Array<{
+            strategy: string;
+            selector: string;
+          }>) || [];
         const connectionSelectors = cascade
-          .filter(s => !s.selector.includes('::-p-'))
-          .map(s => s.selector)
+          .filter((s) => !s.selector.includes('::-p-'))
+          .map((s) => s.selector)
           .join(', ');
 
         const currentConnectionCount = await page.evaluate((selString: string) => {

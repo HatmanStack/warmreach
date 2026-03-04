@@ -17,9 +17,13 @@ export class ContentSignalAnalyzer {
   /**
    * Analyze the current page for signals
    */
-  async analyzePage(page: Page, detector: SignalDetector, context: AnalysisContext = {}): Promise<void> {
+  async analyzePage(
+    page: Page,
+    detector: SignalDetector,
+    context: AnalysisContext = {}
+  ): Promise<void> {
     const url = page.url();
-    
+
     // a. URL Analysis
     if (this._isCheckpointUrl(url)) {
       detector.recordContentSignal('checkpoint-detected', url);
@@ -46,10 +50,12 @@ export class ContentSignalAnalyzer {
 
   private _isCheckpointUrl(url: string): boolean {
     const lowerUrl = url.toLowerCase();
-    return lowerUrl.includes('checkpoint') || 
-           lowerUrl.includes('authwall') || 
-           lowerUrl.includes('challenge') ||
-           lowerUrl.includes('captcha');
+    return (
+      lowerUrl.includes('checkpoint') ||
+      lowerUrl.includes('authwall') ||
+      lowerUrl.includes('challenge') ||
+      lowerUrl.includes('captcha')
+    );
   }
 
   private _isUnexpectedLoginRedirect(url: string, action?: string): boolean {
@@ -65,13 +71,13 @@ export class ContentSignalAnalyzer {
       "we've restricted your account",
       'verify your identity',
       'security verification',
-      'restricted your account'
+      'restricted your account',
     ];
 
     try {
       const detectedBanner = await page.evaluate((keywords) => {
         const text = document.body.innerText.toLowerCase();
-        return keywords.find(keyword => text.includes(keyword));
+        return keywords.find((keyword) => text.includes(keyword));
       }, restrictionKeywords);
 
       if (detectedBanner) {
@@ -99,7 +105,10 @@ export class ContentSignalAnalyzer {
     }
   }
 
-  private async _detectMissingProfileIndicators(page: Page, detector: SignalDetector): Promise<void> {
+  private async _detectMissingProfileIndicators(
+    page: Page,
+    detector: SignalDetector
+  ): Promise<void> {
     if (!this.selectorResolver) return;
 
     try {

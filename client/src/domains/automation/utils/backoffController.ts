@@ -6,7 +6,12 @@ import { logger } from '#utils/logger.js';
 export interface BackoffStatus {
   isMonitoring: boolean;
   queuePaused: boolean;
-  pauseStatus: { paused: boolean; reason: string | null; pausedAt: number | null; queuedJobs: number };
+  pauseStatus: {
+    paused: boolean;
+    reason: string | null;
+    pausedAt: number | null;
+    queuedJobs: number;
+  };
   threatLevel: number;
 }
 
@@ -27,13 +32,13 @@ export class BackoffController {
    */
   start(intervalMs: number = 30000): void {
     if (this.checkInterval) return;
-    
+
     this.checkInterval = setInterval(() => {
-      this.assessAndAct().catch(err => {
+      this.assessAndAct().catch((err) => {
         logger.error('[BackoffController] Error checking threats:', err);
       });
     }, intervalMs);
-    
+
     logger.info('[BackoffController] Monitoring started');
   }
 
@@ -57,10 +62,10 @@ export class BackoffController {
 
     this.queue.pause('Checkpoint detected');
     await notificationService.notifyCheckpoint();
-    
+
     // Also record the signal so it shows up in metrics
     this.detector.recordContentSignal('checkpoint-detected', url);
-    
+
     logger.warn(`[BackoffController] Checkpoint detected at ${url} — queue paused, user notified`);
   }
 
@@ -75,8 +80,10 @@ export class BackoffController {
       const assessment = this.detector.assess();
 
       if (assessment.shouldPause && !this.queue.isPaused()) {
-        const isCheckpoint = assessment.signals.some(s => s.type === 'checkpoint-detected' || s.severity === 'critical');
-        
+        const isCheckpoint = assessment.signals.some(
+          (s) => s.type === 'checkpoint-detected' || s.severity === 'critical'
+        );
+
         this.queue.pause(assessment.reason);
 
         if (isCheckpoint) {
@@ -84,7 +91,7 @@ export class BackoffController {
         } else {
           await notificationService.notifyBackoffPause(assessment.reason);
         }
-        
+
         logger.warn(`[BackoffController] Automation paused due to: ${assessment.reason}`);
       }
 
@@ -108,11 +115,11 @@ export class BackoffController {
    */
   async resume(): Promise<void> {
     if (!this.queue.isPaused()) return;
-    
+
     this.queue.resume();
     this.detector.clear(); // Clear signals after manual resume
     await notificationService.notifyResumed();
-    
+
     logger.info('[BackoffController] Automation resumed manually');
   }
 

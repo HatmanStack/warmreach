@@ -28,9 +28,7 @@ export const isCognitoConfigured = validateCognitoConfig();
 
 export const API_CONFIG = {
   // Production AWS API Gateway URL (fallback)
-  BASE_URL:
-    import.meta.env.VITE_API_GATEWAY_URL ||
-    'https://2c6mr2rri0.execute-api.us-west-2.amazonaws.com/prod',
+  BASE_URL: import.meta.env.VITE_API_GATEWAY_URL || '',
   ENDPOINTS: {
     SEARCH: '/',
     MESSAGE_GENERATION: '/llm',

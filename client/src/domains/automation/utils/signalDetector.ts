@@ -45,7 +45,7 @@ export class SignalDetector {
   recordResponseTiming(url: string, durationMs: number): void {
     const domain = this._getDomain(url);
     const baseline = this.responseBaselines.get(domain) || durationMs;
-    
+
     // Simple EMA for baseline (alpha = 0.1)
     const newBaseline = baseline * 0.9 + durationMs * 0.1;
     this.responseBaselines.set(domain, newBaseline);
@@ -136,10 +136,10 @@ export class SignalDetector {
   assess(): ThreatAssessment {
     const now = Date.now();
     const windowStart = now - this.windowMs;
-    
+
     // Filter signals within the assessment window
-    const recentSignals = this.signals.filter(s => s.timestamp >= windowStart);
-    
+    const recentSignals = this.signals.filter((s) => s.timestamp >= windowStart);
+
     let threatLevel = 0;
     let highSignalCount = 0;
     let hasCritical = false;
@@ -163,14 +163,15 @@ export class SignalDetector {
       }
     }
 
-    const shouldPause = hasCritical || 
-                       highSignalCount >= this.highSignalThreshold || 
-                       threatLevel >= this.pauseThreatThreshold;
+    const shouldPause =
+      hasCritical ||
+      highSignalCount >= this.highSignalThreshold ||
+      threatLevel >= this.pauseThreatThreshold;
 
     let reason = '';
     if (shouldPause) {
       if (hasCritical) {
-        const critical = recentSignals.find(s => s.severity === 'critical');
+        const critical = recentSignals.find((s) => s.severity === 'critical');
         reason = `Critical signal detected: ${critical?.type} (${critical?.details})`;
       } else if (highSignalCount >= this.highSignalThreshold) {
         reason = `High threat detected: ${highSignalCount} high-severity signals in 10 minutes`;
@@ -209,15 +210,17 @@ export class SignalDetector {
 
   private _addSignal(signal: Signal): void {
     this.signals.push(signal);
-    logger.debug(`[SignalDetector] Signal recorded: ${signal.type} (${signal.severity})`, { details: signal.details });
+    logger.debug(`[SignalDetector] Signal recorded: ${signal.type} (${signal.severity})`, {
+      details: signal.details,
+    });
     this._evictOldSignals();
   }
 
   private _evictOldSignals(): void {
     const now = Date.now();
     const expiry = now - 30 * 60 * 1000; // Keep signals for 30 minutes for context, even if assessment window is shorter
-    this.signals = this.signals.filter(s => s.timestamp > expiry);
-    
+    this.signals = this.signals.filter((s) => s.timestamp > expiry);
+
     // For assessment we only use windowMs, but we keep them longer in the buffer.
   }
 

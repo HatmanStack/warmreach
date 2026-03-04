@@ -449,7 +449,9 @@ export class LinkedInInteractionService {
   async verifyProfilePage(page) {
     try {
       // Look for profile-specific elements using resolver
-      const element = await linkedinResolver.resolveWithWait(page, 'nav:profile-indicator', { timeout: 2000 }).catch(() => null);
+      const element = await linkedinResolver
+        .resolveWithWait(page, 'nav:profile-indicator', { timeout: 2000 })
+        .catch(() => null);
       if (element) {
         logger.debug('Profile page verified with resolver');
         return true;
@@ -482,23 +484,43 @@ export class LinkedInInteractionService {
       let stableSamples = 0;
       const startTs = Date.now();
 
-      const navMain = (linkedinSelectors['nav:main-content'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
-      const navPageLoaded = (linkedinSelectors['nav:page-loaded'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
-      const navHomepage = (linkedinSelectors['nav:homepage'] || []).filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+      const navMain = (linkedinSelectors['nav:main-content'] || [])
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
+      const navPageLoaded = (linkedinSelectors['nav:page-loaded'] || [])
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
+      const navHomepage = (linkedinSelectors['nav:homepage'] || [])
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector)
+        .join(', ');
 
       while (Date.now() - startTs < maxWaitMs) {
-        const metrics = await page.evaluate((mainSel, loadedSel, homeSel) => {
-          const ready = document.readyState; // 'loading' | 'interactive' | 'complete'
-          const main = mainSel ? mainSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
-          const scaffold = loadedSel ? loadedSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
-          const nav = homeSel ? homeSel.split(',').some(sel => !!document.querySelector(sel.trim())) : false;
-          const anchors = document.querySelectorAll('a[href]')?.length || 0;
-          const images = document.images?.length || 0;
-          const height = document.body?.scrollHeight || 0;
-          const url = location.href;
-          const isCheckpoint = /checkpoint|authwall|challenge|captcha/i.test(url);
-          return { ready, main, scaffold, nav, anchors, images, height, isCheckpoint, url };
-        }, navMain, navPageLoaded, navHomepage);
+        const metrics = await page.evaluate(
+          (mainSel, loadedSel, homeSel) => {
+            const ready = document.readyState; // 'loading' | 'interactive' | 'complete'
+            const main = mainSel
+              ? mainSel.split(',').some((sel) => !!document.querySelector(sel.trim()))
+              : false;
+            const scaffold = loadedSel
+              ? loadedSel.split(',').some((sel) => !!document.querySelector(sel.trim()))
+              : false;
+            const nav = homeSel
+              ? homeSel.split(',').some((sel) => !!document.querySelector(sel.trim()))
+              : false;
+            const anchors = document.querySelectorAll('a[href]')?.length || 0;
+            const images = document.images?.length || 0;
+            const height = document.body?.scrollHeight || 0;
+            const url = location.href;
+            const isCheckpoint = /checkpoint|authwall|challenge|captcha/i.test(url);
+            return { ready, main, scaffold, nav, anchors, images, height, isCheckpoint, url };
+          },
+          navMain,
+          navPageLoaded,
+          navHomepage
+        );
 
         if (metrics.isCheckpoint) {
           logger.warn(`Checkpoint detected at ${metrics.url} — pausing automation`);
@@ -687,7 +709,9 @@ export class LinkedInInteractionService {
       let messageButton = null;
       let foundSelector = 'messaging:message-button';
       try {
-        messageButton = await linkedinResolver.resolveWithWait(page, 'messaging:message-button', { timeout: 3000 });
+        messageButton = await linkedinResolver.resolveWithWait(page, 'messaging:message-button', {
+          timeout: 3000,
+        });
       } catch {
         messageButton = null;
       }
@@ -739,7 +763,9 @@ export class LinkedInInteractionService {
       const session = await this.getBrowserSession();
       const page = session.getPage();
 
-      const messagingElement = await linkedinResolver.resolveWithWait(page, 'messaging:message-input', { timeout: 5000 }).catch(() => null);
+      const messagingElement = await linkedinResolver
+        .resolveWithWait(page, 'messaging:message-input', { timeout: 5000 })
+        .catch(() => null);
 
       if (!messagingElement) {
         throw new Error('Messaging interface did not load properly');
@@ -776,7 +802,9 @@ export class LinkedInInteractionService {
       await this.waitForMessagingInterface();
 
       // Look for message input field
-      const messageInput = await linkedinResolver.resolveWithWait(page, 'messaging:message-input', { timeout: 5000 }).catch(() => null);
+      const messageInput = await linkedinResolver
+        .resolveWithWait(page, 'messaging:message-input', { timeout: 5000 })
+        .catch(() => null);
       const foundSelector = 'messaging:message-input';
 
       if (!messageInput) {
@@ -789,7 +817,9 @@ export class LinkedInInteractionService {
 
       // Look for send button (paced delay before interaction)
       const sendButton = await this._paced(1000, 2000, () =>
-        linkedinResolver.resolveWithWait(page, 'messaging:send-button', { timeout: 3000 }).catch(() => null)
+        linkedinResolver
+          .resolveWithWait(page, 'messaging:send-button', { timeout: 3000 })
+          .catch(() => null)
       );
       const sendSelector = 'messaging:send-button';
 
@@ -844,7 +874,11 @@ export class LinkedInInteractionService {
       // Wait for message sent indicators
       let sentConfirmed = false;
       try {
-        const indicator = await linkedinResolver.resolveWithWait(session.getPage(), 'messaging:sent-confirmation', { timeout: 5000 });
+        const indicator = await linkedinResolver.resolveWithWait(
+          session.getPage(),
+          'messaging:sent-confirmation',
+          { timeout: 5000 }
+        );
         if (indicator) {
           logger.debug(`Message sent confirmation found`);
           sentConfirmed = true;
@@ -987,7 +1021,11 @@ export class LinkedInInteractionService {
       let startPostButton = null;
 
       try {
-        startPostButton = await linkedinResolver.resolveWithWait(session.getPage(), 'post:start-button', { timeout: 5000 });
+        startPostButton = await linkedinResolver.resolveWithWait(
+          session.getPage(),
+          'post:start-button',
+          { timeout: 5000 }
+        );
         logger.debug(`Found start post button`);
       } catch (err) {
         logger.debug(`Selector failed for start post button:`, {
@@ -1033,7 +1071,11 @@ export class LinkedInInteractionService {
       // Wait for post creation interface elements
       let postCreationElement = null;
       try {
-        postCreationElement = await linkedinResolver.resolveWithWait(session.getPage(), 'post:content-editor', { timeout: 8000 });
+        postCreationElement = await linkedinResolver.resolveWithWait(
+          session.getPage(),
+          'post:content-editor',
+          { timeout: 8000 }
+        );
         logger.debug(`Post creation interface loaded`);
       } catch {
         // Continue to next selector
@@ -1070,7 +1112,9 @@ export class LinkedInInteractionService {
       // Look for post content input field
       let contentInput = null;
       try {
-        contentInput = await linkedinResolver.resolveWithWait(page, 'post:content-editor', { timeout: 3000 });
+        contentInput = await linkedinResolver.resolveWithWait(page, 'post:content-editor', {
+          timeout: 3000,
+        });
         logger.debug(`Found content input`);
       } catch {
         // Continue to next selector
@@ -1128,7 +1172,9 @@ export class LinkedInInteractionService {
       // Look for media attachment button
       let mediaButton = null;
       try {
-        mediaButton = await linkedinResolver.resolveWithWait(page, 'post:media-button', { timeout: 2000 });
+        mediaButton = await linkedinResolver.resolveWithWait(page, 'post:media-button', {
+          timeout: 2000,
+        });
         logger.debug(`Found media button`);
       } catch {
         // Continue to next selector
@@ -1210,13 +1256,17 @@ export class LinkedInInteractionService {
       const page = session.getPage();
 
       // 2. Wait for the modal to appear and be visible.
-      const modal = await linkedinResolver.resolveWithWait(page, 'connection:modal', { timeout: 5000 });
+      const modal = await linkedinResolver.resolveWithWait(page, 'connection:modal', {
+        timeout: 5000,
+      });
       if (!modal) {
         throw new Error('Connection request modal did not appear.');
       }
       logger.info('Connection modal appeared.');
 
-      const sendButton = await linkedinResolver.resolveWithWait(page, 'connection:send-invitation', { timeout: 5000 }).catch(() => null);
+      const sendButton = await linkedinResolver
+        .resolveWithWait(page, 'connection:send-invitation', { timeout: 5000 })
+        .catch(() => null);
       if (!sendButton) {
         throw new Error('Send button not found within the modal.');
       }
@@ -1270,7 +1320,11 @@ export class LinkedInInteractionService {
 
       // Check for message button (indicates already connected)
       try {
-        const element = await linkedinResolver.resolveWithWait(session.getPage(), 'messaging:message-button', { timeout: 1000 });
+        const element = await linkedinResolver.resolveWithWait(
+          session.getPage(),
+          'messaging:message-button',
+          { timeout: 1000 }
+        );
         if (element) {
           logger.debug('Found connection indicator via messaging:message-button');
           return 'connected';
@@ -1281,7 +1335,11 @@ export class LinkedInInteractionService {
 
       // Check for pending connection
       try {
-        const element = await linkedinResolver.resolveWithWait(session.getPage(), 'connection:pending', { timeout: 1000 });
+        const element = await linkedinResolver.resolveWithWait(
+          session.getPage(),
+          'connection:pending',
+          { timeout: 1000 }
+        );
         if (element) {
           logger.debug('Found pending connection indicator via connection:pending');
           return 'pending';
@@ -1306,8 +1364,10 @@ export class LinkedInInteractionService {
     try {
       const session = await this.getBrowserSession();
       const page = session.getPage();
-      const cascadeContainer = (linkedinSelectors['nav:profile-card-container'] || []);
-      const candidateSelectors = cascadeContainer.filter(s => !s.selector.includes('::-p-')).map(s => s.selector);
+      const cascadeContainer = linkedinSelectors['nav:profile-card-container'] || [];
+      const candidateSelectors = cascadeContainer
+        .filter((s) => !s.selector.includes('::-p-'))
+        .map((s) => s.selector);
 
       let container = null;
       let usedSelector = null;
@@ -1329,7 +1389,7 @@ export class LinkedInInteractionService {
 
       logger.info(
         `${buttonName} container check: ${container ? 'found' : 'not found'}` +
-        `${usedSelector ? ` (${usedSelector})` : ''}`
+          `${usedSelector ? ` (${usedSelector})` : ''}`
       );
       if (!container) return false;
 
@@ -1356,24 +1416,34 @@ export class LinkedInInteractionService {
         logger.info(`connection-degree match: ${isFirst ? '1st' : 'not 1st'}`);
         return !!isFirst;
       } else if (buttonName === 'connect') {
-        const cascadeAll = (linkedinSelectors['connection:all-buttons'] || []);
-        const allSel = cascadeAll.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+        const cascadeAll = linkedinSelectors['connection:all-buttons'] || [];
+        const allSel = cascadeAll
+          .filter((s) => !s.selector.includes('::-p-'))
+          .map((s) => s.selector)
+          .join(', ');
 
-        const handle = await page.evaluateHandle((root, selString) => {
-          const lower = (s) => (s || '').toLowerCase();
-          const isVisible = (n) => {
-            const r = n.getBoundingClientRect();
-            const s = window.getComputedStyle(n);
-            return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
-          };
-          const nodes = root.querySelectorAll(selString || 'button');
-          for (const n of nodes) {
-            const aria = lower(n.getAttribute('aria-label'));
-            const txt = lower((n.innerText || n.textContent || '').trim());
-            if (((aria && aria.includes('connect')) || txt === 'connect') && isVisible(n)) return n;
-          }
-          return null;
-        }, container, allSel);
+        const handle = await page.evaluateHandle(
+          (root, selString) => {
+            const lower = (s) => (s || '').toLowerCase();
+            const isVisible = (n) => {
+              const r = n.getBoundingClientRect();
+              const s = window.getComputedStyle(n);
+              return (
+                r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'
+              );
+            };
+            const nodes = root.querySelectorAll(selString || 'button');
+            for (const n of nodes) {
+              const aria = lower(n.getAttribute('aria-label'));
+              const txt = lower((n.innerText || n.textContent || '').trim());
+              if (((aria && aria.includes('connect')) || txt === 'connect') && isVisible(n))
+                return n;
+            }
+            return null;
+          },
+          container,
+          allSel
+        );
         const btn = handle && handle.asElement && handle.asElement();
         if (btn) {
           await this.clickElementHumanly(page, btn);
@@ -1381,24 +1451,33 @@ export class LinkedInInteractionService {
         }
         return false;
       } else if (buttonName === 'more') {
-        const cascadeAll = (linkedinSelectors['connection:all-buttons'] || []);
-        const allSel = cascadeAll.filter(s => !s.selector.includes('::-p-')).map(s => s.selector).join(', ');
+        const cascadeAll = linkedinSelectors['connection:all-buttons'] || [];
+        const allSel = cascadeAll
+          .filter((s) => !s.selector.includes('::-p-'))
+          .map((s) => s.selector)
+          .join(', ');
 
-        const handle = await page.evaluateHandle((root, selString) => {
-          const lower = (s) => (s || '').toLowerCase();
-          const isVisible = (n) => {
-            const r = n.getBoundingClientRect();
-            const s = window.getComputedStyle(n);
-            return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
-          };
-          const nodes = root.querySelectorAll(selString || 'button');
-          for (const n of nodes) {
-            const aria = lower(n.getAttribute('aria-label'));
-            const txt = lower((n.innerText || n.textContent || '').trim());
-            if (((aria && aria.includes('more')) || txt === 'more') && isVisible(n)) return n;
-          }
-          return null;
-        }, container, allSel);
+        const handle = await page.evaluateHandle(
+          (root, selString) => {
+            const lower = (s) => (s || '').toLowerCase();
+            const isVisible = (n) => {
+              const r = n.getBoundingClientRect();
+              const s = window.getComputedStyle(n);
+              return (
+                r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'
+              );
+            };
+            const nodes = root.querySelectorAll(selString || 'button');
+            for (const n of nodes) {
+              const aria = lower(n.getAttribute('aria-label'));
+              const txt = lower((n.innerText || n.textContent || '').trim());
+              if (((aria && aria.includes('more')) || txt === 'more') && isVisible(n)) return n;
+            }
+            return null;
+          },
+          container,
+          allSel
+        );
         const btn = handle && handle.asElement && handle.asElement();
         if (btn) {
           await this.clickElementHumanly(page, btn);
@@ -1449,7 +1528,9 @@ export class LinkedInInteractionService {
       await this.waitForLinkedInLoad();
 
       // Look for post content input field
-      const contentInput = await linkedinResolver.resolveWithWait(page, 'post:content-editor', { timeout: 3000 }).catch(() => null);
+      const contentInput = await linkedinResolver
+        .resolveWithWait(page, 'post:content-editor', { timeout: 3000 })
+        .catch(() => null);
 
       if (!contentInput) {
         throw new Error('Post content input field not found');
@@ -1484,7 +1565,9 @@ export class LinkedInInteractionService {
       // Add human-like delay before media interaction
 
       // Look for media attachment button
-      const mediaButton = await linkedinResolver.resolveWithWait(page, 'post:media-button', { timeout: 2000 }).catch(() => null);
+      const mediaButton = await linkedinResolver
+        .resolveWithWait(page, 'post:media-button', { timeout: 2000 })
+        .catch(() => null);
 
       if (!mediaButton) {
         logger.warn('Media attachment button not found, skipping media upload');
@@ -1526,7 +1609,9 @@ export class LinkedInInteractionService {
       // Add human-like delay before publishing
 
       // Look for publish/post button
-      const publishButton = await linkedinResolver.resolveWithWait(page, 'post:publish-button', { timeout: 3000 }).catch(() => null);
+      const publishButton = await linkedinResolver
+        .resolveWithWait(page, 'post:publish-button', { timeout: 3000 })
+        .catch(() => null);
 
       if (!publishButton) {
         throw new Error('Publish button not found');
@@ -1658,7 +1743,11 @@ export class LinkedInInteractionService {
   async executeMessagingWorkflow(recipientProfileId, messageContent, options = {}) {
     const metrics = this.sessionManager.getSessionMetrics();
     try {
-      const result = await this._executeMessagingWorkflowInternal(recipientProfileId, messageContent, options);
+      const result = await this._executeMessagingWorkflowInternal(
+        recipientProfileId,
+        messageContent,
+        options
+      );
       metrics?.recordOperation(true);
       return result;
     } catch (error) {
@@ -1780,7 +1869,11 @@ export class LinkedInInteractionService {
   async executeConnectionWorkflow(profileId, connectionMessage = '', options = {}) {
     const metrics = this.sessionManager.getSessionMetrics();
     try {
-      const result = await this._executeConnectionWorkflowInternal(profileId, connectionMessage, options);
+      const result = await this._executeConnectionWorkflowInternal(
+        profileId,
+        connectionMessage,
+        options
+      );
       metrics?.recordOperation(true);
       return result;
     } catch (error) {
@@ -1894,7 +1987,11 @@ export class LinkedInInteractionService {
   async executePostCreationWorkflow(content, mediaAttachments = [], options = {}) {
     const metrics = this.sessionManager.getSessionMetrics();
     try {
-      const result = await this._executePostCreationWorkflowInternal(content, mediaAttachments, options);
+      const result = await this._executePostCreationWorkflowInternal(
+        content,
+        mediaAttachments,
+        options
+      );
       metrics?.recordOperation(true);
       return result;
     } catch (error) {
@@ -2105,7 +2202,9 @@ export class LinkedInInteractionService {
 
       // Look for indicators that we're already following
       try {
-        const element = await linkedinResolver.resolveWithWait(page, 'post:following-button', { timeout: 1000 });
+        const element = await linkedinResolver.resolveWithWait(page, 'post:following-button', {
+          timeout: 1000,
+        });
         if (element) {
           logger.debug('Found following indicator via post:following-button');
           return true;
@@ -2136,7 +2235,9 @@ export class LinkedInInteractionService {
       let foundSelector = null;
 
       try {
-        const element = await linkedinResolver.resolveWithWait(page, 'post:follow-button', { timeout: 2000 });
+        const element = await linkedinResolver.resolveWithWait(page, 'post:follow-button', {
+          timeout: 2000,
+        });
         if (element) {
           // Verify it's not the "Following" button
           const ariaLabel = await element.getAttribute('aria-label');
@@ -2172,7 +2273,7 @@ export class LinkedInInteractionService {
               logger.debug(`Found follow button in dropdown with selector: ${foundSelector}`);
             }
           } catch {
-            // Continue 
+            // Continue
           }
         }
       }

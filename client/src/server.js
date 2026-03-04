@@ -133,10 +133,13 @@ app.get('/health', async (req, res) => {
 
     // Determine overall health based on components
     const memoryPressure = queueStatus.memoryPressure;
-    const isHealthy = !memoryPressure.isUnderPressure && configStatus.configurationValid !== false && !queueStatus.paused;
+    const isHealthy =
+      !memoryPressure.isUnderPressure &&
+      configStatus.configurationValid !== false &&
+      !queueStatus.paused;
 
     res.json({
-      status: isHealthy ? 'healthy' : (queueStatus.paused ? 'paused' : 'degraded'),
+      status: isHealthy ? 'healthy' : queueStatus.paused ? 'paused' : 'degraded',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       environment: config.nodeEnv,
