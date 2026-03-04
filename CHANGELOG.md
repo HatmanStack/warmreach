@@ -5,6 +5,34 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-03-04
+
+### Security
+
+- Replace `python-jose` with `PyJWT` in websocket-connect Lambda to fix CVE-2025-61152 (`alg=none` signature bypass)
+- Remove hardcoded API Gateway URL fallbacks in frontend config and command service
+- Scope Bedrock IAM policy from `foundation-model/*` to `foundation-model/${BedrockModelId}`
+
+### Added
+
+- DeletionPolicy: Retain and PITR for DynamoDB tables and Cognito user pool
+- API Gateway throttling (burst: 50, rate: 25 req/s)
+- 8 CloudWatch alarms (Lambda errors, DynamoDB throttles, API 4xx/5xx, WebSocket errors, Stripe webhook failures) with SNS notification
+- Credential rotation runbook (`docs/plans/v1.2.1/CREDENTIAL-ROTATION.md`)
+- `--connect` mode for `linkedin-inspect.mjs` (attach to existing Chrome via remote debugging)
+
+### Fixed
+
+- Resolve npm audit vulnerabilities in client and frontend
+- Remove unused `puppeteer-extra` dependency from linkedin-inspect
+
+### Dependencies
+
+- Bump actions/checkout from 4 to 6
+- Bump client dev dependencies (6 updates)
+- Bump client production dependencies (axios, ioredis, puppeteer)
+- Bump frontend production dependencies (react-virtual, axios, react-router-dom, lucide-react)
+
 ## [1.2.0] - 2026-02-26
 
 ### Added
