@@ -1,5 +1,5 @@
 import { logger } from '#utils/logger.js';
-import FileHelpers from '#utils/fileHelpers.js';
+import { FileHelpers } from '#utils/fileHelpers.js';
 import fs from 'fs/promises';
 import path from 'path';
 

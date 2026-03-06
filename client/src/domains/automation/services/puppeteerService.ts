@@ -11,10 +11,10 @@ import type {
 } from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
-import config from '#shared-config/index.js';
+import { config } from '#shared-config/index.js';
 import { logger } from '#utils/logger.js';
 import { linkedinSelectors } from '../../linkedin/selectors/index.js';
-import RandomHelpers from '#utils/randomHelpers.js';
+import { RandomHelpers } from '#utils/randomHelpers.js';
 import {
   getCanvasNoiseScript,
   getWebGLSpoofScript,
@@ -30,7 +30,6 @@ import { responseTimingInterceptor } from '../utils/responseTimingInterceptor.js
 
 // The puppeteer-extra-plugin-stealth library triggers advanced LinkedIn EvalError logouts.
 // We manage our own headless evasion natively via getHeadlessEvasionScript().
-export { puppeteer };
 
 /**
  * Detect a system-installed Chrome/Chromium binary.
@@ -67,7 +66,7 @@ function detectSystemChrome(): string | undefined {
 /**
  * Options for link extraction
  */
-export interface ExtractLinksOptions {
+interface ExtractLinksOptions {
   timeoutMs?: number;
   autoScroll?: boolean;
   maxScrolls?: number;
@@ -711,5 +710,3 @@ export class PuppeteerService {
     return this.browser;
   }
 }
-
-export default PuppeteerService;

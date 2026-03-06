@@ -43,7 +43,7 @@ interface StatusMapping {
  * Status mapping from database values to display labels
  * Maps StatusValue keys to their display configuration including label and icon
  */
-export const STATUS_MAPPING: Record<StatusValue, StatusMapping> = {
+const STATUS_MAPPING: Record<StatusValue, StatusMapping> = {
   all: { label: 'All Statuses', icon: Filter },
   incoming: { label: 'Pending', icon: Clock },
   outgoing: { label: 'Sent', icon: Send },

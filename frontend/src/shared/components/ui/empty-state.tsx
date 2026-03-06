@@ -202,5 +202,3 @@ export const NoMessagesState: React.FC<NoMessagesStateProps> = ({
     />
   );
 };
-
-export default EmptyState;

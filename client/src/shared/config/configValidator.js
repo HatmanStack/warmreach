@@ -1,5 +1,5 @@
 import { logger } from '#utils/logger.js';
-import config from '../config/index.js';
+import { config } from '../config/index.js';
 
 /**
  * Configuration Validator - Validates LinkedIn interaction configuration
@@ -377,5 +377,3 @@ export class ConfigValidator {
     return validation;
   }
 }
-
-export default ConfigValidator;

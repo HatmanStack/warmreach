@@ -1,6 +1,6 @@
 import { logger } from '#utils/logger.js';
 import config from '../config/index.js';
-import ConfigValidator from './configValidator.js';
+import { ConfigValidator } from './configValidator.js';
 import ControlPlaneService from '../services/controlPlaneService.js';
 
 /**

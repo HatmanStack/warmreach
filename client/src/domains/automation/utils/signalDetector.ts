@@ -1,6 +1,6 @@
 import { logger } from '#utils/logger.js';
 
-export type SignalSeverity = 'low' | 'medium' | 'high' | 'critical';
+type SignalSeverity = 'low' | 'medium' | 'high' | 'critical';
 
 export interface Signal {
   type: string;
@@ -16,7 +16,7 @@ export interface ThreatAssessment {
   threatLevel: number;
 }
 
-export interface SignalDetectorOptions {
+interface SignalDetectorOptions {
   assessmentWindowMs?: number;
   pauseThreatThreshold?: number;
   highSignalThreshold?: number;
@@ -235,5 +235,3 @@ export class SignalDetector {
     }
   }
 }
-
-export default SignalDetector;

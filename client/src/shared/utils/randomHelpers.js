@@ -297,5 +297,3 @@ export class RandomHelpers {
     return null;
   }
 }
-
-export default RandomHelpers;

@@ -6,7 +6,7 @@
  */
 
 import { logger } from '#utils/logger.js';
-import config from '#shared-config/index.js';
+import { config } from '#shared-config/index.js';
 import { linkedinResolver, linkedinSelectors } from '../../linkedin/selectors/index.js';
 
 /**
@@ -325,5 +325,3 @@ export class LinkedInNavigationService {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
-
-export default LinkedInNavigationService;

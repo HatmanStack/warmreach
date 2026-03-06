@@ -1,5 +1,4 @@
 import type { Connection } from '@/shared/types/index';
-// Removed unused imports: ProgressState, LoadingState
 import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('WorkflowProgressService');
@@ -11,7 +10,7 @@ const logger = createLogger('WorkflowProgressService');
 /**
  * Workflow progress state for message generation
  */
-export interface WorkflowProgressState {
+interface WorkflowProgressState {
   /** Current workflow phase */
   phase: 'idle' | 'preparing' | 'generating' | 'completed' | 'error' | 'stopped';
   /** Current connection being processed */
@@ -37,7 +36,7 @@ export interface WorkflowProgressState {
 /**
  * Workflow completion statistics
  */
-export interface WorkflowCompletionStats {
+interface WorkflowCompletionStats {
   /** Total connections processed */
   totalProcessed: number;
   /** Number of successful generations */
@@ -55,12 +54,12 @@ export interface WorkflowCompletionStats {
 /**
  * Progress update callback function
  */
-export type ProgressUpdateCallback = (state: WorkflowProgressState) => void;
+type ProgressUpdateCallback = (state: WorkflowProgressState) => void;
 
 /**
  * Completion callback function
  */
-export type CompletionCallback = (stats: WorkflowCompletionStats) => void;
+type CompletionCallback = (stats: WorkflowCompletionStats) => void;
 
 // =============================================================================
 // WORKFLOW PROGRESS SERVICE
@@ -390,8 +389,5 @@ export class WorkflowProgressService {
 // =============================================================================
 // EXPORTS
 // =============================================================================
-
-// Create singleton instance
-export const workflowProgressService = new WorkflowProgressService();
 
 // Interfaces are already exported above with their declarations

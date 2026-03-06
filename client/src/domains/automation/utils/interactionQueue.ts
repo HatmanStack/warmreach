@@ -3,12 +3,12 @@ import { logger } from '#utils/logger.js';
 /**
  * Job status types
  */
-export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 
 /**
  * Metadata for a job
  */
-export interface JobMeta {
+interface JobMeta {
   type?: string;
   requestId?: string;
   userId?: string;
@@ -32,7 +32,7 @@ interface JobRecord {
 /**
  * Job status response (public API)
  */
-export interface JobStatusResponse {
+interface JobStatusResponse {
   jobId: string;
   status: JobStatus;
   createdAt: number;
@@ -44,7 +44,7 @@ export interface JobStatusResponse {
 /**
  * Job result response (public API)
  */
-export interface JobResultResponse {
+interface JobResultResponse {
   status: JobStatus;
   result: unknown;
   error: { message: string } | null;
@@ -61,7 +61,7 @@ interface QueueItem {
 /**
  * Constructor options
  */
-export interface InteractionQueueOptions {
+interface InteractionQueueOptions {
   concurrency?: number;
   maxJobHistory?: number;
   memoryThresholdPercent?: number;
@@ -72,7 +72,7 @@ export interface InteractionQueueOptions {
 /**
  * Queue status for health checks
  */
-export interface QueueStatus {
+interface QueueStatus {
   activeJobs: number;
   queuedJobs: number;
   totalJobsTracked: number;
@@ -83,7 +83,7 @@ export interface QueueStatus {
 /**
  * Memory pressure status
  */
-export interface MemoryPressureStatus {
+interface MemoryPressureStatus {
   heapUsedMB: number;
   heapTotalMB: number;
   heapUsedPercent: number;
@@ -94,7 +94,7 @@ export interface MemoryPressureStatus {
 /**
  * Task function type
  */
-export type TaskFunction<T = unknown> = () => Promise<T>;
+type TaskFunction<T = unknown> = () => Promise<T>;
 
 /**
  * Simple in-memory FIFO queue with configurable concurrency.

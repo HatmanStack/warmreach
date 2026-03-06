@@ -7,13 +7,27 @@ for profile ingestion and semantic search.
 
 import json
 import logging
+import os
 import time
 from typing import Any
 
+import boto3
 import requests
-from shared_services.circuit_breaker import CircuitBreaker
+from shared_services.circuit_breaker import CircuitBreaker, DynamoDBStore, InMemoryStore
 
 logger = logging.getLogger(__name__)
+
+# Lazy initialized resources
+_cb_dynamodb_table = None
+
+
+def _get_cb_table():
+    global _cb_dynamodb_table
+    if _cb_dynamodb_table is None:
+        table_name = os.environ.get('DYNAMODB_TABLE_NAME')
+        if table_name:
+            _cb_dynamodb_table = boto3.resource('dynamodb').Table(table_name)
+    return _cb_dynamodb_table
 
 
 class RAGStackError(Exception):
@@ -133,10 +147,16 @@ class RAGStackClient:
         self.api_key = api_key
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+
+        # Initialize circuit breaker with DynamoDB store for distributed state
+        cb_table = _get_cb_table()
+        cb_store = DynamoDBStore(cb_table) if cb_table else InMemoryStore()
+
         self._circuit_breaker = CircuitBreaker(
             service_name='ragstack',
             failure_threshold=5,
             recovery_timeout=60.0,
+            store=cb_store,
         )
         self.session = requests.Session()
         self.session.headers.update(
@@ -148,7 +168,7 @@ class RAGStackClient:
 
     def _execute_graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         """
-        Execute a GraphQL query/mutation with retry logic.
+        Execute a GraphQL query/mutation with retry logic and circuit breaker protection.
 
         Args:
             query: GraphQL query or mutation string
@@ -159,78 +179,81 @@ class RAGStackClient:
 
         Raises:
             RAGStackAuthError: If API key is invalid
-            RAGStackNetworkError: If network request fails after retries
+            RAGStackNetworkError: If network request fails or circuit is open
             RAGStackGraphQLError: If GraphQL returns errors
         """
-        # Check circuit breaker before attempting the call
-        if self._circuit_breaker.state == 'open':
-            raise RAGStackNetworkError(
-                f'Circuit breaker open for RAGStack (retry in {self._circuit_breaker.recovery_timeout}s)'
-            )
 
-        payload = {'query': query}
-        if variables:
-            payload['variables'] = variables
+        def _perform_request():
+            payload = {'query': query}
+            if variables:
+                payload['variables'] = variables
 
-        last_error = None
+            last_error = None
 
-        for attempt in range(self.max_retries):
-            try:
-                response = self.session.post(
-                    self.endpoint,
-                    json=payload,
-                    timeout=30,
-                )
+            for attempt in range(self.max_retries):
+                try:
+                    response = self.session.post(
+                        self.endpoint,
+                        json=payload,
+                        timeout=30,
+                    )
 
-                # Handle HTTP errors
-                if response.status_code == 401:
-                    raise RAGStackAuthError('Invalid API key')
-                if response.status_code == 403:
-                    raise RAGStackAuthError('Access denied - check API key permissions')
+                    # Handle HTTP errors
+                    if response.status_code == 401:
+                        raise RAGStackAuthError('Invalid API key')
+                    if response.status_code == 403:
+                        raise RAGStackAuthError('Access denied - check API key permissions')
 
-                response.raise_for_status()
+                    response.raise_for_status()
 
-                # Parse response
-                result = response.json()
+                    # Parse response
+                    result = response.json()
 
-                # Check for GraphQL errors
-                if 'errors' in result:
-                    error_messages = [e.get('message', str(e)) for e in result['errors']]
-                    raise RAGStackGraphQLError(f'GraphQL errors: {", ".join(error_messages)}')
+                    # Check for GraphQL errors
+                    if 'errors' in result:
+                        error_messages = [e.get('message', str(e)) for e in result['errors']]
+                        raise RAGStackGraphQLError(f'GraphQL errors: {", ".join(error_messages)}')
 
-                self._circuit_breaker.on_success()
-                return result.get('data', {})
+                    return result.get('data', {})
 
-            except requests.exceptions.Timeout as e:
-                last_error = RAGStackNetworkError(f'Request timeout: {e}')
-                logger.warning(f'Timeout on attempt {attempt + 1}/{self.max_retries}')
+                except requests.exceptions.Timeout as e:
+                    last_error = RAGStackNetworkError(f'Request timeout: {e}')
+                    logger.warning(f'Timeout on attempt {attempt + 1}/{self.max_retries}')
 
-            except requests.exceptions.ConnectionError as e:
-                last_error = RAGStackNetworkError(f'Connection error: {e}')
-                logger.warning(f'Connection error on attempt {attempt + 1}/{self.max_retries}')
+                except requests.exceptions.ConnectionError as e:
+                    last_error = RAGStackNetworkError(f'Connection error: {e}')
+                    logger.warning(f'Connection error on attempt {attempt + 1}/{self.max_retries}')
 
-            except requests.exceptions.RequestException as e:
-                last_error = RAGStackNetworkError(f'Request failed: {e}')
-                logger.warning(f'Request error on attempt {attempt + 1}/{self.max_retries}')
+                except requests.exceptions.RequestException as e:
+                    last_error = RAGStackNetworkError(f'Request failed: {e}')
+                    logger.warning(f'Request error on attempt {attempt + 1}/{self.max_retries}')
 
-            except (RAGStackAuthError, RAGStackGraphQLError):
-                # Don't retry auth or GraphQL errors
-                raise
+                except (RAGStackAuthError, RAGStackGraphQLError):
+                    # Don't retry auth or GraphQL errors
+                    raise
 
-            except json.JSONDecodeError as e:
-                last_error = RAGStackError(f'Invalid JSON response: {e}')
-                logger.warning(f'JSON decode error on attempt {attempt + 1}/{self.max_retries}')
+                except json.JSONDecodeError as e:
+                    last_error = RAGStackError(f'Invalid JSON response: {e}')
+                    logger.warning(f'JSON decode error on attempt {attempt + 1}/{self.max_retries}')
 
-            # Exponential backoff before retry
-            if attempt < self.max_retries - 1:
-                delay = self.retry_delay * (2**attempt)
-                logger.info(f'Retrying in {delay} seconds...')
-                time.sleep(delay)
+                # Exponential backoff before retry
+                if attempt < self.max_retries - 1:
+                    delay = self.retry_delay * (2**attempt)
+                    logger.info(f'Retrying in {delay} seconds...')
+                    time.sleep(delay)
 
-        # All retries exhausted - record failure in circuit breaker
-        final_error = last_error or RAGStackNetworkError('Request failed after all retries')
-        self._circuit_breaker.on_failure(final_error)
-        raise final_error
+            # All retries exhausted
+            raise last_error or RAGStackNetworkError('Request failed after all retries')
+
+        try:
+            return self._circuit_breaker.call(_perform_request)
+        except Exception as e:
+            # Re-wrap circuit breaker open error if needed for consistent RAGStackNetworkError
+            from shared_services.circuit_breaker import CircuitBreakerOpenError
+
+            if isinstance(e, CircuitBreakerOpenError):
+                raise RAGStackNetworkError(str(e)) from e
+            raise
 
     def create_upload_url(self, filename: str) -> dict[str, Any]:
         """

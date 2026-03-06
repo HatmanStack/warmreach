@@ -371,5 +371,3 @@ export const MessageModal: React.FC<MessageModalProps> = ({
     </Dialog>
   );
 };
-
-export default MessageModal;

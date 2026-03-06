@@ -16,7 +16,7 @@ const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 /**
  * Result of a profile scrape operation
  */
-export interface ScrapeProfileResult {
+interface ScrapeProfileResult {
   success: boolean;
   message: string;
   profileId: string;
@@ -187,5 +187,3 @@ export class LinkedInContactService {
     };
   }
 }
-
-export default LinkedInContactService;

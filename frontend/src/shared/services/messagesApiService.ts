@@ -8,32 +8,26 @@ import type { Message } from '@/shared/types';
 
 const logger = createLogger('MessagesApiService');
 
-export class MessagesApiService {
+class MessagesApiService {
   async getMessageHistory(connectionId: string): Promise<Message[]> {
     const context = 'fetch message history';
-    try {
-      if (!connectionId || typeof connectionId !== 'string') {
-        throw new ApiError({ message: 'Connection ID is required', status: 400 });
-      }
-
-      const response = await httpClient.makeRequest<{
-        messages: Message[];
-        count: number;
-      }>('edges', 'get_messages', { profileId: connectionId });
-
-      const messages = this.formatMessagesResponse(response.messages || []);
-      logger.info(
-        `Successfully fetched ${messages.length} messages for connection ${connectionId}`
-      );
-      return messages;
-    } catch (error) {
-      logError(error, context, { connectionId, operation: 'get_messages' });
-      if (error instanceof ApiError) throw error;
-      throw new ApiError({
-        message: error instanceof Error ? error.message : 'Failed to fetch message history',
-        status: 500,
-      });
+    if (!connectionId || typeof connectionId !== 'string') {
+      throw new ApiError({ message: 'Connection ID is required', status: 400 });
     }
+
+    const result = await httpClient.makeRequest<{
+      messages: Message[];
+      count: number;
+    }>('edges', 'get_messages', { profileId: connectionId });
+
+    if (!result.success) {
+      logError(result.error, context, { connectionId, operation: 'get_messages' });
+      throw new ApiError(result.error);
+    }
+
+    const messages = this.formatMessagesResponse(result.data.messages || []);
+    logger.info(`Successfully fetched ${messages.length} messages for connection ${connectionId}`);
+    return messages;
   }
 
   private formatMessagesResponse(messages: unknown[]): Message[] {

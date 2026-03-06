@@ -296,5 +296,3 @@ export class LinkedInAuditLogger {
     logger[logLevel]('Performance metrics', auditData);
   }
 }
-
-export default LinkedInAuditLogger;

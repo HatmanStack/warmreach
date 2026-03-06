@@ -133,5 +133,3 @@ export class ResponseTimingInterceptor {
 
 // Export singleton instance
 export const responseTimingInterceptor = new ResponseTimingInterceptor();
-
-export default ResponseTimingInterceptor;

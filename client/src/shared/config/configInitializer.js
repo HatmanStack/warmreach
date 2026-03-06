@@ -1,6 +1,6 @@
 import { logger } from '#utils/logger.js';
 import { ConfigManager } from '#shared-config/configManager.js';
-import ConfigValidator from './configValidator.js';
+import { ConfigValidator } from './configValidator.js';
 
 /**
  * Configuration Initializer - Handles startup configuration initialization
@@ -284,5 +284,3 @@ export class ConfigInitializer {
     };
   }
 }
-
-export default ConfigInitializer;

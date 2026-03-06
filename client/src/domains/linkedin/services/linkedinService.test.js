@@ -6,7 +6,7 @@ vi.mock('#utils/logger.js', () => ({
 }));
 
 vi.mock('#utils/randomHelpers.js', () => ({
-  default: {
+  RandomHelpers: {
     randomDelay: vi.fn(() => Promise.resolve()),
     getRandomInt: vi.fn(() => 1000),
   },
@@ -17,8 +17,8 @@ vi.mock('#utils/crypto.js', () => ({
   extractLinkedInCredentials: vi.fn(() => Promise.resolve(null)),
 }));
 
-vi.mock('#shared-config/index.js', () => ({
-  default: {
+vi.mock('#shared-config/index.js', () => {
+  const mockConfig = {
     linkedin: {
       baseUrl: 'https://www.linkedin.com',
       testingMode: false,
@@ -53,8 +53,9 @@ vi.mock('#shared-config/index.js', () => ({
     },
     port: 3001,
     nodeEnv: 'test',
-  },
-}));
+  };
+  return { default: mockConfig, config: mockConfig };
+});
 
 // Mock DynamoDBService (relative path import)
 vi.mock('../../storage/services/dynamoDBService.js', () => ({
@@ -118,7 +119,7 @@ function createMockPuppeteerService() {
   };
 }
 
-import LinkedInService from './linkedinService.js';
+import { LinkedInService } from './linkedinService.js';
 
 describe('LinkedInService', () => {
   let service;

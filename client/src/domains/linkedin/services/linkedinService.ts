@@ -1,6 +1,6 @@
-import config from '#shared-config/index.js';
+import { config } from '#shared-config/index.js';
 import { logger } from '#utils/logger.js';
-import RandomHelpers from '#utils/randomHelpers.js';
+import { RandomHelpers } from '#utils/randomHelpers.js';
 import DynamoDBService from '../../storage/services/dynamoDBService.js';
 import { decryptSealboxB64Tag } from '#utils/crypto.js';
 import type { PuppeteerService } from '../../automation/services/puppeteerService.js';
@@ -15,7 +15,7 @@ export type ConnectionType = 'ally' | 'incoming' | 'outgoing';
 /**
  * Options for getConnections method
  */
-export interface GetConnectionsOptions {
+interface GetConnectionsOptions {
   connectionType?: ConnectionType;
   maxScrolls?: number;
 }
@@ -23,7 +23,7 @@ export interface GetConnectionsOptions {
 /**
  * Result of contact analysis
  */
-export interface ContactAnalysisResult {
+interface ContactAnalysisResult {
   isGoodContact?: boolean;
   skipped?: boolean;
   reason?: string;
@@ -829,5 +829,3 @@ export class LinkedInService {
     }
   }
 }
-
-export default LinkedInService;

@@ -2,19 +2,15 @@ import axios, { type AxiosInstance, type AxiosResponse, type AxiosError } from '
 import { CognitoAuthService } from '@/features/auth';
 import { createLogger } from '@/shared/utils/logger';
 import { ApiError } from '@/shared/utils/apiError';
+import type { ApiResult, ApiResponse } from '@/shared/types';
 
 const logger = createLogger('HttpClient');
 
-export interface ApiResponse<T = unknown> {
-  statusCode: number;
-  body: T;
-  error?: string;
-}
-
 /**
- * Base HTTP Client with built-in retry logic, exponential backoff, and auth token injection
+ * Base HTTP Client with built-in retry logic, exponential backoff, and auth token injection.
+ * Returns ApiResult<T> for consistent and safe error handling.
  */
-export class HttpClient {
+class HttpClient {
   public apiClient: AxiosInstance;
   private readonly maxRetries: number = 3;
   private readonly retryDelay: number = 1000;
@@ -108,11 +104,14 @@ export class HttpClient {
           typeof lambdaResponse.body === 'string'
             ? JSON.parse(lambdaResponse.body as string)
             : lambdaResponse.body;
+        const errorData = errorBody as Record<string, unknown>;
         throw new ApiError({
           message:
-            ((errorBody as Record<string, unknown>)?.error as string) ||
+            (errorData?.error as string) ||
+            (errorData?.message as string) ||
             `Lambda returned status ${lambdaResponse.statusCode}`,
           status: lambdaResponse.statusCode,
+          code: errorData?.code as string,
         });
       }
 
@@ -138,37 +137,46 @@ export class HttpClient {
     requestFn: () => Promise<AxiosResponse<ApiResponse<T>>>,
     logDetails: { endpoint: string; operation?: string; params?: unknown },
     signal?: AbortSignal
-  ): Promise<T> {
+  ): Promise<ApiResult<T>> {
+    let lastApiError: ApiError | null = null;
+
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       if (signal?.aborted) {
-        throw new ApiError({
-          message: 'Request was cancelled',
-          code: 'ABORT_ERR',
-        });
+        return {
+          success: false,
+          error: { message: 'Request was cancelled', code: 'ABORT_ERR' },
+        };
       }
 
       try {
         const response = await requestFn();
-        return this.unwrapLambdaResponse<T>(response.data);
+        const data = this.unwrapLambdaResponse<T>(response.data);
+        return { success: true, data };
       } catch (error) {
         if (error instanceof Error && error.name === 'CanceledError') {
-          throw new ApiError({
-            message: 'Request was cancelled',
-            code: 'ABORT_ERR',
-          });
+          return {
+            success: false,
+            error: { message: 'Request was cancelled', code: 'ABORT_ERR' },
+          };
         }
 
-        lastError =
-          error instanceof Error ? error : new Error('Unknown error occurred during API request');
         const apiError =
           error instanceof ApiError ? error : this.transformError(error as AxiosError);
+        lastApiError = apiError;
 
         if (!apiError.retryable || attempt === this.maxRetries) {
           logger.error(`API request failed after ${attempt} attempts`, {
             ...logDetails,
             error: apiError.toJSON(),
           });
-          throw apiError;
+          return {
+            success: false,
+            error: {
+              message: apiError.message,
+              status: apiError.status,
+              code: apiError.code,
+            },
+          };
         }
 
         const delay = this.calculateBackoffDelay(attempt);
@@ -185,7 +193,14 @@ export class HttpClient {
       }
     }
 
-    throw new Error('Unreachable: Max retries exceeded');
+    return {
+      success: false,
+      error: {
+        message: lastApiError?.message || 'Max retries exceeded',
+        status: lastApiError?.status,
+        code: lastApiError?.code || 'MAX_RETRIES_ERR',
+      },
+    };
   }
 
   public async makeRequest<T>(
@@ -193,7 +208,7 @@ export class HttpClient {
     operation: string,
     params: Record<string, unknown> = {},
     options: { signal?: AbortSignal } = {}
-  ): Promise<T> {
+  ): Promise<ApiResult<T>> {
     return this.executeWithRetry<T>(
       () =>
         this.apiClient.post<ApiResponse<T>>(
@@ -206,7 +221,10 @@ export class HttpClient {
     );
   }
 
-  public async get<T>(endpoint: string, options: { signal?: AbortSignal } = {}): Promise<T> {
+  public async get<T>(
+    endpoint: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<ApiResult<T>> {
     return this.executeWithRetry<T>(
       () => this.apiClient.get<ApiResponse<T>>(endpoint, { signal: options.signal }),
       { endpoint, operation: 'GET' },
@@ -218,7 +236,7 @@ export class HttpClient {
     endpoint: string,
     data: unknown,
     options: { signal?: AbortSignal } = {}
-  ): Promise<T> {
+  ): Promise<ApiResult<T>> {
     return this.executeWithRetry<T>(
       () => this.apiClient.post<ApiResponse<T>>(endpoint, data, { signal: options.signal }),
       { endpoint, operation: 'POST' },

@@ -3,7 +3,7 @@ import { SignalDetector } from './signalDetector.js';
 import { SelectorResolver } from './selectorResolver.js';
 import { logger } from '#utils/logger.js';
 
-export interface AnalysisContext {
+interface AnalysisContext {
   expectedContent?: 'search-results' | 'profile';
   action?: string;
 }
@@ -136,5 +136,3 @@ export function getContentAnalyzer(resolver?: SelectorResolver): ContentSignalAn
 export function _resetContentAnalyzerForTesting(): void {
   contentAnalyzer = null;
 }
-
-export default ContentSignalAnalyzer;

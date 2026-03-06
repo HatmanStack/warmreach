@@ -9,7 +9,7 @@ import type { MessageGenerationRequest } from '@/features/messages';
 /**
  * Context data prepared for message generation
  */
-export interface MessageGenerationContext {
+interface MessageGenerationContext {
   /** Connection data formatted for API */
   connection: Connection;
   /** Conversation topic */
@@ -25,7 +25,7 @@ export interface MessageGenerationContext {
 /**
  * Options for context preparation
  */
-export interface ContextPreparationOptions {
+interface ContextPreparationOptions {
   /** Include message history in context */
   includeMessageHistory?: boolean;
   /** Maximum number of messages to include */
@@ -48,7 +48,7 @@ export interface ContextPreparationOptions {
  * This service extracts and formats relevant connection data, message history,
  * user profile information, and conversation context for AI message generation.
  */
-export class ConnectionDataContextService {
+class ConnectionDataContextService {
   /**
    * Prepare complete context data for message generation
    *

@@ -19,64 +19,6 @@ async function saveSessions(sessions) {
   await fs.writeFile(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
 }
 
-// Function to wait for heal and restore authorization
-export async function waitForHealAndRestoreAuthorization(sessionId) {
-  // Save session to file
-  const sessions = await loadSessions();
-  sessions[sessionId] = {
-    timestamp: Date.now(),
-    status: 'pending',
-  };
-  await saveSessions(sessions);
-  logger.info(`Waiting for heal and restore authorization for session: ${sessionId}`);
-
-  // Poll for authorization
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(async () => {
-      // Clean up on timeout
-      const sessions = await loadSessions();
-      delete sessions[sessionId];
-      await saveSessions(sessions);
-      reject(new Error('Heal and restore authorization timeout'));
-    }, 3600000); // 60 minute timeout
-
-    const checkAuthorization = async () => {
-      const sessions = await loadSessions();
-      const session = sessions[sessionId];
-
-      if (!session) {
-        // Session was deleted (authorized or timed out)
-        clearTimeout(timeout);
-        resolve();
-        return;
-      }
-
-      if (session.status === 'authorized') {
-        // Clean up authorized session
-        delete sessions[sessionId];
-        await saveSessions(sessions);
-        clearTimeout(timeout);
-        resolve();
-        return;
-      }
-
-      if (session.status === 'cancelled') {
-        // On cancel, clean up and reject so caller can abort workflow
-        delete sessions[sessionId];
-        await saveSessions(sessions);
-        clearTimeout(timeout);
-        reject(new Error('Heal and restore cancelled'));
-        return;
-      }
-
-      // Check again in 1 second
-      setTimeout(checkAuthorization, 1000);
-    };
-
-    checkAuthorization();
-  });
-}
-
 // Function to authorize heal and restore (called by API endpoint)
 export async function authorizeHealAndRestore(sessionId, autoApprove = false) {
   const sessions = await loadSessions();

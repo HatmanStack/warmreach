@@ -3,12 +3,6 @@ import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('HealAndRestoreService');
 
-export interface HealAndRestoreSession {
-  sessionId: string;
-  timestamp: number;
-  status: 'pending' | 'authorized' | 'cancelled' | 'completed';
-}
-
 export interface HealAndRestoreNotification {
   sessionId: string;
   message: string;
@@ -112,4 +106,3 @@ class HealAndRestoreService {
 }
 
 export const healAndRestoreService = new HealAndRestoreService();
-export default healAndRestoreService;

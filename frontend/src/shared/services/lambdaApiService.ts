@@ -3,23 +3,10 @@ import { messagesApiService } from './messagesApiService';
 import { profileApiService } from './profileApiService';
 import { analyticsApiService } from './analyticsApiService';
 import { httpClient } from '@/shared/utils/httpClient';
-import type { Connection, Message, ConnectionStatus, UserProfile } from '@/shared/types';
+import type { Connection, Message, ConnectionStatus, UserProfile, ApiResult } from '@/shared/types';
 import type { AxiosInstance } from 'axios';
 
 // Export needed interfaces from the old file
-export interface RAGStackSearchResult {
-  profileId: string;
-  score: number;
-  snippet: string;
-}
-
-export interface RAGStackSearchResponse {
-  results: RAGStackSearchResult[];
-  totalResults: number;
-}
-
-export type { ApiResponse } from '@/shared/utils/httpClient';
-
 class LambdaApiServiceFacade {
   // Expose apiClient for hooks that use it directly
   public get apiClient(): AxiosInstance {
@@ -104,7 +91,7 @@ class LambdaApiServiceFacade {
     operation: string,
     params: Record<string, unknown> = {},
     options: { signal?: AbortSignal } = {}
-  ): Promise<T> {
+  ): Promise<ApiResult<T>> {
     return httpClient.makeRequest<T>(endpoint, operation, params, options);
   }
 }

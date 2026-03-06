@@ -8,28 +8,24 @@ import type { Connection, ConnectionStatus } from '@/shared/types';
 
 const logger = createLogger('ConnectionsApiService');
 
-export class ConnectionsApiService {
+class ConnectionsApiService {
   async getConnectionsByStatus(status?: ConnectionStatus): Promise<Connection[]> {
     const context = `fetch connections${status ? ` with status ${status}` : ''}`;
-    try {
-      const response = await httpClient.makeRequest<{
-        connections: Connection[];
-        count: number;
-      }>('edges', 'get_connections_by_status', { updates: status ? { status } : {} });
+    const result = await httpClient.makeRequest<{
+      connections: Connection[];
+      count: number;
+    }>('edges', 'get_connections_by_status', { updates: status ? { status } : {} });
 
-      const connections = this.formatConnectionsResponse(response.connections || []);
-      logger.info(
-        `Successfully fetched ${connections.length} connections${status ? ` with status ${status}` : ''}`
-      );
-      return connections;
-    } catch (error) {
-      logError(error, context, { status, operation: 'get_connections_by_status' });
-      if (error instanceof ApiError) throw error;
-      throw new ApiError({
-        message: error instanceof Error ? error.message : 'Failed to fetch connections',
-        status: 500,
-      });
+    if (!result.success) {
+      logError(result.error, context, { status, operation: 'get_connections_by_status' });
+      throw new ApiError(result.error);
     }
+
+    const connections = this.formatConnectionsResponse(result.data.connections || []);
+    logger.info(
+      `Successfully fetched ${connections.length} connections${status ? ` with status ${status}` : ''}`
+    );
+    return connections;
   }
 
   async updateConnectionStatus(
@@ -38,38 +34,40 @@ export class ConnectionsApiService {
     options?: { profileId?: string }
   ): Promise<void> {
     const context = `update connection status to ${newStatus}`;
-    try {
-      if (!connectionId || typeof connectionId !== 'string') {
-        throw new ApiError({ message: 'Connection ID is required', status: 400 });
-      }
-      if (!newStatus || typeof newStatus !== 'string') {
-        throw new ApiError({ message: 'New status is required', status: 400 });
-      }
-
-      await httpClient.makeRequest<{ success: boolean; updated: Record<string, unknown> }>(
-        'edges',
-        'update_metadata',
-        {
-          profileId: options?.profileId ?? connectionId,
-          updates: { status: newStatus, updatedAt: new Date().toISOString() },
-        }
-      );
-      logger.info(`Successfully updated connection ${connectionId} status to ${newStatus}`);
-    } catch (error) {
-      logError(error, context, { connectionId, newStatus, operation: 'update_metadata' });
-      if (error instanceof ApiError) throw error;
-      throw new ApiError({
-        message: error instanceof Error ? error.message : 'Failed to update connection status',
-        status: 500,
-      });
+    if (!connectionId || typeof connectionId !== 'string') {
+      throw new ApiError({ message: 'Connection ID is required', status: 400 });
     }
+    if (!newStatus || typeof newStatus !== 'string') {
+      throw new ApiError({ message: 'New status is required', status: 400 });
+    }
+
+    const result = await httpClient.makeRequest<{
+      success: boolean;
+      updated: Record<string, unknown>;
+    }>('edges', 'update_metadata', {
+      profileId: options?.profileId ?? connectionId,
+      updates: { status: newStatus, updatedAt: new Date().toISOString() },
+    });
+
+    if (!result.success) {
+      logError(result.error, context, { connectionId, newStatus, operation: 'update_metadata' });
+      throw new ApiError(result.error);
+    }
+
+    logger.info(`Successfully updated connection ${connectionId} status to ${newStatus}`);
   }
 
   async computeRelationshipScores(): Promise<{ scoresComputed: number }> {
-    return httpClient.makeRequest<{ scoresComputed: number }>(
+    const result = await httpClient.makeRequest<{ scoresComputed: number }>(
       'edges',
       'compute_relationship_scores'
     );
+
+    if (!result.success) {
+      throw new ApiError(result.error);
+    }
+
+    return result.data;
   }
 
   private formatConnectionsResponse(connections: unknown[]): Connection[] {

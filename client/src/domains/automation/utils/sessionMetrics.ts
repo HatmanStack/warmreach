@@ -1,7 +1,7 @@
 import { SignalDetector } from './signalDetector.js';
 import { logger } from '#utils/logger.js';
 
-export interface SessionMetricsOptions {
+interface SessionMetricsOptions {
   errorRateWindowMs?: number;
   checkpointWindowMs?: number;
   loginRedirectWindowMs?: number;
@@ -156,5 +156,3 @@ export class SessionMetrics {
     this.loginRedirects = this.loginRedirects.filter((ts) => ts >= expiry);
   }
 }
-
-export default SessionMetrics;

@@ -87,29 +87,6 @@ export interface GetScrapeJobResponse {
 }
 
 // ============================================================================
-// Search Types (for future use)
-// ============================================================================
-
-/**
- * A single search result from the knowledge base
- */
-export interface SearchResult {
-  /** Matching content text */
-  content: string;
-  /** Source URL or document ID */
-  source: string;
-  /** Relevance score (0-1) */
-  score: number;
-}
-
-/**
- * Response from searchKnowledgeBase query
- */
-export interface SearchKnowledgeBaseResponse {
-  searchKnowledgeBase: {
-    results: SearchResult[];
-  };
-}
 
 // ============================================================================
 // Error Types
@@ -118,7 +95,7 @@ export interface SearchKnowledgeBaseResponse {
 /**
  * Base error class for RAGStack operations
  */
-export class RagstackError extends Error {
+class RagstackError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'RagstackError';

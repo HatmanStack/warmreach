@@ -4,32 +4,40 @@ Provides correlation ID tracking and structured JSON logging across
 Lambda invocations for distributed tracing.
 """
 
+import contextvars
 import json
 import logging
 import uuid
 from typing import Any
 
+# Context variables for execution-scoped state
+_trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar('trace_id', default=None)
+_lambda_name_var: contextvars.ContextVar[str | None] = contextvars.ContextVar('lambda_name', default=None)
+
 
 class CorrelationContext:
-    """Thread-local correlation context for request tracing."""
-
-    _trace_id: str | None = None
-    _lambda_name: str | None = None
+    """Execution-scoped correlation context for request tracing using contextvars."""
 
     @classmethod
     def get_trace_id(cls) -> str:
         """Get current trace ID, generating one if not set."""
-        if cls._trace_id is None:
-            cls._trace_id = str(uuid.uuid4())
-        return cls._trace_id
+        trace_id = _trace_id_var.get()
+        if trace_id is None:
+            trace_id = str(uuid.uuid4())
+            _trace_id_var.set(trace_id)
+        return trace_id
 
     @classmethod
     def set_trace_id(cls, trace_id: str) -> None:
-        cls._trace_id = trace_id
+        _trace_id_var.set(trace_id)
 
     @classmethod
     def set_lambda_name(cls, name: str) -> None:
-        cls._lambda_name = name
+        _lambda_name_var.set(name)
+
+    @classmethod
+    def get_lambda_name(cls) -> str:
+        return _lambda_name_var.get() or 'unknown'
 
 
 class StructuredLogFilter(logging.Filter):
@@ -37,7 +45,7 @@ class StructuredLogFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.trace_id = CorrelationContext.get_trace_id()  # type: ignore[attr-defined]
-        record.lambda_name = CorrelationContext._lambda_name or 'unknown'  # type: ignore[attr-defined]
+        record.lambda_name = CorrelationContext.get_lambda_name()  # type: ignore[attr-defined]
         return True
 
 

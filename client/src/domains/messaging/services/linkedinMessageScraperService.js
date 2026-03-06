@@ -497,5 +497,3 @@ export class LinkedInMessageScraperService {
     return session.getPage();
   }
 }
-
-export default LinkedInMessageScraperService;

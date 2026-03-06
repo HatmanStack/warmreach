@@ -32,7 +32,7 @@ import {
   getHeadlessEvasionScript,
 } from './src/domains/automation/utils/stealthScripts.ts';
 import { loadOrCreateProfile, GPU_PROFILES } from './src/domains/automation/utils/fingerprintProfile.ts';
-import RandomHelpers from './src/shared/utils/randomHelpers.js';
+import { RandomHelpers } from './src/shared/utils/randomHelpers.js';
 
 const connectMode = process.argv.includes('--connect');
 

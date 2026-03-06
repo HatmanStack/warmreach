@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 
-export type WorkflowState =
+type WorkflowState =
   | 'idle'
   | 'generating'
   | 'awaiting_approval'

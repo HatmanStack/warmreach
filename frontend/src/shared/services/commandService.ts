@@ -16,14 +16,6 @@ export interface CommandProgress {
   message: string;
 }
 
-export interface CommandState<T = unknown> {
-  status: CommandStatus;
-  commandId: string | null;
-  progress: CommandProgress | null;
-  result: T | null;
-  error: string | null;
-}
-
 type CommandCallback = (message: WebSocketMessage) => void;
 
 /**

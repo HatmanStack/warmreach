@@ -1,5 +1,5 @@
 import { logger } from '#utils/logger.js';
-import LinkedInErrorHandler from '../utils/linkedinErrorHandler.js';
+import { LinkedInErrorHandler } from '../utils/linkedinErrorHandler.js';
 import ConfigManager from '#shared-config/configManager.js';
 import config from '#shared-config/index.js';
 import DynamoDBService from '../../storage/services/dynamoDBService.js';

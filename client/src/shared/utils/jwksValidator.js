@@ -146,15 +146,3 @@ export async function verifyJwtSignature(token) {
     };
   }
 }
-
-/**
- * Clear the cached JWKS client.
- * Useful for testing or when keys are rotated.
- */
-export function clearJWKSCache() {
-  cachedJWKS = null;
-  cachedIssuer = null;
-  logger.info('JWKS cache cleared');
-}
-
-export default verifyJwtSignature;

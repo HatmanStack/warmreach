@@ -4,7 +4,7 @@ import { logger } from '#utils/logger.js';
  * Profile Initialization Monitoring Utility
  * Tracks metrics, performance, and error patterns for profile initialization
  */
-export class ProfileInitMonitor {
+class ProfileInitMonitor {
   constructor() {
     this.metrics = {
       requests: {
@@ -354,7 +354,7 @@ let summaryIntervalId = null;
  * Start periodic monitoring summary logging
  * Safe to call multiple times - will not create duplicate intervals
  */
-export function startMonitoring() {
+function startMonitoring() {
   if (!summaryIntervalId) {
     summaryIntervalId = setInterval(
       () => {
@@ -380,5 +380,3 @@ export function stopMonitoring() {
 
 // Auto-start monitoring on module load (maintains existing behavior)
 startMonitoring();
-
-export default ProfileInitMonitor;

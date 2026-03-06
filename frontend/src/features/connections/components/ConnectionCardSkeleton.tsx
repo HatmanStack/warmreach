@@ -108,5 +108,3 @@ export const ConnectionListSkeleton: React.FC<ConnectionListSkeletonProps> = ({
     </div>
   );
 };
-
-export default ConnectionCardSkeleton;

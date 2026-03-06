@@ -7,15 +7,6 @@ import { searchSelectors } from './searchSelectors.js';
 import { postSelectors } from './postSelectors.js';
 import { profileSelectors } from './profileSelectors.js';
 
-export {
-  messagingSelectors,
-  connectionSelectors,
-  navigationSelectors,
-  searchSelectors,
-  postSelectors,
-  profileSelectors,
-};
-
 export const linkedinSelectors: SelectorRegistry = {
   ...messagingSelectors,
   ...connectionSelectors,

@@ -34,5 +34,3 @@ export function ConversionLikelihoodBadge({ likelihood, className = '' }: Props)
     </Badge>
   );
 }
-
-export default ConversionLikelihoodBadge;

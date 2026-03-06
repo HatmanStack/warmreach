@@ -42,7 +42,7 @@ export class SearchError extends Error {
 /**
  * Individual search result from RAGStack
  */
-export interface SearchResult {
+interface SearchResult {
   /** Profile ID extracted from source field */
   profileId: string;
   /** Relevance score (0-1) */
@@ -54,7 +54,7 @@ export interface SearchResult {
 /**
  * Search response structure
  */
-export interface SearchResponse {
+interface SearchResponse {
   /** Array of matching profiles */
   results: SearchResult[];
   /** Total number of results found */

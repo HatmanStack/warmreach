@@ -524,5 +524,3 @@ export class LinkedInErrorHandler {
     return recoveryPlan;
   }
 }
-
-export default LinkedInErrorHandler;

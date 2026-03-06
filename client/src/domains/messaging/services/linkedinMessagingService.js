@@ -156,5 +156,3 @@ export class LinkedInMessagingService {
     }
   }
 }
-
-export default LinkedInMessagingService;

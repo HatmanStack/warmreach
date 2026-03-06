@@ -21,7 +21,7 @@ import {
 /**
  * Options for waitForCompletion polling
  */
-export interface WaitOptions {
+interface WaitOptions {
   /** Polling interval in milliseconds (default: 2000) */
   pollInterval?: number;
   /** Timeout in milliseconds (default: 300000 = 5 min) */
@@ -234,5 +234,3 @@ export class RagstackScrapeService {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
-
-export default RagstackScrapeService;

@@ -8,7 +8,7 @@ const logger = createLogger('ErrorHandling');
  * Provides consistent error handling patterns and user-friendly error messages
  */
 
-export interface ErrorWithRecovery {
+interface ErrorWithRecovery {
   message: string;
   userMessage: string;
   recoveryActions: RecoveryAction[];
@@ -16,7 +16,7 @@ export interface ErrorWithRecovery {
   retryable: boolean;
 }
 
-export interface RecoveryAction {
+interface RecoveryAction {
   label: string;
   action: () => void | Promise<void>;
   primary?: boolean;

@@ -202,5 +202,3 @@ export class LinkedInConnectionService {
     }
   }
 }
-
-export default LinkedInConnectionService;

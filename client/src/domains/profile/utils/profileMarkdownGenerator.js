@@ -236,5 +236,3 @@ export function generateProfileMarkdown(profile) {
 
   return sections.join('\n\n');
 }
-
-export default { generateProfileMarkdown };

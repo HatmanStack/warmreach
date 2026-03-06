@@ -4,7 +4,7 @@ import {
   cleanupLinkedInServices,
 } from '../../../shared/utils/serviceFactory.js';
 import { validateLinkedInCredentials } from '../../../shared/utils/credentialValidator.js';
-import ProfileInitService from '../services/profileInitService.js';
+import { ProfileInitService } from '../services/profileInitService.js';
 import { HealingManager } from '../../automation/utils/healingManager.js';
 import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { profileInitMonitor } from '../utils/profileInitMonitor.js';
@@ -550,5 +550,3 @@ export class ProfileInitController {
     return resultData;
   }
 }
-
-export default ProfileInitController;

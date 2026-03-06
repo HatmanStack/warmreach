@@ -53,7 +53,6 @@ export type AsyncStatus<T> =
   | { status: 'loading' }
   | { status: 'success'; data: T }
   | { status: 'error'; error: Error };
-
 // =============================================================================
 // CORE DATA INTERFACES
 // =============================================================================
@@ -327,8 +326,6 @@ export type ErrorSeverity = 'low' | 'medium' | 'high' | 'critical';
  * @type ToastVariant
  * @description Valid variants for toast notifications matching UI component expectations.
  */
-export type ToastVariant = 'default' | 'destructive' | 'success' | 'warning';
-
 // =============================================================================
 // VALIDATION AND ERROR HANDLING TYPES
 // =============================================================================
@@ -365,52 +362,6 @@ export interface TransformOptions {
 
   /** Whether to include warnings in results */
   includeWarnings?: boolean;
-}
-
-/**
- * Error recovery action interface
- *
- * @interface ErrorRecoveryAction
- * @description Defines an action that can be taken to recover from an error
- */
-export interface ErrorRecoveryAction {
-  /** Display label for the action */
-  label: string;
-
-  /** Function to execute when action is selected */
-  action: () => void;
-
-  /** Whether this is the primary/recommended action */
-  primary?: boolean;
-
-  /** Optional description of what the action does */
-  description?: string;
-}
-
-/**
- * User-friendly error information
- *
- * @interface UserErrorInfo
- * @description Contains user-friendly error information with recovery options
- */
-export interface UserErrorInfo {
-  /** User-friendly error message */
-  userMessage: string;
-
-  /** Technical error message for debugging */
-  technicalMessage: string;
-
-  /** Error severity level */
-  severity: ErrorSeverity;
-
-  /** Whether the operation can be retried */
-  retryable: boolean;
-
-  /** Available recovery actions */
-  recoveryActions: ErrorRecoveryAction[];
-
-  /** Timestamp when error occurred */
-  timestamp: string;
 }
 
 /**
@@ -525,17 +476,6 @@ export interface ApiResponse<T = unknown> {
 
   /** Optional error message for failed requests */
   error?: string;
-}
-
-/**
- * Search response from LinkedIn search operations
- *
- * @interface SearchResponse
- * @description Response format for LinkedIn search results.
- */
-export interface SearchResponse {
-  /** Array of search result strings */
-  response: string[];
 }
 
 // =============================================================================

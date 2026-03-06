@@ -23,7 +23,7 @@ const MAX_RESULTS = 100;
 /**
  * Hook result interface
  */
-export interface UseProfileSearchResult {
+interface UseProfileSearchResult {
   /** Current search query */
   searchQuery: string;
   /** Function to update search query */
@@ -202,5 +202,3 @@ export function useProfileSearch(allConnections: Connection[]): UseProfileSearch
     isSearchActive,
   };
 }
-
-export default useProfileSearch;

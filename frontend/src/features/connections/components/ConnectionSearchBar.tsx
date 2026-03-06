@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Search, X, Loader2 } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
-export interface ConnectionSearchBarProps {
+interface ConnectionSearchBarProps {
   /** Current search value */
   value: string;
   /** Callback when value changes */
@@ -116,5 +116,3 @@ export const ConnectionSearchBar: React.FC<ConnectionSearchBarProps> = ({
     </div>
   );
 };
-
-export default ConnectionSearchBar;

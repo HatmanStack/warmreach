@@ -5,8 +5,8 @@
  * for web scraping and knowledge base operations.
  */
 
-export type ScrapeMode = 'AUTO' | 'FAST' | 'FULL';
-export type ScrapeScope = 'SUBPAGES' | 'HOSTNAME' | 'DOMAIN';
+type ScrapeMode = 'AUTO' | 'FAST' | 'FULL';
+type ScrapeScope = 'SUBPAGES' | 'HOSTNAME' | 'DOMAIN';
 
 export interface RagstackScrapeConfig {
   maxPages: number;
@@ -73,5 +73,3 @@ export const ragstackConfig: RagstackConfig = {
     return Boolean(this.endpoint && this.apiKey);
   },
 };
-
-export default ragstackConfig;

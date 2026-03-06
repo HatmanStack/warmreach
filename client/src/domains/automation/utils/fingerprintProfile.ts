@@ -161,7 +161,7 @@ export function loadOrCreateProfile(profileDir: string): FingerprintProfile {
   return newProfile;
 }
 
-export function saveProfile(profileDir: string, profile: FingerprintProfile): void {
+function saveProfile(profileDir: string, profile: FingerprintProfile): void {
   try {
     if (!fs.existsSync(profileDir)) {
       fs.mkdirSync(profileDir, { recursive: true });

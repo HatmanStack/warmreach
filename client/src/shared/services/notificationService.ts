@@ -3,12 +3,12 @@ import { logger } from '#utils/logger.js';
 /**
  * Urgency levels for notifications
  */
-export type NotificationUrgency = 'low' | 'normal' | 'critical';
+type NotificationUrgency = 'low' | 'normal' | 'critical';
 
 /**
  * Options for a notification
  */
-export interface NotificationOptions {
+interface NotificationOptions {
   title: string;
   body: string;
   urgency?: NotificationUrgency;
@@ -119,5 +119,3 @@ export class NotificationService {
 
 // Export singleton instance
 export const notificationService = new NotificationService();
-
-export default NotificationService;

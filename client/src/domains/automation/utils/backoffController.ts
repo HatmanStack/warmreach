@@ -3,7 +3,7 @@ import { notificationService } from '#shared/services/notificationService.js';
 import InteractionQueue from './interactionQueue.js';
 import { logger } from '#utils/logger.js';
 
-export interface BackoffStatus {
+interface BackoffStatus {
   isMonitoring: boolean;
   queuePaused: boolean;
   pauseStatus: {
@@ -135,5 +135,3 @@ export class BackoffController {
     };
   }
 }
-
-export default BackoffController;

@@ -4,33 +4,73 @@ import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('AnalyticsApiService');
 
-export class AnalyticsApiService {
+class AnalyticsApiService {
   async getMessagingInsights(forceRecompute = false): Promise<{
     stats: Record<string, unknown>;
     insights: string[] | null;
     computedAt: string;
   }> {
-    return httpClient.makeRequest('edges', 'get_messaging_insights', { forceRecompute });
+    const result = await httpClient.makeRequest<{
+      stats: Record<string, unknown>;
+      insights: string[] | null;
+      computedAt: string;
+    }>('edges', 'get_messaging_insights', { forceRecompute });
+
+    if (!result.success) {
+      throw new ApiError(result.error);
+    }
+
+    return result.data;
   }
 
   async analyzeMessagePatterns(
     stats: Record<string, unknown>,
     sampleMessages: Record<string, unknown>[]
   ): Promise<{ insights: string[]; analyzedAt: string }> {
-    return httpClient.makeRequest('llm', 'analyze_message_patterns', {
-      stats,
-      sampleMessages,
-    });
+    const result = await httpClient.makeRequest<{ insights: string[]; analyzedAt: string }>(
+      'llm',
+      'analyze_message_patterns',
+      {
+        stats,
+        sampleMessages,
+      }
+    );
+
+    if (!result.success) {
+      throw new ApiError(result.error);
+    }
+
+    return result.data;
   }
 
   async getAnalyticsDashboard(days = 30): Promise<Record<string, unknown>> {
-    return httpClient.makeRequest('edges', 'get_analytics_dashboard', { days });
+    const result = await httpClient.makeRequest<Record<string, unknown>>(
+      'edges',
+      'get_analytics_dashboard',
+      { days }
+    );
+
+    if (!result.success) {
+      throw new ApiError(result.error);
+    }
+
+    return result.data;
   }
 
   async storeMessageInsights(
     insights: string[]
   ): Promise<{ success: boolean; insightsUpdatedAt: string }> {
-    return httpClient.makeRequest('edges', 'store_message_insights', { insights });
+    const result = await httpClient.makeRequest<{ success: boolean; insightsUpdatedAt: string }>(
+      'edges',
+      'store_message_insights',
+      { insights }
+    );
+
+    if (!result.success) {
+      throw new ApiError(result.error);
+    }
+
+    return result.data;
   }
 
   async sendLLMRequest(
@@ -43,27 +83,20 @@ export class AnalyticsApiService {
     code?: string;
     operation?: string;
   }> {
-    try {
-      const response = await httpClient.makeRequest<unknown>('llm', operation, params);
-      logger.debug('LLM response received', { hasResponse: response !== undefined });
-      return { success: true, data: response };
-    } catch (error) {
-      logger.error('LLM request failed', { error });
+    const result = await httpClient.makeRequest<unknown>('llm', operation, params);
 
-      if (error instanceof ApiError) {
-        if (error.status === 429 || error.code === 'QUOTA_EXCEEDED') {
-          return {
-            success: false,
-            error: error.message || 'limit reached',
-            code: 'QUOTA_EXCEEDED',
-            operation,
-          };
-        }
-        return { success: false, error: error.message, code: error.code };
-      }
-
-      return { success: false, error: 'Failed to execute LLM operation' };
+    if (!result.success) {
+      logger.error('LLM request failed', { error: result.error });
+      return {
+        success: false,
+        error: result.error.message,
+        code: result.error.code,
+        operation,
+      };
     }
+
+    logger.debug('LLM response received', { hasResponse: result.data !== undefined });
+    return { success: true, data: result.data };
   }
 }
 

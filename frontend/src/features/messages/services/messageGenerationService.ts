@@ -39,7 +39,7 @@ export interface MessageGenerationRequest {
 /**
  * Response from message generation API
  */
-export interface MessageGenerationResponse {
+interface MessageGenerationResponse {
   /** AI-generated message content */
   generatedMessage: string;
 
@@ -380,8 +380,5 @@ class MessageGenerationService {
 
 // Create singleton instance
 export const messageGenerationService = new MessageGenerationService();
-
-// Export the service class for testing
-export { MessageGenerationService };
 
 // Interfaces are already exported above with their declarations

@@ -152,5 +152,3 @@ export async function closeRedisConnection() {
     logger.info('Redis connection closed');
   }
 }
-
-export default createRedisRateLimiter;

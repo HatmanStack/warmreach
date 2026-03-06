@@ -1,8 +1,8 @@
 import { logger } from '#utils/logger.js';
 import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { profileInitMonitor } from '../utils/profileInitMonitor.js';
-import RandomHelpers from '#utils/randomHelpers.js';
-import LinkedInErrorHandler from '../../linkedin/utils/linkedinErrorHandler.js';
+import { RandomHelpers } from '#utils/randomHelpers.js';
+import { LinkedInErrorHandler } from '../../linkedin/utils/linkedinErrorHandler.js';
 import { generateProfileMarkdown } from '../utils/profileMarkdownGenerator.js';
 import axios from 'axios';
 import fs from 'fs/promises';
@@ -15,7 +15,7 @@ import { BrowserSessionManager } from '../../session/services/browserSessionMana
 /**
  * Profile initialization state
  */
-export interface ProfileInitState {
+interface ProfileInitState {
   requestId?: string;
   recursionCount?: number;
   healPhase?: string;
@@ -1370,5 +1370,3 @@ export class ProfileInitService {
     return response.data;
   }
 }
-
-export default ProfileInitService;

@@ -90,7 +90,8 @@ class TestCircuitBreakerHalfOpen:
         def failing(): raise RuntimeError("fail")
         with pytest.raises(RuntimeError):
             cb.call(failing)
-        assert cb._state == 'open'
+        # Check through dict info since we want raw value if possible or just use state
+        assert cb.to_dict()['state'] == 'open'
         time.sleep(0.15)
         # Accessing state property triggers transition
         assert cb.state == 'half_open'

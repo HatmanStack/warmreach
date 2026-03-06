@@ -349,4 +349,3 @@ class BrowserSessionManager {
 }
 
 export { BrowserSessionManager };
-export default BrowserSessionManager;
