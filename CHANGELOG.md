@@ -5,6 +5,17 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-03-05
+
+### Refactored
+
+- **Backend:** Implemented distributed circuit breaker using DynamoDB for shared state management across Lambda instances.
+- **Backend:** Migrated correlation ID tracking to `contextvars` for thread-safe, execution-scoped logging.
+- **Backend:** Optimized cold starts with lazy initialization for DynamoDB and Stripe SDKs.
+- **Frontend:** Re-introduced Branded Types for nominal ID safety across domain entities.
+- **Frontend:** Standardized `HttpClient` and all service layers to use the `ApiResult` discriminated union for mandatory error handling.
+- **General:** Extensive cleanup of dead code, internalized module-private types, and consolidated client-side configuration.
+
 ## [1.2.1] - 2026-03-04
 
 ### Security
