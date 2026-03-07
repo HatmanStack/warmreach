@@ -5,6 +5,50 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2026-03-06
+
+### Added
+
+- **Test Infrastructure:** Shared test factory modules for frontend (`test-utils/factories.ts`, `test-utils/mocks.ts`) and client (`test-utils/factories.ts`, `test-utils/mocks.ts`) with typed builder functions for all domain entities
+- **Test Infrastructure:** MSW (Mock Service Worker) integration for frontend integration tests — intercepts HTTP at the network level instead of mocking axios
+- **Test Infrastructure:** `createAuthenticatedWrapper()` composing QueryClient + AuthContext for hook integration testing
+- **Frontend Tests:** 14 new unit test files for previously untested services, hooks, and contexts (httpClient, WebSocketContext, TierContext, API services, etc.)
+- **Frontend Tests:** 5 integration tests exercising hook-to-service-to-HTTP flows via MSW (useProfileSearch, useConnections, useMessageHistory, useLinkedInSearch, useProgressTracker)
+- **Client Tests:** 9 new unit test files for untested domain services (linkedinConnectionService, browserSessionManager, healAndRestoreService, etc.)
+- **Client Tests:** 9 new unit test files for untested domain utilities (contactProcessor, searchRequestValidator, selectorRegistry, etc.)
+- **Backend Tests:** 3 new integration tests (command dispatch, quota exhaustion lifecycle, WebSocket connect/disconnect lifecycle)
+- **Backend Tests:** Boundary condition tests for quota service and RAGStack client (at-limit, zero-value, negative count, empty queries)
+- **E2E Tests:** 4 new Playwright specs (auth-errors, search-workflow, messaging-workflow, workflow-recovery)
+- **Repo:** `.github/CODEOWNERS` for critical path review enforcement
+- **Repo:** `.github/pull_request_template.md` standardizing PR descriptions
+- **Docs:** `CONTRIBUTING.md` with workflow, testing, commit, and code style guidance
+- **Docs:** Mermaid architecture diagram in `ARCHITECTURE.md`
+- **Docs:** cURL request/response examples for all endpoints in `API_REFERENCE.md`
+
+### Changed
+
+- **Frontend:** Coverage thresholds raised (lines 37% to 78%, branches 71% to 67%, functions 54% to 73%, statements 37% to 76%)
+- **Client:** Coverage thresholds raised (lines 18% to 50%, branches 17% to 45%, functions 24% to 50%, statements 18% to 50%)
+- **Commitlint:** Added `body-empty` warning rule and `security` to `type-enum`
+- **README:** Added project context paragraph for first-time visitors
+
+### Refactored
+
+- **Frontend:** Brittle tests in ragstackSearchService and commandService converted from request-shape assertions to behavior-focused assertions
+- **Client:** Brittle tests in jwtValidator and linkedinContactService converted from exact error-string matching to category/partial matching
+- **Frontend/Client:** Inline mock objects replaced with factory builder calls across modified test files
+
+### Fixed
+
+- **Frontend:** `isProgressState` type guard now checks `phase` field instead of nonexistent `status`
+- **Frontend:** Stale closure in `useLinkedInSearch` — removed `error` from dependency array, `fetchConnections()` called unconditionally
+- **Frontend:** Parameter mutation in `errorHandling.ts` — `signInAction` extracted to typed const
+- **Client:** Deprecated `substr` replaced with `slice` in `profileInitController`
+
+### Dependencies
+
+- Bump frontend production dependencies: React 18 to 19, react-router-dom 6 to 7, date-fns 3 to 4, recharts 2 to 3, tailwind-merge 2 to 3, zod 3 to 4, lucide-react, @tanstack/react-virtual
+
 ## [1.2.2] - 2026-03-05
 
 ### Refactored
