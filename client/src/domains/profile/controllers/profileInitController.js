@@ -150,6 +150,10 @@ export class ProfileInitController {
       // to maintain consistency with the service's state management
       const profileData = await this._processUserProfile(services, state);
 
+      if (profileData === undefined) {
+        return undefined;
+      }
+
       return this._buildProfileInitResult(profileData);
     } catch (error) {
       logger.error('Profile initialization failed:', error);
@@ -364,7 +368,7 @@ export class ProfileInitController {
    * @returns {string} Unique request identifier
    */
   _generateRequestId() {
-    return `profile-init-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `profile-init-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   }
 
   /**

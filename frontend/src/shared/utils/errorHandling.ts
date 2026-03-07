@@ -1,4 +1,4 @@
-import { ApiError } from '@/shared/services';
+import { ApiError } from '../utils/apiError';
 import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('ErrorHandling');
@@ -34,42 +34,45 @@ export function transformErrorForUser(
   let userMessage = 'Something went wrong. Please try again.';
   let severity: 'low' | 'medium' | 'high' = 'medium';
   let retryable = false;
+  let actions = recoveryActions;
 
-  if (error instanceof ApiError) {
-    message = error.message;
-    retryable = error.retryable || false;
+  if (
+    error instanceof ApiError ||
+    (error && typeof error === 'object' && (error as Record<string, unknown>).name === 'ApiError')
+  ) {
+    const apiError = error as ApiError;
+    message = apiError.message;
+    retryable = apiError.retryable || false;
 
     // Map API errors to user-friendly messages
-    if (error.status === 401 || error.status === 403) {
+    if (apiError.status === 401 || apiError.status === 403) {
       userMessage = 'You need to sign in again to continue.';
       severity = 'high';
-      recoveryActions = [
-        {
-          label: 'Sign In',
-          action: () => {
-            window.location.href = '/auth';
-          },
-          primary: true,
+      const signInAction: RecoveryAction = {
+        label: 'Sign In',
+        action: () => {
+          window.location.href = '/auth';
         },
-        ...recoveryActions,
-      ];
-    } else if (error.status === 404) {
+        primary: true,
+      };
+      actions = [signInAction, ...recoveryActions];
+    } else if (apiError.status === 404) {
       userMessage = 'The requested information could not be found.';
       severity = 'medium';
-    } else if (error.status === 429) {
+    } else if (apiError.status === 429) {
       userMessage = 'Too many requests. Please wait a moment and try again.';
       severity = 'low';
       retryable = true;
-    } else if (error.status && error.status >= 500) {
+    } else if (apiError.status && apiError.status >= 500) {
       userMessage = 'Our servers are experiencing issues. Please try again in a few moments.';
       severity = 'high';
       retryable = true;
-    } else if (error.code === 'NETWORK_ERROR' || error.message.includes('Network error')) {
+    } else if (apiError.code === 'NETWORK_ERROR' || apiError.message.includes('Network error')) {
       userMessage = 'Unable to connect to our servers. Please check your internet connection.';
       severity = 'high';
       retryable = true;
     } else {
-      userMessage = `Failed to ${context}. ${error.message}`;
+      userMessage = `Failed to ${context}. ${apiError.message}`;
       severity = 'medium';
     }
   } else if (error instanceof Error) {
@@ -94,7 +97,7 @@ export function transformErrorForUser(
   return {
     message,
     userMessage,
-    recoveryActions,
+    recoveryActions: actions,
     severity,
     retryable,
   };

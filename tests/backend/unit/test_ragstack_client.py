@@ -110,6 +110,54 @@ class TestSearch:
         with pytest.raises(ValueError, match="query is required"):
             ragstack_client.search("")
 
+    def test_search_with_long_query(self, ragstack_client):
+        """Test search with very long query"""
+        long_query = "a" * 2000
+        with requests_mock.Mocker() as m:
+            m.post(ragstack_client.endpoint, json={"data": {"searchKnowledgeBase": {"results": []}}})
+            ragstack_client.search(long_query)
+            assert m.called
+
+    def test_search_with_zero_max_results(self, ragstack_client):
+        """Test search with max_results=0"""
+        with requests_mock.Mocker() as m:
+            m.post(ragstack_client.endpoint, json={"data": {"searchKnowledgeBase": {"results": []}}})
+            ragstack_client.search("test", max_results=0)
+            request_body = json.loads(m.last_request.text)
+            assert request_body["variables"]["maxResults"] == 0
+
+    def test_search_with_one_max_results(self, ragstack_client):
+        """Test search with max_results=1"""
+        with requests_mock.Mocker() as m:
+            m.post(ragstack_client.endpoint, json={"data": {"searchKnowledgeBase": {"results": []}}})
+            ragstack_client.search("test", max_results=1)
+            request_body = json.loads(m.last_request.text)
+            assert request_body["variables"]["maxResults"] == 1
+
+    def test_search_with_missing_fields_in_results(self, ragstack_client):
+        """Test search handling missing fields in results"""
+        with requests_mock.Mocker() as m:
+            m.post(
+                ragstack_client.endpoint,
+                json={
+                    "data": {
+                        "searchKnowledgeBase": {
+                            "results": [
+                                {"content": "Missing source/score"},
+                                {"source": "Missing content/score"},
+                            ]
+                        }
+                    }
+                },
+            )
+            results = ragstack_client.search("test")
+            assert len(results) == 2
+            assert results[0]["content"] == "Missing source/score"
+            assert results[0]["source"] == ""  # Default value
+            assert results[0]["score"] == 0.0  # Default value
+            assert results[1]["source"] == "Missing content/score"
+            assert results[1]["content"] == ""  # Default value
+
 
 class TestCreateUploadUrl:
     """Tests for upload URL creation"""

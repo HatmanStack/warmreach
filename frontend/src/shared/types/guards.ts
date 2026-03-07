@@ -270,6 +270,32 @@ export function isApiResponse<T>(
   return true;
 }
 
+/**
+ * Checks if a value is a valid ProgressState object.
+ */
+export function isProgressState(value: unknown): value is import('./index').ProgressState {
+  if (typeof value !== 'object' || value === null) return false;
+
+  const v = value as Record<string, unknown>;
+  return typeof v.total === 'number' && typeof v.current === 'number' && isNonEmptyString(v.phase);
+}
+
+/**
+ * Checks if a value is a valid TierInfo object.
+ */
+export function isTierInfo(value: unknown): value is import('./index').TierInfo {
+  if (typeof value !== 'object' || value === null) return false;
+
+  const v = value as Record<string, unknown>;
+  return (
+    isNonEmptyString(v.tier) &&
+    typeof v.features === 'object' &&
+    v.features !== null &&
+    typeof v.quotas === 'object' &&
+    v.quotas !== null
+  );
+}
+
 // Removed unused response type guards: isGetConnectionsResponse, isGetMessagesResponse, isUpdateMetadataResponse
 
 // =============================================================================

@@ -77,8 +77,10 @@ export function useCommand<T = unknown>(type: string): UseCommandReturn<T> {
           }
         );
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to dispatch command');
+        const message = err instanceof Error ? err.message : 'Failed to dispatch command';
+        setError(message);
         setStatus('failed');
+        throw new Error(message);
       }
     },
     [type]

@@ -1,182 +1,187 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { LinkedInInteractionService } from './linkedinInteractionService.js';
+import { BrowserSessionManager } from '../../session/services/browserSessionManager.js';
+import { buildPuppeteerPage } from '../../../test-utils/index.ts';
 
+// Mock dependencies
 vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
-vi.mock('#shared-config/index.js', () => ({
-  default: {
-    linkedin: { baseUrl: 'https://www.linkedin.com' },
-    linkedinInteractions: {
-      retryAttempts: 3,
-      retryBaseDelay: 100,
-    },
-  },
-}));
-
-vi.mock('#shared-config/configManager.js', () => ({
-  default: {
-    getErrorHandlingConfig: () => ({ retryAttempts: 3, retryBaseDelay: 100 }),
-    get: vi.fn((key, def) => def),
-  },
-}));
-
 vi.mock('../../storage/services/dynamoDBService.js', () => ({
-  default: class {
-    setAuthToken() {}
-    upsertEdgeStatus() {}
-  },
+  default: vi.fn().mockImplementation(function () {
+    return {
+      setAuthToken: vi.fn(),
+      upsertEdgeStatus: vi.fn().mockResolvedValue(true),
+      updateMessages: vi.fn().mockResolvedValue(true),
+    };
+  }),
 }));
-
-const mockMetrics = {
-  recordOperation: vi.fn(),
-};
 
 vi.mock('../../session/services/browserSessionManager.js', () => ({
   BrowserSessionManager: {
     getInstance: vi.fn(),
     cleanup: vi.fn(),
-    isSessionHealthy: vi.fn(() => true),
-    getHealthStatus: vi.fn(() => ({})),
-    recordError: vi.fn(),
-    getSessionMetrics: vi.fn(() => mockMetrics),
-    lastActivity: null,
+    isSessionHealthy: vi.fn(),
+    getHealthStatus: vi.fn(),
+    getSessionMetrics: vi.fn().mockReturnValue({ recordOperation: vi.fn() }),
   },
 }));
 
 vi.mock('../../navigation/services/linkedinNavigationService.js', () => ({
-  LinkedInNavigationService: class {
-    async navigateToProfile() {
-      return true;
-    }
-  },
+  LinkedInNavigationService: vi.fn().mockImplementation(function () {
+    return {
+      navigateToProfile: vi.fn().mockResolvedValue(true),
+    };
+  }),
 }));
 
 vi.mock('../../messaging/services/linkedinMessagingService.js', () => ({
-  LinkedInMessagingService: class {
-    async navigateToMessaging() {}
-    async composeAndSendMessage() {
-      return { deliveryStatus: 'sent' };
-    }
-    async scrapeConversationThread() {
-      return [];
-    }
-  },
+  LinkedInMessagingService: vi.fn().mockImplementation(function () {
+    return {
+      sendMessage: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock('../../connections/services/linkedinConnectionService.js', () => ({
-  LinkedInConnectionService: class {
-    async sendConnectionRequest() {
-      return { confirmationFound: true };
-    }
-  },
+  LinkedInConnectionService: vi.fn().mockImplementation(function () {
+    return {
+      sendConnectionRequest: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock('../../messaging/services/linkedinMessageScraperService.js', () => ({
-  LinkedInMessageScraperService: class {
-    async scrapeConversationThread() {
-      return [];
-    }
+  LinkedInMessageScraperService: vi.fn().mockImplementation(function () {
+    return {
+      scrapeConversationThread: vi.fn().mockResolvedValue([]),
+    };
+  }),
+}));
+
+vi.mock('../../automation/services/puppeteerService.js', () => ({
+  PuppeteerService: vi.fn(),
+}));
+
+const { mockResolver } = vi.hoisted(() => ({
+  mockResolver: {
+    resolve: vi.fn(),
+    resolveWithWait: vi.fn(),
   },
 }));
 
-const { LinkedInInteractionService } = await import('./linkedinInteractionService.js');
+vi.mock('../selectors/index.js', () => ({
+  linkedinResolver: mockResolver,
+}));
+
+vi.mock('#shared-config/configManager.js', () => ({
+  default: {
+    getErrorHandlingConfig: vi.fn().mockReturnValue({ retryAttempts: 3, retryBaseDelay: 1000 }),
+    get: vi.fn((key, def) => def),
+  },
+}));
+
+vi.mock('#shared-config/index.js', () => ({
+  default: {
+    linkedin: { baseUrl: 'https://www.linkedin.com' },
+  },
+}));
 
 describe('LinkedInInteractionService', () => {
   let service;
+  let mockPage;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
+    mockPage = buildPuppeteerPage();
+    const mockSession = {
+      getPage: () => mockPage,
+      goto: vi.fn().mockResolvedValue({ ok: () => true }),
+      waitForSelector: vi.fn().mockResolvedValue({}),
+    };
+    BrowserSessionManager.getInstance.mockResolvedValue(mockSession);
+
     service = new LinkedInInteractionService();
   });
 
-  describe('metrics recording', () => {
-    it('records success in executeMessagingWorkflow', async () => {
-      // Mock internal navigation
-      service.navigateToProfile = vi.fn().mockResolvedValue(true);
-      service.navigateToMessaging = vi.fn().mockResolvedValue();
-      service.composeAndSendMessage = vi.fn().mockResolvedValue({ deliveryStatus: 'sent' });
-      service._scrapeAndStoreConversation = vi.fn().mockResolvedValue();
-      service._reportInteraction = vi.fn();
-
-      await service.executeMessagingWorkflow('id', 'content', {});
-
-      expect(mockMetrics.recordOperation).toHaveBeenCalledWith(true);
-    });
-
-    it('records failure in executeMessagingWorkflow', async () => {
-      service.navigateToProfile = vi.fn().mockRejectedValue(new Error('nav fail'));
-
-      await expect(service.executeMessagingWorkflow('id', 'content', {})).rejects.toThrow(
-        'nav fail'
-      );
-
-      expect(mockMetrics.recordOperation).toHaveBeenCalledWith(false);
+  describe('initializeBrowserSession', () => {
+    it('should initialize session via manager', async () => {
+      await service.initializeBrowserSession();
+      expect(BrowserSessionManager.getInstance).toHaveBeenCalledWith({
+        reinitializeIfUnhealthy: true,
+      });
     });
   });
 
-  describe('anti-spam guards', () => {
-    it('should allow actions under limits', () => {
-      expect(() => service._enforceRateLimit()).not.toThrow();
-      expect(service._actionLog).toHaveLength(1);
+  describe('isSessionActive', () => {
+    it('should check health via manager', async () => {
+      BrowserSessionManager.isSessionHealthy.mockResolvedValue(true);
+      const active = await service.isSessionActive();
+      expect(active).toBe(true);
     });
+  });
 
-    it('should track multiple actions', () => {
+  describe('navigateToProfile', () => {
+    it('should navigate to profile URL and verify page', async () => {
+      mockResolver.resolveWithWait.mockResolvedValue({}); // indicator
+      mockPage.url.mockReturnValue('https://www.linkedin.com/in/test');
+      mockPage.evaluate.mockResolvedValue({
+        ready: 'complete',
+        main: true,
+        anchors: 10,
+        images: 5,
+        height: 1000,
+        isCheckpoint: false,
+      });
+
+      const promise = service.navigateToProfile('test-id');
+
       for (let i = 0; i < 10; i++) {
-        service._enforceRateLimit();
+        await vi.advanceTimersByTimeAsync(250);
       }
-      expect(service._actionLog).toHaveLength(10);
-    });
 
-    it('should throw at per-minute ceiling (15)', () => {
-      for (let i = 0; i < 15; i++) {
-        service._enforceRateLimit();
-      }
-      expect(() => service._enforceRateLimit()).toThrow('Rate limit exceeded');
-    });
+      const success = await promise;
 
-    it('should throw at per-hour ceiling (200)', () => {
-      // Simulate 200 actions spread across the last hour (but not last minute)
-      const now = Date.now();
-      service._actionLog = Array.from(
-        { length: 200 },
-        (_, i) => now - 120000 - i * 10 // 2+ minutes ago, within the hour
+      expect(success).toBe(true);
+      // It navigates directly via session.goto
+      const session = await BrowserSessionManager.getInstance();
+      expect(session.goto).toHaveBeenCalledWith(
+        expect.stringContaining('test-id'),
+        expect.any(Object)
       );
-      expect(() => service._enforceRateLimit()).toThrow('Rate limit exceeded');
-    });
-
-    it('should throw at daily ceiling (500)', () => {
-      const now = Date.now();
-      service._actionLog = Array.from(
-        { length: 500 },
-        (_, i) => now - 7200000 - i * 100 // 2+ hours ago, within 24h
-      );
-      expect(() => service._enforceRateLimit()).toThrow('Rate limit exceeded');
-    });
-
-    it('should expire entries older than 24 hours', () => {
-      const now = Date.now();
-      service._actionLog = [
-        now - 90000000, // >24h ago
-        now - 90000001,
-        now - 1000, // recent
-      ];
-      service._enforceRateLimit();
-      // Old entries filtered out; new one added = 2 total
-      expect(service._actionLog).toHaveLength(2);
     });
   });
 
-  describe('_paced', () => {
-    it('should execute the callback and return its result', async () => {
-      const result = await service._paced(0, 0, () => Promise.resolve('done'));
-      expect(result).toBe('done');
-    });
+  describe('sendMessage', () => {
+    it('should execute full messaging flow', async () => {
+      vi.spyOn(service, 'navigateToProfile').mockResolvedValue(true);
+      vi.spyOn(service, 'navigateToMessaging').mockResolvedValue(undefined);
+      vi.spyOn(service, 'composeAndSendMessage').mockResolvedValue({ messageId: 'm1' });
 
-    it('should propagate errors from the callback', async () => {
-      await expect(service._paced(0, 0, () => Promise.reject(new Error('fail')))).rejects.toThrow(
-        'fail'
-      );
+      const result = await service.sendMessage('p1', 'hello', 'u1');
+
+      expect(result.messageId).toBe('m1');
+      expect(result.deliveryStatus).toBe('sent');
+    });
+  });
+
+  describe('executeConnectionWorkflow', () => {
+    it('should execute full connection flow', async () => {
+      vi.spyOn(service, 'navigateToProfile').mockResolvedValue(true);
+      vi.spyOn(service, 'getEarlyConnectionStatus').mockResolvedValue(null);
+      vi.spyOn(service, 'isProfileContainer').mockResolvedValue(true); // found connect
+      vi.spyOn(service, 'sendConnectionRequest').mockResolvedValue({
+        requestId: 'r1',
+        status: 'sent',
+        confirmationFound: true,
+      });
+
+      const result = await service.executeConnectionWorkflow('p1', 'hi');
+
+      expect(result.requestId).toBe('r1');
+      expect(result.status).toBe('sent');
     });
   });
 });

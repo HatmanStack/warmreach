@@ -55,7 +55,7 @@ describe('useCommand', () => {
     const { result } = renderHook(() => useCommand('linkedin:search'));
 
     await act(async () => {
-      await result.current.execute({ query: 'test' });
+      await expect(result.current.execute({ query: 'test' })).rejects.toThrow('No agent connected');
     });
 
     expect(result.current.status).toBe('failed');
@@ -108,14 +108,16 @@ describe('useCommand', () => {
 
     expect(result.current.status).toBe('completed');
     expect(result.current.result).toEqual({ items: ['a', 'b'] });
+    expect(unsubscribe).toHaveBeenCalled();
   });
 
   it('handles error messages and transitions to failed', async () => {
     let messageCallback: (...args: unknown[]) => void;
+    const unsubscribe = vi.fn();
     mockDispatch.mockResolvedValueOnce({ commandId: 'cmd-4' });
     mockOnCommandMessage.mockImplementationOnce((_id: string, cb: (...args: unknown[]) => void) => {
       messageCallback = cb;
-      return vi.fn();
+      return unsubscribe;
     });
 
     const { result } = renderHook(() => useCommand('linkedin:search'));
@@ -130,18 +132,47 @@ describe('useCommand', () => {
 
     expect(result.current.status).toBe('failed');
     expect(result.current.error).toBe('Rate limited');
+    expect(unsubscribe).toHaveBeenCalled();
   });
 
-  it('reset returns to idle state', async () => {
-    mockDispatch.mockRejectedValueOnce(new Error('fail'));
+  it('handles messages without optional fields', async () => {
+    let messageCallback: (...args: unknown[]) => void;
+    mockDispatch.mockResolvedValueOnce({ commandId: 'cmd-8' });
+    mockOnCommandMessage.mockImplementationOnce((_id: string, cb: (...args: unknown[]) => void) => {
+      messageCallback = cb;
+      return vi.fn();
+    });
 
     const { result } = renderHook(() => useCommand('linkedin:search'));
-
     await act(async () => {
       await result.current.execute({});
     });
 
-    expect(result.current.status).toBe('failed');
+    act(() => {
+      messageCallback!({ action: 'progress', step: 1, total: 5 }); // no message
+    });
+    expect(result.current.progress?.message).toBe('');
+
+    act(() => {
+      messageCallback!({ action: 'error' }); // no message
+    });
+    expect(result.current.error).toBe('Command failed');
+  });
+
+  it('handles non-Error objects in catch block', async () => {
+    mockDispatch.mockRejectedValueOnce('string error');
+
+    const { result } = renderHook(() => useCommand('linkedin:search'));
+
+    await act(async () => {
+      await expect(result.current.execute({})).rejects.toThrow('Failed to dispatch command');
+    });
+
+    expect(result.current.error).toBe('Failed to dispatch command');
+  });
+
+  it('reset returns to idle state', async () => {
+    const { result } = renderHook(() => useCommand('linkedin:search'));
 
     act(() => {
       result.current.reset();

@@ -1,206 +1,99 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { server } from '@/test-utils';
 
-// Hoist mocks
-const { mockOnMessage } = vi.hoisted(() => ({
-  mockOnMessage: vi.fn(() => vi.fn()),
+// Hoist the messageHandlers mock container
+const { messageHandlers } = vi.hoisted(() => ({
+  messageHandlers: [] as any[],
 }));
 
-// Mock websocketService
+// Mock websocketService with a way to capture and trigger handlers
 vi.mock('./websocketService', () => ({
   websocketService: {
-    onMessage: mockOnMessage,
-  },
-}));
-
-// Mock logger
-vi.mock('@/shared/utils/logger', () => ({
-  createLogger: () => ({
-    warn: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-    debug: vi.fn(),
-  }),
-}));
-
-// Mock Cognito — returns a valid session by default
-vi.mock('amazon-cognito-identity-js', () => ({
-  CognitoUserPool: class {
-    getCurrentUser() {
-      return {
-        getSession: (cb: (err: Error | null, session: unknown) => void) =>
-          cb(null, {
-            isValid: () => true,
-            getIdToken: () => ({ getJwtToken: () => 'mock-token' }),
-          }),
+    onMessage: vi.fn().mockImplementation((handler) => {
+      messageHandlers.push(handler);
+      return () => {
+        const index = messageHandlers.indexOf(handler);
+        if (index > -1) messageHandlers.splice(index, 1);
       };
-    }
+    }),
   },
-  CognitoUserSession: class {},
 }));
 
-vi.mock('@/config/appConfig', () => ({
-  cognitoConfig: { userPoolId: 'us-east-1_test', userPoolWebClientId: 'testclient' },
-}));
-
+// Now import the service under test
 import { commandService } from './commandService';
 
-describe('commandService', () => {
+describe('CommandService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
-    vi.stubGlobal('fetch', vi.fn());
+    server.resetHandlers();
   });
 
   describe('dispatch', () => {
-    it('sends POST to /commands with type and payload', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ commandId: 'cmd-123' }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const result = await commandService.dispatch('linkedin:search', { query: 'test' });
-
-      expect(result.commandId).toBe('cmd-123');
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/commands'),
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            Authorization: 'Bearer mock-token',
-          }),
+    it('should dispatch command successfully', async () => {
+      server.use(
+        http.post('*/commands', () => {
+          return HttpResponse.json({ commandId: 'cmd-unit-test' });
         })
       );
 
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.type).toBe('linkedin:search');
-      expect(body.payload.query).toBe('test');
+      vi.spyOn(commandService as any, '_getCognitoToken').mockResolvedValue('mock-token');
+
+      const result = await commandService.dispatch('test:op', { foo: 'bar' });
+      expect(result.commandId).toBe('cmd-unit-test');
     });
 
-    it('throws on HTTP error response', async () => {
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({
-          ok: false,
-          status: 409,
-          json: async () => ({ error: 'No agent connected' }),
+    it('should attach LinkedIn credentials when required', async () => {
+      sessionStorage.setItem('li_credentials_ciphertext', 'sealbox_x25519:b64:valid');
+
+      let capturedBody: any;
+      server.use(
+        http.post('*/commands', async ({ request }) => {
+          capturedBody = await request.json();
+          return HttpResponse.json({ commandId: 'cmd-li' });
         })
       );
 
-      await expect(commandService.dispatch('linkedin:search', {})).rejects.toThrow(
-        'No agent connected'
-      );
-    });
-
-    it('throws with status code when error body is unparseable', async () => {
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({
-          ok: false,
-          status: 500,
-          json: async () => {
-            throw new Error('bad json');
-          },
-        })
-      );
-
-      await expect(commandService.dispatch('test', {})).rejects.toThrow('HTTP 500');
-    });
-
-    it('attaches LinkedIn credentials for linkedin: commands', async () => {
-      sessionStorage.setItem('li_credentials_ciphertext', 'sealbox_x25519:b64:abc123');
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ commandId: 'cmd-456' }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
+      vi.spyOn(commandService as any, '_getCognitoToken').mockResolvedValue('mock-token');
 
       await commandService.dispatch('linkedin:search', { query: 'test' });
 
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.payload.linkedinCredentialsCiphertext).toBe('sealbox_x25519:b64:abc123');
+      expect(capturedBody.payload.linkedinCredentialsCiphertext).toBe('sealbox_x25519:b64:valid');
     });
 
-    it('does not attach credentials for non-linkedin commands', async () => {
-      sessionStorage.setItem('li_credentials_ciphertext', 'sealbox_x25519:b64:abc123');
+    it('should handle API errors with body message', async () => {
+      server.use(
+        http.post('*/commands', () => {
+          return HttpResponse.json({ error: 'Specific error' }, { status: 400 });
+        })
+      );
+      vi.spyOn(commandService as any, '_getCognitoToken').mockResolvedValue('mock-token');
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ commandId: 'cmd-789' }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      await commandService.dispatch('other:command', { data: 1 });
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.payload.linkedinCredentialsCiphertext).toBeUndefined();
-    });
-
-    it('does not attach credentials when ciphertext missing sealbox prefix', async () => {
-      sessionStorage.setItem('li_credentials_ciphertext', 'plain-text-value');
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ commandId: 'cmd-000' }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      await commandService.dispatch('linkedin:search', {});
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.payload.linkedinCredentialsCiphertext).toBeUndefined();
+      await expect(commandService.dispatch('op', {})).rejects.toThrow('Specific error');
     });
   });
 
-  describe('onCommandMessage', () => {
-    it('registers and unregisters callbacks', () => {
+  describe('WebSocket handling', () => {
+    it('should route messages to callbacks and cleanup on terminal status', () => {
       const callback = vi.fn();
-      const unsubscribe = commandService.onCommandMessage('cmd-1', callback);
+      commandService.onCommandMessage('cmd-ws-1', callback);
 
-      expect(typeof unsubscribe).toBe('function');
-      unsubscribe();
-    });
-  });
+      // Trigger message via all registered handlers
+      const msg = { commandId: 'cmd-ws-1', action: 'progress', step: 1, total: 2 };
+      messageHandlers.forEach((handler) => handler(msg));
 
-  describe('getCommandStatus', () => {
-    it('fetches command status via GET', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ commandId: 'cmd-1', status: 'completed' }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
+      expect(callback).toHaveBeenCalledWith(msg);
 
-      const result = await commandService.getCommandStatus('cmd-1');
+      // terminal message
+      const resultMsg = { commandId: 'cmd-ws-1', action: 'result', data: {} };
+      messageHandlers.forEach((handler) => handler(resultMsg));
+      expect(callback).toHaveBeenCalledWith(resultMsg);
 
-      expect(result).toEqual({ commandId: 'cmd-1', status: 'completed' });
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/commands/cmd-1'),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer mock-token',
-          }),
-        })
-      );
-    });
-
-    it('throws on HTTP error', async () => {
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({
-          ok: false,
-          status: 404,
-        })
-      );
-
-      await expect(commandService.getCommandStatus('bad-id')).rejects.toThrow('HTTP 404');
-    });
-  });
-
-  describe('destroy', () => {
-    it('clears callbacks and unsubscribes from websocket', () => {
-      commandService.destroy();
-      // Re-setup so other tests still work (constructor re-subscribes)
+      // cleanup test
+      callback.mockClear();
+      messageHandlers.forEach((handler) => handler(msg));
+      expect(callback).not.toHaveBeenCalled();
     });
   });
 });

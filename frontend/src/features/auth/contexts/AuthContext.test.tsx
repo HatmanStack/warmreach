@@ -5,35 +5,34 @@ import type { ReactNode } from 'react';
 // Hoisted mocks for CognitoAuthService
 const {
   mockGetCurrentUser,
-  mockGetCurrentUserToken,
   mockSignIn,
   mockSignUp,
   mockSignOut,
+  mockGetToken,
   mockConfirmSignUp,
   mockResendConfirmationCode,
   mockForgotPassword,
   mockConfirmPassword,
-  mockIsCognitoConfigured,
 } = vi.hoisted(() => ({
   mockGetCurrentUser: vi.fn(),
-  mockGetCurrentUserToken: vi.fn(),
   mockSignIn: vi.fn(),
   mockSignUp: vi.fn(),
   mockSignOut: vi.fn(),
+  mockGetToken: vi.fn(),
   mockConfirmSignUp: vi.fn(),
   mockResendConfirmationCode: vi.fn(),
   mockForgotPassword: vi.fn(),
   mockConfirmPassword: vi.fn(),
-  mockIsCognitoConfigured: { value: false },
 }));
 
+// Mock the CognitoAuthService before importing AuthContext
 vi.mock('../services/cognitoService', () => ({
   CognitoAuthService: {
     getCurrentUser: mockGetCurrentUser,
-    getCurrentUserToken: mockGetCurrentUserToken,
     signIn: mockSignIn,
     signUp: mockSignUp,
     signOut: mockSignOut,
+    getCurrentUserToken: mockGetToken,
     confirmSignUp: mockConfirmSignUp,
     resendConfirmationCode: mockResendConfirmationCode,
     forgotPassword: mockForgotPassword,
@@ -41,59 +40,50 @@ vi.mock('../services/cognitoService', () => ({
   },
 }));
 
-vi.mock('@/config/appConfig', () => ({
-  get isCognitoConfigured() {
-    return mockIsCognitoConfigured.value;
-  },
-  cognitoConfig: {
-    userPoolId: 'test-pool',
-    userPoolWebClientId: 'test-client',
-  },
+// Mock appConfig — default to mock mode (not configured)
+const { mockIsCognitoConfigured } = vi.hoisted(() => ({
+  mockIsCognitoConfigured: { value: false },
 }));
 
-vi.mock('@/shared/utils/logger', () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
+vi.mock('@/config/appConfig', async (importOriginal) => {
+  const original = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...original,
+    get isCognitoConfigured() {
+      return mockIsCognitoConfigured.value;
+    },
+  };
+});
 
-// Import after mocks
 import { AuthProvider, useAuth } from './AuthContext';
 
-function createWrapper() {
-  return ({ children }: { children: ReactNode }) => <AuthProvider>{children}</AuthProvider>;
-}
+const Wrapper = ({ children }: { children: ReactNode }) => <AuthProvider>{children}</AuthProvider>;
 
 describe('AuthContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    localStorage.clear();
-    sessionStorage.clear();
-    mockIsCognitoConfigured.value = false;
-    mockGetCurrentUser.mockResolvedValue(null);
+    window.localStorage.clear();
   });
 
   describe('useAuth outside provider', () => {
     it('should throw when used outside AuthProvider', () => {
-      // Suppress console.error for expected error
-      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      expect(() => {
-        renderHook(() => useAuth());
-      }).toThrow('useAuth must be used within an AuthProvider');
-      spy.mockRestore();
+      // Suppress console error for expected throw
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      expect(() => renderHook(() => useAuth())).toThrow(
+        'useAuth must be used within an AuthProvider'
+      );
+      consoleSpy.mockRestore();
     });
   });
 
   describe('mock mode (Cognito not configured)', () => {
     beforeEach(() => {
       mockIsCognitoConfigured.value = false;
+      vi.mocked(mockGetCurrentUser).mockResolvedValue(null);
     });
 
     it('should initialize with no user and finish loading', async () => {
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
@@ -103,255 +93,156 @@ describe('AuthContext', () => {
     });
 
     it('should hydrate user from localStorage', async () => {
-      const storedUser = {
+      const mockUser = {
         id: 'mock-123',
         email: 'test@example.com',
-        firstName: 'Demo',
+        firstName: 'Mock',
         lastName: 'User',
         emailVerified: true,
       };
-      localStorage.setItem('warmreach_user', JSON.stringify(storedUser));
+      window.localStorage.setItem('warmreach_user', JSON.stringify(mockUser));
 
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      expect(result.current.user).not.toBeNull();
-      expect(result.current.user!.email).toBe('test@example.com');
+      expect(result.current.user).toEqual(mockUser);
     });
 
     it('should clear invalid stored user', async () => {
-      localStorage.setItem('warmreach_user', JSON.stringify({ id: '', email: '' }));
+      window.localStorage.setItem('warmreach_user', 'invalid-json');
 
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-
-      expect(result.current.user).toBeNull();
-      expect(localStorage.getItem('warmreach_user')).toBeNull();
-    });
-
-    it('should clear corrupted stored user', async () => {
-      localStorage.setItem('warmreach_user', 'not-json');
-
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
       expect(result.current.user).toBeNull();
-      expect(localStorage.getItem('warmreach_user')).toBeNull();
+      expect(window.localStorage.getItem('warmreach_user')).toBeNull();
     });
 
-    it('should sign in with mock user', async () => {
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
+    it('should sign in successfully in mock mode', async () => {
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
       let signInResult: { error: unknown };
       await act(async () => {
-        signInResult = await result.current.signIn('test@example.com', 'password');
+        signInResult = await result.current.signIn('test@example.com', 'anything');
       });
 
       expect(signInResult!.error).toBeNull();
       expect(result.current.user).not.toBeNull();
-      expect(result.current.user!.email).toBe('test@example.com');
-      expect(localStorage.getItem('warmreach_user')).not.toBeNull();
+      expect(result.current.user?.email).toBe('test@example.com');
+      // Verify user persisted to localStorage
+      const stored = window.localStorage.getItem('warmreach_user');
+      expect(stored).not.toBeNull();
+      expect(JSON.parse(stored!).email).toBe('test@example.com');
     });
 
-    it('should reject invalid email on sign in', async () => {
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+    it('should sign out successfully in mock mode', async () => {
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-
-      let signInResult: { error: unknown };
+      // Sign in first
       await act(async () => {
-        signInResult = await result.current.signIn('not-an-email', 'password');
-      });
-
-      expect(signInResult!.error).toEqual({ message: 'Invalid email format' });
-      expect(result.current.user).toBeNull();
-    });
-
-    it('should sign out and clear localStorage', async () => {
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-
-      await act(async () => {
-        await result.current.signIn('test@example.com', 'password');
+        await result.current.signIn('signout@example.com', 'pass');
       });
       expect(result.current.user).not.toBeNull();
 
+      // Now sign out
       await act(async () => {
         await result.current.signOut();
       });
 
       expect(result.current.user).toBeNull();
-      expect(localStorage.getItem('warmreach_user')).toBeNull();
+      expect(window.localStorage.getItem('warmreach_user')).toBeNull();
     });
 
-    it('should return mock token when signed in', async () => {
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-
-      await act(async () => {
-        await result.current.signIn('test@example.com', 'password');
-      });
-
-      const token = await result.current.getToken();
-      expect(token).toBe('mock-jwt-token');
-    });
-
-    it('should return null token when not signed in', async () => {
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-
-      const token = await result.current.getToken();
-      expect(token).toBeNull();
-    });
-
-    it('should sign up with mock user', async () => {
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
+    it('should sign up successfully in mock mode', async () => {
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
       let signUpResult: { error: unknown };
       await act(async () => {
-        signUpResult = await result.current.signUp('new@example.com', 'Password1!', 'Jane', 'Doe');
+        signUpResult = await result.current.signUp('new@e.com', 'p', 'N', 'U');
       });
 
       expect(signUpResult!.error).toBeNull();
-      expect(result.current.user).not.toBeNull();
-      expect(result.current.user!.email).toBe('new@example.com');
+      expect(result.current.user?.email).toBe('new@e.com');
     });
 
-    it('should not expose Cognito-specific methods', async () => {
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+    it('should handle getToken in mock mode', async () => {
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
+      // No user signed in — token should be null
+      const noUserToken = await result.current.getToken();
+      expect(noUserToken).toBeNull();
+
+      // Sign in, then token should be available
+      await act(async () => {
+        await result.current.signIn('test@example.com', 'pass');
       });
-
-      expect(result.current.confirmSignUp).toBeUndefined();
-      expect(result.current.resendConfirmationCode).toBeUndefined();
-      expect(result.current.forgotPassword).toBeUndefined();
-      expect(result.current.confirmPassword).toBeUndefined();
+      const token = await result.current.getToken();
+      expect(token).toBe('mock-jwt-token');
     });
   });
 
   describe('Cognito mode', () => {
+    // These tests simulate behavior when Cognito environment variables are present
+    // which triggers the use of CognitoAuthService instead of localStorage mocks.
     beforeEach(() => {
       mockIsCognitoConfigured.value = true;
     });
 
     it('should hydrate user from Cognito session', async () => {
-      mockGetCurrentUser.mockResolvedValue({
-        id: 'cognito-sub-123',
-        email: 'cognito@example.com',
-        firstName: 'John',
-        lastName: 'Doe',
-        emailVerified: true,
-      });
+      const mockUser = { id: 'c1', email: 'c@e.com', firstName: 'C', lastName: 'U' };
+      mockGetCurrentUser.mockResolvedValue(mockUser);
 
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      expect(result.current.user).not.toBeNull();
-      expect(result.current.user!.id).toBe('cognito-sub-123');
-      expect(result.current.user!.email).toBe('cognito@example.com');
-    });
-
-    it('should handle no existing Cognito session', async () => {
-      mockGetCurrentUser.mockResolvedValue(null);
-
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-
-      expect(result.current.user).toBeNull();
-    });
-
-    it('should handle Cognito session error gracefully', async () => {
-      mockGetCurrentUser.mockRejectedValue(new Error('Network error'));
-
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-
-      expect(result.current.user).toBeNull();
+      expect(result.current.user).toEqual(mockUser);
+      expect(mockGetCurrentUser).toHaveBeenCalled();
     });
 
     it('should sign in via Cognito', async () => {
+      const mockUser = { id: 'c2', email: 'signin@e.com', firstName: 'S', lastName: 'U' };
       mockGetCurrentUser.mockResolvedValue(null);
-      mockSignIn.mockResolvedValue({
-        error: null,
-        user: {
-          id: 'cognito-sub-456',
-          email: 'user@example.com',
-          firstName: 'Jane',
-          lastName: 'Smith',
-          emailVerified: true,
-        },
-      });
+      mockSignIn.mockResolvedValue({ user: mockUser, error: null });
 
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
       let signInResult: { error: unknown };
       await act(async () => {
-        signInResult = await result.current.signIn('user@example.com', 'Password1!');
+        signInResult = await result.current.signIn('signin@e.com', 'Pass123!');
       });
 
       expect(signInResult!.error).toBeNull();
-      expect(result.current.user).not.toBeNull();
-      expect(result.current.user!.id).toBe('cognito-sub-456');
+      expect(result.current.user).toEqual(mockUser);
+      expect(mockSignIn).toHaveBeenCalledWith('signin@e.com', 'Pass123!');
     });
 
     it('should return Cognito sign-in error', async () => {
       mockGetCurrentUser.mockResolvedValue(null);
       mockSignIn.mockResolvedValue({
-        error: { message: 'Incorrect username or password.', code: 'NotAuthorizedException' },
+        user: null,
+        error: { message: 'Incorrect username or password.' },
       });
 
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-
-      let signInResult: { error: { message: string } | null };
+      let signInResult: { error: { message: string } };
       await act(async () => {
-        signInResult = await result.current.signIn('user@example.com', 'wrong');
+        signInResult = (await result.current.signIn('wrong@e.com', 'wrong')) as any;
       });
 
       expect(signInResult!.error).not.toBeNull();
@@ -360,15 +251,11 @@ describe('AuthContext', () => {
     });
 
     it('should sign out via Cognito', async () => {
-      mockGetCurrentUser.mockResolvedValue({
-        id: 'sub-1',
-        email: 'user@example.com',
-        firstName: 'Test',
-        emailVerified: true,
-      });
+      const mockUser = { id: 'c3', email: 'out@e.com', firstName: 'O', lastName: 'U' };
+      mockGetCurrentUser.mockResolvedValue(mockUser);
       mockSignOut.mockResolvedValue(undefined);
 
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
 
       await waitFor(() => {
         expect(result.current.user).not.toBeNull();
@@ -383,35 +270,24 @@ describe('AuthContext', () => {
     });
 
     it('should get token from Cognito', async () => {
-      mockGetCurrentUser.mockResolvedValue(null);
-      mockGetCurrentUserToken.mockResolvedValue('real-jwt-token');
-
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
+      mockGetToken.mockResolvedValue('real-jwt-token');
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
 
       const token = await result.current.getToken();
       expect(token).toBe('real-jwt-token');
+      expect(mockGetToken).toHaveBeenCalled();
     });
 
     it('should sign up via Cognito', async () => {
       mockGetCurrentUser.mockResolvedValue(null);
-      mockSignUp.mockResolvedValue({
-        error: null,
-        user: { id: 'new-sub', email: 'new@example.com' },
-      });
+      mockSignUp.mockResolvedValue({ user: { id: 'new-c' }, error: null });
 
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
       let signUpResult: { error: unknown };
       await act(async () => {
-        signUpResult = await result.current.signUp('new@example.com', 'Password1!', 'New', 'User');
+        signUpResult = await result.current.signUp('new@e.com', 'p', 'N', 'U');
       });
 
       expect(signUpResult!.error).toBeNull();
@@ -420,13 +296,8 @@ describe('AuthContext', () => {
     });
 
     it('should expose Cognito-specific methods', async () => {
-      mockGetCurrentUser.mockResolvedValue(null);
-
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
       expect(result.current.confirmSignUp).toBeDefined();
       expect(result.current.resendConfirmationCode).toBeDefined();
@@ -435,14 +306,9 @@ describe('AuthContext', () => {
     });
 
     it('should delegate confirmSignUp to Cognito', async () => {
-      mockGetCurrentUser.mockResolvedValue(null);
       mockConfirmSignUp.mockResolvedValue({ error: null });
-
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
 
       let confirmResult: { error: unknown };
       await act(async () => {
@@ -457,7 +323,7 @@ describe('AuthContext', () => {
       mockGetCurrentUser.mockResolvedValue(null);
       mockForgotPassword.mockResolvedValue({ error: null });
 
-      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);

@@ -151,6 +151,10 @@ class RAGStackSearchService {
    * @throws SearchError on failure
    */
   async search(query: string, maxResults = 100): Promise<SearchResponse> {
+    if (!query || query.trim().length === 0) {
+      return { results: [], totalResults: 0 };
+    }
+
     try {
       logger.debug('Executing profile search', { queryLength: query.length, maxResults });
 

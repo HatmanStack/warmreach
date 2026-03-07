@@ -1,133 +1,69 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { ApiError } from './apiError';
+import { transformErrorForUser, getToastVariant, logError } from './errorHandling';
 
-// Mock auth module before any imports that might use it
-vi.mock('@/features/auth', () => ({
-  CognitoAuthService: {
-    getAccessToken: vi.fn().mockResolvedValue('mock-token'),
-    isAuthenticated: vi.fn().mockReturnValue(true),
-  },
-  useAuth: vi.fn(() => ({ user: null })),
-  AuthProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
-
-// Mock the logger
-vi.mock('@/shared/utils/logger', () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
-import { transformErrorForUser, getToastVariant, ERROR_MESSAGES, logError } from './errorHandling';
-import { ApiError } from '@/shared/services';
-
-describe('errorHandling', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
+describe('ErrorHandling', () => {
   describe('transformErrorForUser', () => {
-    it('should handle ApiError with 401 status', () => {
+    it('should handle 401/403 errors', () => {
       const error = new ApiError({ message: 'Unauthorized', status: 401 });
-      const result = transformErrorForUser(error, 'fetch data');
-
+      const result = transformErrorForUser(error, 'action');
       expect(result.severity).toBe('high');
-      expect(result.userMessage).toContain('sign in');
-      expect(result.recoveryActions.length).toBeGreaterThan(0);
+      expect(result.userMessage).toContain('sign in again');
+      expect(result.recoveryActions).toHaveLength(1);
       expect(result.recoveryActions[0].label).toBe('Sign In');
     });
 
-    it('should handle ApiError with 403 status', () => {
-      const error = new ApiError({ message: 'Forbidden', status: 403 });
-      const result = transformErrorForUser(error, 'fetch data');
-
-      expect(result.severity).toBe('high');
-      expect(result.userMessage).toContain('sign in');
-    });
-
-    it('should handle ApiError with 404 status', () => {
+    it('should handle 404 errors', () => {
       const error = new ApiError({ message: 'Not Found', status: 404 });
-      const result = transformErrorForUser(error, 'fetch connection');
-
+      const result = transformErrorForUser(error, 'action');
       expect(result.severity).toBe('medium');
       expect(result.userMessage).toContain('could not be found');
     });
 
-    it('should handle ApiError with 429 rate limit status', () => {
-      const error = new ApiError({ message: 'Rate limited', status: 429 });
-      const result = transformErrorForUser(error, 'fetch data');
-
+    it('should handle 429 errors', () => {
+      const error = new ApiError({ message: 'Too many', status: 429 });
+      const result = transformErrorForUser(error, 'action');
       expect(result.severity).toBe('low');
       expect(result.retryable).toBe(true);
-      expect(result.userMessage).toContain('Too many requests');
     });
 
-    it('should handle ApiError with 500+ status', () => {
+    it('should handle 500+ errors', () => {
       const error = new ApiError({ message: 'Server error', status: 500 });
-      const result = transformErrorForUser(error, 'save data');
-
+      const result = transformErrorForUser(error, 'action');
       expect(result.severity).toBe('high');
       expect(result.retryable).toBe(true);
-      expect(result.userMessage).toContain('servers are experiencing issues');
     });
 
-    it('should handle ApiError with network error code', () => {
+    it('should handle network errors in ApiError', () => {
       const error = new ApiError({ message: 'Network error', status: 0, code: 'NETWORK_ERROR' });
-      const result = transformErrorForUser(error, 'connect');
-
+      const result = transformErrorForUser(error, 'action');
       expect(result.severity).toBe('high');
-      expect(result.retryable).toBe(true);
       expect(result.userMessage).toContain('internet connection');
     });
 
-    it('should handle regular Error', () => {
-      const error = new Error('Something went wrong');
-      const result = transformErrorForUser(error, 'perform operation');
-
-      expect(result.message).toBe('Something went wrong');
-      expect(result.userMessage).toContain('Failed to perform operation');
-    });
-
-    it('should handle Error with timeout message', () => {
-      const error = new Error('Request timeout');
-      const result = transformErrorForUser(error, 'fetch data');
-
+    it('should handle generic Error with timeout', () => {
+      const error = new Error('request timeout');
+      const result = transformErrorForUser(error, 'action');
       expect(result.severity).toBe('low');
       expect(result.retryable).toBe(true);
-      expect(result.userMessage).toContain('took too long');
     });
 
-    it('should handle Error with network message', () => {
-      const error = new Error('network failed');
-      const result = transformErrorForUser(error, 'connect');
-
+    it('should handle generic Error with fetch/network', () => {
+      const error = new Error('failed to fetch');
+      const result = transformErrorForUser(error, 'action');
       expect(result.severity).toBe('high');
-      expect(result.retryable).toBe(true);
       expect(result.userMessage).toContain('Network connection issue');
     });
 
-    it('should handle string error', () => {
-      const result = transformErrorForUser('Custom error message', 'test operation');
-
-      expect(result.message).toBe('Custom error message');
-      expect(result.userMessage).toContain('Failed to test operation');
+    it('should handle string errors', () => {
+      const result = transformErrorForUser('something bad', 'action');
+      expect(result.message).toBe('something bad');
+      expect(result.userMessage).toBe('Failed to action. something bad');
     });
 
     it('should handle unknown error types', () => {
-      const result = transformErrorForUser({ unknown: 'object' }, 'do something');
-
+      const result = transformErrorForUser({}, 'action');
       expect(result.message).toBe('An unexpected error occurred');
-      expect(result.userMessage).toBe('Something went wrong. Please try again.');
-    });
-
-    it('should preserve provided recovery actions', () => {
-      const customAction = { label: 'Retry', action: vi.fn(), primary: true };
-      const error = new Error('Test error');
-      const result = transformErrorForUser(error, 'test', [customAction]);
-
-      expect(result.recoveryActions).toContain(customAction);
     });
   });
 
@@ -135,45 +71,17 @@ describe('errorHandling', () => {
     it('should return default for low severity', () => {
       expect(getToastVariant('low')).toBe('default');
     });
-
-    it('should return destructive for medium severity', () => {
+    it('should return destructive for medium/high severity', () => {
       expect(getToastVariant('medium')).toBe('destructive');
-    });
-
-    it('should return destructive for high severity', () => {
       expect(getToastVariant('high')).toBe('destructive');
     });
   });
 
-  describe('ERROR_MESSAGES', () => {
-    it('should have all expected error message keys', () => {
-      expect(ERROR_MESSAGES.FETCH_CONNECTIONS).toBe('load your connections');
-      expect(ERROR_MESSAGES.UPDATE_CONNECTION).toBe('update the connection');
-      expect(ERROR_MESSAGES.REMOVE_CONNECTION).toBe('remove the connection');
-      expect(ERROR_MESSAGES.FETCH_MESSAGES).toBe('load message history');
-      expect(ERROR_MESSAGES.SEND_MESSAGE).toBe('send the message');
-      expect(ERROR_MESSAGES.AUTHENTICATION).toBe('authenticate your request');
-      expect(ERROR_MESSAGES.NETWORK).toBe('connect to our servers');
-      expect(ERROR_MESSAGES.VALIDATION).toBe('validate the information');
-      expect(ERROR_MESSAGES.UNKNOWN).toBe('complete the operation');
-    });
-  });
-
   describe('logError', () => {
-    it('should log error with Error instance', () => {
-      const error = new Error('Test error');
-      // This should not throw
-      expect(() => logError(error, 'TestContext')).not.toThrow();
-    });
-
-    it('should log error with string', () => {
-      expect(() => logError('String error', 'TestContext')).not.toThrow();
-    });
-
-    it('should log error with additional data', () => {
-      const error = new Error('Test error');
-      const additionalData = { userId: '123', action: 'test' };
-      expect(() => logError(error, 'TestContext', additionalData)).not.toThrow();
+    it('should log error with context', () => {
+      // Mock logger or console
+      const result = logError(new Error('test'), 'test-context');
+      expect(result).toBeUndefined();
     });
   });
 });

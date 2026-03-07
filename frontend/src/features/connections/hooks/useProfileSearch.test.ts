@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useProfileSearch } from './useProfileSearch';
-import type { Connection } from '@/shared/types';
+import { buildConnection } from '@/test-utils';
 
 // Mock the search service
 const mockSearchProfiles = vi.fn();
@@ -24,31 +24,31 @@ vi.mock('@/shared/utils/logger', () => ({
 }));
 
 describe('useProfileSearch', () => {
-  const mockConnections: Connection[] = [
-    {
-      id: 'abc123',
+  const mockConnections = [
+    buildConnection({
+      id: 'abc123' as any,
       first_name: 'John',
       last_name: 'Doe',
       position: 'Software Engineer',
       company: 'TechCorp',
       status: 'ally',
-    },
-    {
-      id: 'def456',
+    }),
+    buildConnection({
+      id: 'def456' as any,
       first_name: 'Jane',
       last_name: 'Smith',
       position: 'Product Manager',
       company: 'DataCo',
       status: 'ally',
-    },
-    {
-      id: 'ghi789',
+    }),
+    buildConnection({
+      id: 'ghi789' as any,
       first_name: 'Bob',
       last_name: 'Wilson',
       position: 'Designer',
       company: 'DesignHub',
       status: 'ally',
-    },
+    }),
   ];
 
   beforeEach(() => {

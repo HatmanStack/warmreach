@@ -143,12 +143,12 @@ const connectionSchema = z.object({
 // SANITIZATION HELPERS
 // =============================================================================
 
-function sanitizeString(value: unknown, fallback: string): string {
+export function sanitizeString(value: unknown, fallback: string): string {
   if (typeof value === 'string' && value.length > 0) return value.trim();
   return fallback;
 }
 
-function sanitizeConnectionStatus(value: unknown): ConnectionStatus | null {
+export function sanitizeConnectionStatus(value: unknown): ConnectionStatus | null {
   if (isConnectionStatus(value)) return value;
   if (typeof value === 'string') {
     const n = value.toLowerCase().trim();
@@ -175,7 +175,7 @@ function sanitizeConnectionStatus(value: unknown): ConnectionStatus | null {
   return null;
 }
 
-function sanitizeMessageSender(value: unknown): MessageSender | null {
+export function sanitizeMessageSender(value: unknown): MessageSender | null {
   if (isMessageSender(value)) return value;
   if (typeof value === 'string') {
     const n = value.toLowerCase().trim();
@@ -185,7 +185,7 @@ function sanitizeMessageSender(value: unknown): MessageSender | null {
   return null;
 }
 
-function sanitizeTimestamp(value: unknown): string | null {
+export function sanitizeTimestamp(value: unknown): string | null {
   if (typeof value === 'string' && isValidISODate(value)) return value;
   if (value instanceof Date) return value.toISOString();
   if (typeof value === 'number' && isFinite(value)) {

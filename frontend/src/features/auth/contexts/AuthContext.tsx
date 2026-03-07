@@ -19,7 +19,7 @@ export interface User {
   emailVerified?: boolean;
 }
 
-interface AuthContextType {
+export interface AuthContextType {
   user: User | null;
   loading: boolean;
   getToken: () => Promise<string | null>;
@@ -41,7 +41,7 @@ interface AuthContextType {
   ) => Promise<{ error: AuthError | null }>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const useAuth = () => {
   const context = useContext(AuthContext);

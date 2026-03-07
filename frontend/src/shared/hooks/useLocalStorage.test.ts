@@ -70,28 +70,53 @@ describe('useLocalStorage', () => {
     expect(window.localStorage.getItem('test-key')).toBeNull();
   });
 
-  it('should handle complex objects', () => {
-    const initialValue = { name: 'test', items: [1, 2, 3] };
-    const { result } = renderHook(() => useLocalStorage('complex-key', initialValue));
-
-    expect(result.current[0]).toEqual(initialValue);
-
-    const newValue = { name: 'updated', items: [4, 5, 6], extra: true };
-    act(() => {
-      result.current[1](newValue);
-    });
-
-    expect(result.current[0]).toEqual(newValue);
-    expect(JSON.parse(window.localStorage.getItem('complex-key') || '{}')).toEqual(newValue);
+  it('should handle malformed JSON in localStorage', () => {
+    window.localStorage.setItem('test-key', 'invalid-json');
+    const { result } = renderHook(() => useLocalStorage('test-key', 'initial'));
+    expect(result.current[0]).toBe('initial');
   });
 
-  it('should handle arrays', () => {
-    const { result } = renderHook(() => useLocalStorage<string[]>('array-key', []));
-
-    act(() => {
-      result.current[1](['a', 'b', 'c']);
+  it('should handle localStorage write errors', () => {
+    const spy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('Quota exceeded');
     });
 
-    expect(result.current[0]).toEqual(['a', 'b', 'c']);
+    const { result } = renderHook(() => useLocalStorage('test-key', 'initial'));
+
+    act(() => {
+      result.current[1]('new-value');
+    });
+
+    // State should still update even if localStorage fails
+    expect(result.current[0]).toBe('new-value');
+    spy.mockRestore();
+  });
+
+  it('should handle storage events from other tabs', () => {
+    const { result } = renderHook(() => useLocalStorage('test-key', 'initial'));
+
+    act(() => {
+      const event = new StorageEvent('storage', {
+        key: 'test-key',
+        newValue: JSON.stringify('other-tab-value'),
+      });
+      window.dispatchEvent(event);
+    });
+
+    expect(result.current[0]).toBe('other-tab-value');
+  });
+
+  it('should ignore storage events for other keys', () => {
+    const { result } = renderHook(() => useLocalStorage('test-key', 'initial'));
+
+    act(() => {
+      const event = new StorageEvent('storage', {
+        key: 'different-key',
+        newValue: JSON.stringify('ignored'),
+      });
+      window.dispatchEvent(event);
+    });
+
+    expect(result.current[0]).toBe('initial');
   });
 });

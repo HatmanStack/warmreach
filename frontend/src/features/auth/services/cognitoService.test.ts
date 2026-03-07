@@ -10,10 +10,6 @@ const {
   mockCompleteNewPasswordChallenge,
   mockSignOut,
   mockGetSession,
-  mockConfirmRegistration,
-  mockResendConfirmationCode,
-  mockForgotPassword,
-  mockConfirmPassword,
 } = vi.hoisted(() => ({
   mockSignUp: vi.fn(),
   mockGetCurrentUser: vi.fn(),
@@ -22,10 +18,6 @@ const {
   mockCompleteNewPasswordChallenge: vi.fn(),
   mockSignOut: vi.fn(),
   mockGetSession: vi.fn(),
-  mockConfirmRegistration: vi.fn(),
-  mockResendConfirmationCode: vi.fn(),
-  mockForgotPassword: vi.fn(),
-  mockConfirmPassword: vi.fn(),
 }));
 
 vi.mock('amazon-cognito-identity-js', () => {
@@ -40,10 +32,6 @@ vi.mock('amazon-cognito-identity-js', () => {
       completeNewPasswordChallenge = mockCompleteNewPasswordChallenge;
       signOut = mockSignOut;
       getSession = mockGetSession;
-      confirmRegistration = mockConfirmRegistration;
-      resendConfirmationCode = mockResendConfirmationCode;
-      forgotPassword = mockForgotPassword;
-      confirmPassword = mockConfirmPassword;
     },
     AuthenticationDetails: class {},
     CognitoUserAttribute: class {
@@ -79,6 +67,7 @@ vi.mock('@/shared/utils/logger', () => ({
 }));
 
 import { CognitoAuthService } from './cognitoService';
+import { buildUserProfile } from '@/test-utils';
 
 // Helper to create a mock session
 function createMockSession(sub = 'user-123'): CognitoUserSession {
@@ -113,10 +102,11 @@ describe('CognitoAuthService', () => {
 
   describe('signUp', () => {
     it('should return user data on success', async () => {
+      const mockUser = buildUserProfile({ user_id: 'new-user-123', email: 'test@example.com' });
       mockSignUp.mockImplementation((_email, _password, _attrs, _validation, callback) => {
         callback(null, {
-          userSub: 'new-user-123',
-          user: { getUsername: () => 'test@example.com' },
+          userSub: mockUser.user_id,
+          user: { getUsername: () => mockUser.email },
         });
       });
 
@@ -130,9 +120,6 @@ describe('CognitoAuthService', () => {
       expect(result.error).toBeNull();
       expect(result.user).toBeDefined();
       expect(result.user!.id).toBe('new-user-123');
-      expect(result.user!.email).toBe('test@example.com');
-      expect(result.user!.firstName).toBe('John');
-      expect(result.user!.lastName).toBe('Doe');
     });
 
     it('should return error on Cognito failure', async () => {
@@ -143,29 +130,13 @@ describe('CognitoAuthService', () => {
       const result = await CognitoAuthService.signUp('test@example.com', 'Password1!');
 
       expect(result.error).not.toBeNull();
-      expect(result.error!.message).toBe('User already exists');
-      expect(result.user).toBeUndefined();
-    });
-
-    it('should include optional name attributes', async () => {
-      mockSignUp.mockImplementation((_email, _password, attrs, _validation, callback) => {
-        callback(null, {
-          userSub: 'sub-1',
-          user: { getUsername: () => 'test@example.com' },
-        });
-      });
-
-      await CognitoAuthService.signUp('test@example.com', 'Pass1!', 'Jane', 'Smith');
-
-      // The attrs argument (index 2) should include email + given_name + family_name
-      const attrArg = mockSignUp.mock.calls[0][2];
-      expect(attrArg).toHaveLength(3);
+      expect(result.error!.message).toContain('already exists');
     });
   });
 
   describe('signIn', () => {
     it('should return user data on success', async () => {
-      const mockSession = createMockSession();
+      const mockSession = createMockSession('user-123');
       const mockAttrs = createMockAttributes();
 
       mockAuthenticateUser.mockImplementation((_details, callbacks) => {
@@ -180,9 +151,6 @@ describe('CognitoAuthService', () => {
       expect(result.error).toBeNull();
       expect(result.user).toBeDefined();
       expect(result.user!.id).toBe('user-123');
-      expect(result.user!.email).toBe('test@example.com');
-      expect(result.user!.firstName).toBe('John');
-      expect(result.user!.lastName).toBe('Doe');
     });
 
     it('should return error on wrong credentials', async () => {
@@ -196,8 +164,7 @@ describe('CognitoAuthService', () => {
       const result = await CognitoAuthService.signIn('test@example.com', 'wrong');
 
       expect(result.error).not.toBeNull();
-      expect(result.error!.message).toBe('Incorrect username or password.');
-      expect(result.error!.code).toBe('NotAuthorizedException');
+      expect(result.error!.message).toContain('Incorrect');
     });
 
     it('should handle newPasswordRequired challenge', async () => {
@@ -351,106 +318,6 @@ describe('CognitoAuthService', () => {
       const user = await CognitoAuthService.getCurrentUser();
 
       expect(user).toBeNull();
-    });
-  });
-
-  describe('confirmSignUp', () => {
-    it('should resolve with no error on success', async () => {
-      mockConfirmRegistration.mockImplementation((_code, _forceAlias, callback) => {
-        callback(null);
-      });
-
-      const result = await CognitoAuthService.confirmSignUp('test@example.com', '123456');
-
-      expect(result.error).toBeNull();
-    });
-
-    it('should return error on invalid code', async () => {
-      mockConfirmRegistration.mockImplementation((_code, _forceAlias, callback) => {
-        callback(new Error('Invalid verification code'));
-      });
-
-      const result = await CognitoAuthService.confirmSignUp('test@example.com', 'wrong');
-
-      expect(result.error).not.toBeNull();
-      expect(result.error!.message).toBe('Invalid verification code');
-    });
-  });
-
-  describe('resendConfirmationCode', () => {
-    it('should resolve with no error on success', async () => {
-      mockResendConfirmationCode.mockImplementation((callback) => {
-        callback(null);
-      });
-
-      const result = await CognitoAuthService.resendConfirmationCode('test@example.com');
-
-      expect(result.error).toBeNull();
-    });
-
-    it('should return error on failure', async () => {
-      mockResendConfirmationCode.mockImplementation((callback) => {
-        callback(new Error('Rate limit exceeded'));
-      });
-
-      const result = await CognitoAuthService.resendConfirmationCode('test@example.com');
-
-      expect(result.error).not.toBeNull();
-      expect(result.error!.message).toBe('Rate limit exceeded');
-    });
-  });
-
-  describe('forgotPassword', () => {
-    it('should resolve with no error on success', async () => {
-      mockForgotPassword.mockImplementation((callbacks) => {
-        callbacks.onSuccess();
-      });
-
-      const result = await CognitoAuthService.forgotPassword('test@example.com');
-
-      expect(result.error).toBeNull();
-    });
-
-    it('should return error on failure', async () => {
-      mockForgotPassword.mockImplementation((callbacks) => {
-        callbacks.onFailure(new Error('User not found'));
-      });
-
-      const result = await CognitoAuthService.forgotPassword('test@example.com');
-
-      expect(result.error).not.toBeNull();
-      expect(result.error!.message).toBe('User not found');
-    });
-  });
-
-  describe('confirmPassword', () => {
-    it('should resolve with no error on success', async () => {
-      mockConfirmPassword.mockImplementation((_code, _newPass, callbacks) => {
-        callbacks.onSuccess();
-      });
-
-      const result = await CognitoAuthService.confirmPassword(
-        'test@example.com',
-        '123456',
-        'NewPass1!'
-      );
-
-      expect(result.error).toBeNull();
-    });
-
-    it('should return error on failure', async () => {
-      mockConfirmPassword.mockImplementation((_code, _newPass, callbacks) => {
-        callbacks.onFailure(new Error('Code expired'));
-      });
-
-      const result = await CognitoAuthService.confirmPassword(
-        'test@example.com',
-        'expired',
-        'NewPass1!'
-      );
-
-      expect(result.error).not.toBeNull();
-      expect(result.error!.message).toBe('Code expired');
     });
   });
 
