@@ -6,4 +6,4 @@ moto>=4.0.0
 requests-mock>=1.9.0
 boto3>=1.35.0
 openai>=1.100.0
-PyJWT[crypto]==2.9.0
+PyJWT[crypto]==2.11.0
