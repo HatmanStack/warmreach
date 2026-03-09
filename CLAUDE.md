@@ -23,7 +23,7 @@ The `shared_services/monetization.py` module contains no-op stubs. All Lambda co
 ## Project Overview
 
 WarmReach is a monorepo with three main components:
-- **frontend/**: React 18 + TypeScript + Vite application
+- **frontend/**: React 19 + TypeScript + Vite application
 - **client/**: Electron tray app + Node.js Express backend with Puppeteer for LinkedIn automation
 - **backend/**: AWS SAM serverless stack (Python 3.13 Lambdas + DynamoDB + Cognito + WebSocket API)
 

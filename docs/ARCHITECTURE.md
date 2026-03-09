@@ -8,7 +8,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 
 ### Frontend (`frontend/`)
 
-- **Stack**: React 18, TypeScript, Vite, Tailwind CSS
+- **Stack**: React 19, TypeScript, Vite, Tailwind CSS
 - **State**: React Query (`@tanstack/react-query`) for server state, React context for UI state
 - **UI**: Radix UI primitives with Tailwind CSS
 - **Organization**: Feature-based (`features/auth/`, `features/connections/`, `features/messages/`, `features/posts/`, etc.) with barrel exports
@@ -17,7 +17,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 ### Client (`client/`)
 
 - **Stack**: Electron tray app, Node.js/Express, Puppeteer
-- **Organization**: Domain-driven (`src/domains/` — automation, connections, linkedin, messaging, profile, search, session, storage, workflow)
+- **Organization**: Domain-driven (`src/domains/` — automation, connections, linkedin, messaging, navigation, profile, ragstack, search, session, storage, workflow)
 - **Transport**: WebSocket connection to backend for receiving commands from frontend
 - **Automation**: Queue-based LinkedIn interaction processing with session preservation and checkpoint-based heal/restore recovery
 - **Security**: Sealbox encryption (libsodium X25519) for LinkedIn credentials — decrypted just-in-time on the client, never sent to the cloud
@@ -97,5 +97,5 @@ Electron Client (user's machine)
 
 ## AI Services
 
-- **OpenAI API**: Post idea generation (`gpt-4.1`), deep research (`o4-mini-deep-research`), synthesis (`gpt-5.2`)
+- **OpenAI API**: Post idea generation (`gpt-5.2`), deep research (`o4-mini-deep-research`), synthesis (`gpt-5.2`), message generation (`gpt-5.2`), message pattern analysis (`gpt-4.1`)
 - **AWS Bedrock**: RAGStack vector embeddings (Nova multimodal)

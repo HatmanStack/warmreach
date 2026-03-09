@@ -15,6 +15,11 @@ Connection edge management and RAGStack vector search/ingestion operations.
 | `get_connections_by_status` | Query edges by status (possible, sent, connected) |
 | `upsert_status` | Create/update edge status for a profile |
 | `add_message` | Append a message to an edge's message history |
+| `update_messages` | Replace full message list for an edge |
+| `get_messages` | Get message history for an edge |
+| `check_exists` | Check if an edge exists between user and profile |
+
+> Additional edge intelligence operations (relationship scoring, messaging insights, analytics, send time recommendations, reply probability, priority ranking, cluster detection) are available in WarmReach Pro.
 
 ## RAGStack Operations (`/ragstack`)
 

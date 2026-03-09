@@ -5,7 +5,7 @@
 <p align="center">
 <a href="https://www.apache.org/licenses/LICENSE-2.0.html"><img src="https://img.shields.io/badge/license-Apache2.0-blue" alt="Apache 2.0 License" /></a>
 <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.13-3776AB" alt="Python 3.13" /></a>
-<a href="https://react.dev"><img src="https://img.shields.io/badge/React-18-61DAFB" alt="React 18" /></a>
+<a href="https://react.dev"><img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" /></a>
 <a href="https://aws.amazon.com/lambda/"><img src="https://img.shields.io/badge/AWS-Lambda-FF9900" alt="AWS Lambda" /></a>
 </p>
 

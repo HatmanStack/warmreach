@@ -13,7 +13,7 @@ Sealbox encrypts sensitive user credentials (e.g., LinkedIn passwords) using lib
 
 -   **AWS Cognito**: Used for user identity management. All users must authenticate via Cognito User Pools to access the application.
 -   **JWT Tokens**: Secure JSON Web Tokens are used to authorize API requests to the backend.
--   **API Gateway Authorizers**: Lambda authorizers verify tokens before allowing access to backend resources.
+-   **API Gateway Authorizers**: Cognito JWT authorizers verify tokens before allowing access to backend resources.
 
 ## Data Isolation
 

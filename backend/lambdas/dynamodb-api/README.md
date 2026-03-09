@@ -1,6 +1,6 @@
 # DynamoDB API Lambda
 
-User settings, profile CRUD, tier management, and Stripe billing.
+User settings and profile CRUD.
 
 ## Runtime
 
@@ -24,8 +24,8 @@ User settings, profile CRUD, tier management, and Stripe billing.
 | `create` | Create a bad-contact profile entry |
 | `update_user_settings` | Update user settings (linkedin_credentials, preferences) |
 | `update_profile_picture` | Update user profile picture |
-| `get_tier_info` | Get tier, feature flags, quotas, and rate limits for the user |
-| `create_checkout_session` | Create a Stripe checkout session (requires `priceId`, `successUrl`, `cancelUrl`) |
+
+> Tier management and billing operations are available in WarmReach Pro.
 
 ## `/profiles` Route
 

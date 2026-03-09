@@ -3,7 +3,7 @@ import React, { type ReactNode } from 'react';
 import { createWrapper } from './queryWrapper';
 import { AuthContext, type User, type AuthContextType } from '@/features/auth/contexts/AuthContext';
 import { UserProfileProvider } from '@/features/profile/contexts/UserProfileContext';
-import { TierProvider } from '@/features/tier/contexts/TierContext';
+import { TierProvider } from '@/features/tier';
 import { buildUserProfile } from './factories';
 
 /**

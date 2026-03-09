@@ -17,6 +17,9 @@ AI-powered content generation for LinkedIn posts and personalized messaging.
 | `get_research_result` | — | Poll | Check DynamoDB/OpenAI for completed research/ideas/synthesis |
 | `synthesize_research` | gpt-5.2 | Synchronous | Synthesize research + ideas into a ready-to-post LinkedIn post |
 | `generate_message` | gpt-5.2 | Synchronous | Generate personalized message for a connection |
+| `analyze_message_patterns` | gpt-4.1 | Synchronous | Analyze sent/received message patterns for insights |
+
+> Additional AI operations (tone analysis) are available in WarmReach Pro.
 
 `research_selected_ideas` and `synthesize_research` are feature-gated behind `deep_research` (requires pro tier).
 

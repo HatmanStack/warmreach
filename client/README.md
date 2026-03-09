@@ -25,7 +25,7 @@ Electron tray app + Node.js automation backend for LinkedIn interactions with qu
 ```bash
 cd client
 npm install
-cp .env.example .env
+# Configure the root .env file (not client-specific) — see .env.example
 ```
 
 ### Start Server
@@ -44,6 +44,8 @@ Server runs at `http://localhost:3001`
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/search/` | Execute LinkedIn search with company/role filters |
+| GET | `/search/results` | Retrieve stored search results |
+| GET | `/search/health` | Search service health check |
 
 ### Profile Initialization
 
