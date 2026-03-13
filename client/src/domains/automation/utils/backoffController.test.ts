@@ -126,4 +126,45 @@ describe('BackoffController', () => {
       expect(mockDetector.assess).toHaveBeenCalledTimes(1); // No more calls
     });
   });
+
+  describe('import mode', () => {
+    it('switches to 10s polling while running', () => {
+      controller.start(30000);
+      vi.advanceTimersByTime(30000);
+      expect(mockDetector.assess).toHaveBeenCalledTimes(1);
+
+      controller.setImportMode(true);
+      vi.clearAllMocks();
+
+      // Now at 10s interval
+      vi.advanceTimersByTime(10000);
+      expect(mockDetector.assess).toHaveBeenCalledTimes(1);
+    });
+
+    it('sets interval for next start if not running', () => {
+      controller.setImportMode(true);
+      controller.start();
+
+      vi.advanceTimersByTime(10000);
+      expect(mockDetector.assess).toHaveBeenCalledTimes(1);
+
+      // At 20s should have 2 calls (10s interval)
+      vi.advanceTimersByTime(10000);
+      expect(mockDetector.assess).toHaveBeenCalledTimes(2);
+    });
+
+    it('switches back to 30s polling when disabled', () => {
+      controller.start(30000);
+      controller.setImportMode(true);
+      controller.setImportMode(false);
+      vi.clearAllMocks();
+
+      // Should be back to 30s
+      vi.advanceTimersByTime(10000);
+      expect(mockDetector.assess).toHaveBeenCalledTimes(0);
+
+      vi.advanceTimersByTime(20000);
+      expect(mockDetector.assess).toHaveBeenCalledTimes(1);
+    });
+  });
 });

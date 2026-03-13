@@ -93,6 +93,10 @@ jobs:
       - name: Run Ruff format check
         working-directory: ./backend
         run: uvx ruff format --check lambdas --exclude .aws-sam
+      - name: Run Bandit security scan
+        working-directory: ./backend
+        run: uvx bandit -r lambdas --exclude .aws-sam -ll -q
+        continue-on-error: true
       - name: Install test dependencies
         working-directory: ./tests/backend
         run: uv pip install -r requirements-test.lock --system
@@ -100,15 +104,37 @@ jobs:
         working-directory: ./tests/backend
         run: python -m pytest unit/ -v --tb=short
 
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Frontend npm audit
+        working-directory: ./frontend
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      - name: Client npm audit
+        working-directory: ./client
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
   status-check:
     name: All Checks
-    needs: [format, frontend, client, backend]
+    needs: [format, frontend, client, backend, security]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
     steps:
       - name: Verify all jobs passed
         run: |
+          # NOTE: security job is in `needs` for ordering but intentionally excluded
+          # from the failure condition while bootstrapping. Security scans run with
+          # continue-on-error to avoid blocking on pre-existing advisories.
+          # TODO: Make security blocking once baseline advisories are triaged.
           if [[ "${{ needs.format.result }}" == "failure" ]] || \
              [[ "${{ needs.frontend.result }}" == "failure" ]] || \
              [[ "${{ needs.client.result }}" == "failure" ]] || \

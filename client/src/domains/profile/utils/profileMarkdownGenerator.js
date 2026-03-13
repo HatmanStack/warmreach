@@ -167,6 +167,32 @@ function generateSkillsSection(skills) {
 }
 
 /**
+ * Generates markdown for the recent activity section
+ * @param {Array} recentActivity - Array of { text, timestamp } objects
+ * @returns {string} Markdown string
+ */
+function generateActivitySection(recentActivity) {
+  if (!recentActivity || !Array.isArray(recentActivity) || recentActivity.length === 0) {
+    return '';
+  }
+
+  const capped = recentActivity.slice(0, 10);
+  const lines = ['## Recent Activity'];
+
+  for (const activity of capped) {
+    if (activity.timestamp) {
+      lines.push(`### ${escapeMarkdown(activity.timestamp)}`);
+    }
+    if (activity.text) {
+      lines.push(escapeMarkdown(activity.text));
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n').trim();
+}
+
+/**
  * Generates markdown document from profile data
  * @param {Object} profile - Profile object matching profileTextSchema
  * @returns {string} Formatted markdown string
@@ -232,6 +258,12 @@ export function generateProfileMarkdown(profile) {
   const skillsSection = generateSkillsSection(profile.skills);
   if (skillsSection) {
     sections.push(skillsSection);
+  }
+
+  // Recent Activity
+  const activitySection = generateActivitySection(profile.recent_activity);
+  if (activitySection) {
+    sections.push(activitySection);
   }
 
   return sections.join('\n\n');

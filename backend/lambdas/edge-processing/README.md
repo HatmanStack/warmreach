@@ -28,8 +28,6 @@ Connection edge management and RAGStack vector search/ingestion operations.
 | `search` | `query` | Semantic search across ingested profiles |
 | `ingest` | `profileId`, `markdownContent` | Ingest profile markdown for vector search |
 | `status` | `documentId` | Check ingestion status of a document |
-| `scrape_start` | `profileId`, `cookies` | Start RAGStack web scrape of a LinkedIn profile |
-| `scrape_status` | `jobId` | Check scrape job status |
 
 ## DynamoDB Schema
 

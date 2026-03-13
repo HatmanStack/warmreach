@@ -57,6 +57,10 @@ describe('ProfileInitService', () => {
   let mockLinkedIn;
   let mockContact;
   let mockDynamo;
+  let mockLocalScraper;
+  let mockBurstThrottle;
+  let mockInteractionQueue;
+  let mockBackoffController;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,9 +76,48 @@ describe('ProfileInitService', () => {
       checkEdgeExists: vi.fn().mockResolvedValue(false),
       upsertEdgeStatus: vi.fn().mockResolvedValue(true),
       updateMessages: vi.fn().mockResolvedValue(true),
+      getProfileDetails: vi.fn().mockResolvedValue(true),
+      createProfileMetadata: vi.fn().mockResolvedValue({}),
+      canScrapeToday: vi.fn().mockResolvedValue(true),
+      incrementDailyScrapeCount: vi.fn().mockResolvedValue({ count: 1 }),
+      saveImportCheckpoint: vi.fn().mockResolvedValue({}),
+      getImportCheckpoint: vi.fn().mockResolvedValue(null),
+      clearImportCheckpoint: vi.fn().mockResolvedValue({}),
+    };
+    mockLocalScraper = {
+      scrapeProfile: vi.fn().mockResolvedValue({
+        name: 'Jane Doe',
+        headline: 'Engineer',
+        location: 'SF',
+        about: 'About',
+        currentPosition: { title: 'Engineer', company: 'Acme' },
+        experience: [],
+        education: [],
+        skills: ['JS'],
+        recentActivity: [],
+      }),
+    };
+    mockBurstThrottle = {
+      waitForNext: vi.fn().mockResolvedValue({ delayed: true, delayMs: 0 }),
+      reset: vi.fn(),
+    };
+    mockInteractionQueue = {
+      setImportMode: vi.fn(),
+    };
+    mockBackoffController = {
+      setImportMode: vi.fn(),
     };
 
-    service = new ProfileInitService(mockPuppeteer, mockLinkedIn, mockContact, mockDynamo);
+    service = new ProfileInitService(
+      mockPuppeteer,
+      mockLinkedIn,
+      mockContact,
+      mockDynamo,
+      mockLocalScraper,
+      mockBurstThrottle,
+      mockInteractionQueue,
+      mockBackoffController
+    );
   });
 
   describe('initializeUserProfile', () => {
@@ -98,10 +141,139 @@ describe('ProfileInitService', () => {
     });
   });
 
-  describe('performProfileScrape', () => {
-    it('should call contact service', async () => {
-      await service.performProfileScrape('test-id', 'ally');
-      expect(mockContact.scrapeProfile).toHaveBeenCalledWith('test-id', 'ally');
+  describe('local scraper integration', () => {
+    it('should scrape stale profiles with local scraper', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+      mockDynamo.getProfileDetails.mockResolvedValue(true); // stale
+
+      const result = await service.initializeUserProfile(state);
+      expect(result.success).toBe(true);
+      expect(mockLocalScraper.scrapeProfile).toHaveBeenCalled();
+      expect(mockDynamo.createProfileMetadata).toHaveBeenCalled();
+    });
+
+    it('should skip scraping when profile is fresh', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+      mockDynamo.getProfileDetails.mockResolvedValue(false); // fresh
+
+      const result = await service.initializeUserProfile(state);
+      expect(result.success).toBe(true);
+      expect(mockLocalScraper.scrapeProfile).not.toHaveBeenCalled();
+    });
+
+    it('should skip scraping when daily cap reached', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+      mockDynamo.canScrapeToday.mockResolvedValue(false);
+
+      const result = await service.initializeUserProfile(state);
+      expect(result.success).toBe(true);
+      expect(mockLocalScraper.scrapeProfile).not.toHaveBeenCalled();
+      // Edge should still be created
+      expect(mockDynamo.upsertEdgeStatus).toHaveBeenCalled();
+    });
+
+    it('should increment daily counter after successful scrape', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+      mockDynamo.getProfileDetails.mockResolvedValue(true);
+
+      await service.initializeUserProfile(state);
+      expect(mockDynamo.incrementDailyScrapeCount).toHaveBeenCalled();
+    });
+
+    it('should handle scrape failure gracefully', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+      mockDynamo.getProfileDetails.mockResolvedValue(true);
+      mockLocalScraper.scrapeProfile.mockRejectedValue(new Error('scrape failed'));
+
+      const result = await service.initializeUserProfile(state);
+      expect(result.success).toBe(true);
+      // Should still create edge
+      expect(mockDynamo.upsertEdgeStatus).toHaveBeenCalled();
+    });
+  });
+
+  describe('import mode toggling', () => {
+    it('should enable import mode at start and disable at end', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+
+      await service.initializeUserProfile(state);
+
+      expect(mockInteractionQueue.setImportMode).toHaveBeenCalledWith(true);
+      expect(mockInteractionQueue.setImportMode).toHaveBeenCalledWith(false);
+      expect(mockBackoffController.setImportMode).toHaveBeenCalledWith(true);
+      expect(mockBackoffController.setImportMode).toHaveBeenCalledWith(false);
+    });
+
+    it('should disable import mode on error', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+      mockLinkedIn.getConnections.mockRejectedValue(new Error('fail'));
+
+      try {
+        await service.initializeUserProfile(state);
+      } catch {
+        // expected
+      }
+
+      // Import mode should still be disabled in finally
+      expect(mockInteractionQueue.setImportMode).toHaveBeenCalledWith(false);
+      expect(mockBackoffController.setImportMode).toHaveBeenCalledWith(false);
+    });
+  });
+
+  describe('burst throttling', () => {
+    it('should call waitForNext before processing each connection', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+
+      await service.initializeUserProfile(state);
+
+      // waitForNext should be called for each connection processed
+      expect(mockBurstThrottle.waitForNext).toHaveBeenCalled();
+      // At least once per connection (2 per type, 3 types = up to 6)
+      expect(mockBurstThrottle.waitForNext.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('import checkpoint', () => {
+    it('should save checkpoint after each connection', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+
+      await service.initializeUserProfile(state);
+
+      expect(mockDynamo.saveImportCheckpoint).toHaveBeenCalled();
+    });
+
+    it('should clear checkpoint on completion', async () => {
+      const state = { requestId: 'req1', jwtToken: 'token' };
+
+      await service.initializeUserProfile(state);
+
+      expect(mockDynamo.clearImportCheckpoint).toHaveBeenCalled();
+    });
+
+    it('should load checkpoint on startup and resume from saved position', async () => {
+      mockDynamo.getImportCheckpoint.mockResolvedValue({
+        connectionType: 'ally',
+        batchIndex: 0,
+        lastProfileId: 'p1',
+      });
+
+      const state = { requestId: 'req1', jwtToken: 'token' };
+
+      await service.initializeUserProfile(state);
+
+      expect(mockDynamo.getImportCheckpoint).toHaveBeenCalled();
+    });
+
+    it('should not set resume state when checkpoint is null', async () => {
+      mockDynamo.getImportCheckpoint.mockResolvedValue(null);
+
+      const state = { requestId: 'req1', jwtToken: 'token' };
+
+      await service.initializeUserProfile(state);
+
+      expect(mockDynamo.getImportCheckpoint).toHaveBeenCalled();
+      // All connection types should be processed (no skipping)
+      expect(mockLinkedIn.getConnections).toHaveBeenCalledTimes(3);
     });
   });
 

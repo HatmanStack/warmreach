@@ -106,6 +106,7 @@ class InteractionQueue {
   private readonly maxJobHistory: number;
   private readonly memoryThresholdPercent: number;
   private readonly jobTtlMs: number;
+  private importModeOverrideTtlMs: number | null = null;
   private queue: QueueItem[];
   private activeCount: number;
   private jobs: Map<string, JobRecord>;
@@ -125,6 +126,27 @@ class InteractionQueue {
     this.activeCount = 0;
     this.jobs = new Map();
     this.lastTtlCleanup = Date.now();
+  }
+
+  /**
+   * Get the effective TTL, accounting for import mode override.
+   */
+  private get effectiveTtlMs(): number {
+    return this.importModeOverrideTtlMs ?? this.jobTtlMs;
+  }
+
+  /**
+   * Enable or disable import mode.
+   * Import mode extends job TTL to 4 hours to prevent eviction during long bulk imports.
+   */
+  setImportMode(enabled: boolean): void {
+    if (enabled) {
+      this.importModeOverrideTtlMs = 4 * 60 * 60 * 1000; // 4 hours
+      logger.info('[InteractionQueue] Import mode enabled (4h TTL)');
+    } else {
+      this.importModeOverrideTtlMs = null;
+      logger.info('[InteractionQueue] Import mode disabled (original TTL restored)');
+    }
   }
 
   /**
@@ -222,10 +244,28 @@ class InteractionQueue {
       queuedJobs: this.queue.length,
       totalJobsTracked: this.jobs.size,
       concurrency: this.concurrency,
-      memoryPressure: this.checkMemoryPressure(),
+      memoryPressure: this.getMemoryPressureStatus(),
       paused: this._paused,
       pauseReason: this._pauseReason,
       pausedAt: this._pausedAt,
+    };
+  }
+
+  /**
+   * Get memory pressure status without triggering eviction.
+   * Use checkMemoryPressure() when you want eviction as a side effect.
+   */
+  getMemoryPressureStatus(): MemoryPressureStatus {
+    const memUsage = process.memoryUsage();
+    const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+    const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
+    const heapUsedPercent = Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100);
+    return {
+      heapUsedMB,
+      heapTotalMB,
+      heapUsedPercent,
+      isUnderPressure: heapUsedPercent >= this.memoryThresholdPercent,
+      threshold: this.memoryThresholdPercent,
     };
   }
 
@@ -396,8 +436,8 @@ class InteractionQueue {
    * Evict completed/failed jobs older than TTL threshold.
    * Prevents stale job accumulation even when under maxJobHistory limit.
    */
-  private _evictStaleJobs(): void {
-    const staleThreshold = Date.now() - this.jobTtlMs;
+  _evictStaleJobs(): void {
+    const staleThreshold = Date.now() - this.effectiveTtlMs;
     let evictedCount = 0;
 
     for (const [id, job] of this.jobs) {
@@ -414,7 +454,7 @@ class InteractionQueue {
       logger.debug('InteractionQueue: TTL eviction completed', {
         evicted: evictedCount,
         remaining: this.jobs.size,
-        ttlMs: this.jobTtlMs,
+        ttlMs: this.effectiveTtlMs,
       });
     }
   }

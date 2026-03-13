@@ -21,6 +21,7 @@ interface BackoffStatus {
 export class BackoffController {
   private isChecking: boolean = false;
   private checkInterval: NodeJS.Timeout | null = null;
+  private currentIntervalMs: number = 30000;
 
   constructor(
     private detector: SignalDetector,
@@ -30,14 +31,17 @@ export class BackoffController {
   /**
    * Start monitoring for threats
    */
-  start(intervalMs: number = 30000): void {
+  start(intervalMs?: number): void {
     if (this.checkInterval) return;
+
+    const interval = intervalMs ?? this.currentIntervalMs;
+    this.currentIntervalMs = interval;
 
     this.checkInterval = setInterval(() => {
       this.assessAndAct().catch((err) => {
         logger.error('[BackoffController] Error checking threats:', err);
       });
-    }, intervalMs);
+    }, interval);
 
     logger.info('[BackoffController] Monitoring started');
   }
@@ -51,6 +55,19 @@ export class BackoffController {
       this.checkInterval = null;
     }
     logger.info('[BackoffController] Monitoring stopped');
+  }
+
+  /**
+   * Switch between import mode (10s polling) and normal mode (30s polling).
+   */
+  setImportMode(enabled: boolean): void {
+    const newInterval = enabled ? 10000 : 30000;
+    if (this.checkInterval) {
+      this.stop();
+      this.start(newInterval);
+    }
+    this.currentIntervalMs = newInterval;
+    logger.info(`[BackoffController] Import mode ${enabled ? 'enabled (10s)' : 'disabled (30s)'}`);
   }
 
   /**

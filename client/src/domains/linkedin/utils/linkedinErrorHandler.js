@@ -213,6 +213,12 @@ export class LinkedInErrorHandler {
    * Categorize error based on error message and context
    */
   static categorizeError(error) {
+    // Fast path: structured error code from service layer
+    if (error.code && this.ERROR_CODES[error.code]) {
+      return this.ERROR_CODES[error.code];
+    }
+
+    // Fallback: string matching for unstructured errors (Puppeteer, network, etc.)
     const errorMessage = error.message.toLowerCase();
 
     // Authentication errors

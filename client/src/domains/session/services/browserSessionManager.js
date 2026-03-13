@@ -36,6 +36,7 @@ class BrowserSessionManager {
   static sessionMetrics = null;
   static contentAnalyzer = null;
   static backoffController = null;
+  static _initializingPromise = null;
 
   /**
    * Get maximum errors from configuration.
@@ -108,33 +109,20 @@ class BrowserSessionManager {
         return this.instance;
       }
 
-      // Clean up any existing unhealthy session before reinitializing
-      if (this.instance) {
-        logger.info('Cleaning up unhealthy browser session');
-        await this.cleanup();
+      // If initialization is already in progress, await it
+      if (this._initializingPromise) {
+        logger.debug('Awaiting in-flight browser session initialization');
+        return await this._initializingPromise;
       }
 
-      // Initialize signal detection components
-      this.signalDetector = new SignalDetector();
-      this.sessionMetrics = new SessionMetrics(this.signalDetector);
-      this.contentAnalyzer = getContentAnalyzer(linkedinResolver);
-
-      // Initialize and start backoff controller
-      this.backoffController = new BackoffController(this.signalDetector, linkedInInteractionQueue);
-      this.backoffController.start();
-
-      // Create new session
-      logger.info('Initializing new browser session for LinkedIn interactions');
-      this.instance = new PuppeteerService();
-      await this.instance.initialize();
-
-      this.sessionStartTime = new Date();
-      this.lastActivity = new Date();
-      this.isAuthenticated = false;
-      this.errorCount = 0;
-
-      logger.info('Browser session initialized successfully');
-      return this.instance;
+      // Start initialization and store the promise
+      this._initializingPromise = this._initialize(options);
+      try {
+        const instance = await this._initializingPromise;
+        return instance;
+      } finally {
+        this._initializingPromise = null;
+      }
     } catch (error) {
       logger.error('Failed to get browser session instance:', error);
       this.errorCount++;
@@ -149,6 +137,41 @@ class BrowserSessionManager {
 
       throw error;
     }
+  }
+
+  /**
+   * Internal initialization logic, extracted so getInstance can store the promise.
+   * @param {Object} options
+   * @returns {Promise<PuppeteerService>}
+   */
+  static async _initialize(_options) {
+    // Clean up any existing unhealthy session before reinitializing
+    if (this.instance) {
+      logger.info('Cleaning up unhealthy browser session');
+      await this.cleanup();
+    }
+
+    // Initialize signal detection components
+    this.signalDetector = new SignalDetector();
+    this.sessionMetrics = new SessionMetrics(this.signalDetector);
+    this.contentAnalyzer = getContentAnalyzer(linkedinResolver);
+
+    // Initialize and start backoff controller
+    this.backoffController = new BackoffController(this.signalDetector, linkedInInteractionQueue);
+    this.backoffController.start();
+
+    // Create new session
+    logger.info('Initializing new browser session for LinkedIn interactions');
+    this.instance = new PuppeteerService();
+    await this.instance.initialize();
+
+    this.sessionStartTime = new Date();
+    this.lastActivity = new Date();
+    this.isAuthenticated = false;
+    this.errorCount = 0;
+
+    logger.info('Browser session initialized successfully');
+    return this.instance;
   }
 
   /**
@@ -267,6 +290,7 @@ class BrowserSessionManager {
       this.isAuthenticated = false;
       this.sessionStartTime = null;
       this.errorCount = 0;
+      this._initializingPromise = null;
 
       logger.info('Browser session cleanup completed');
     } catch (error) {
@@ -276,6 +300,7 @@ class BrowserSessionManager {
       this.lastActivity = null;
       this.isAuthenticated = false;
       this.sessionStartTime = null;
+      this._initializingPromise = null;
     }
   }
 
@@ -344,6 +369,7 @@ class BrowserSessionManager {
     this.sessionMetrics = null;
     this.contentAnalyzer = null;
     this.backoffController = null;
+    this._initializingPromise = null;
     _resetContentAnalyzerForTesting();
   }
 }

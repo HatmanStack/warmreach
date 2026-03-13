@@ -1,12 +1,9 @@
 /**
  * RAGStack Domain
  *
- * Provides integration with RAGStack-Lambda for web scraping
- * and knowledge base operations on LinkedIn profiles.
+ * Provides integration with RAGStack-Lambda for
+ * knowledge base operations on LinkedIn profiles.
+ *
+ * Scrape-related code was removed in favor of local scraping
+ * via the Electron client's Puppeteer session.
  */
-
-// Types
-export * from './types/ragstack.js';
-
-// Utils
-export { extractLinkedInCookies } from './utils/cookieExtractor.js';

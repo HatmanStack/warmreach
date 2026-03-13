@@ -350,3 +350,109 @@ class TestValidateProfileField:
         service = DynamoDBApiService(table=MagicMock())
         assert service.validate_profile_field('summary', 'x' * 2600) is True
         assert service.validate_profile_field('summary', 'x' * 2601) is False
+
+
+class TestDailyScrapeCount:
+    """Tests for daily scrape count methods."""
+
+    def test_get_returns_0_for_missing_item(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {}
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.get_daily_scrape_count('user-123', '2026-03-13')
+        assert result == {'count': 0}
+
+    def test_get_returns_existing_count(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {'PK': 'USER#user-123', 'SK': '#DAILY_SCRAPE_COUNT#2026-03-13', 'count': 42}
+        }
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.get_daily_scrape_count('user-123', '2026-03-13')
+        assert result == {'count': 42}
+
+    def test_increment_creates_item_with_count_1(self):
+        mock_table = MagicMock()
+        mock_table.update_item.return_value = {'Attributes': {'count': 1}}
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.increment_daily_scrape_count('user-123', '2026-03-13')
+        assert result == {'count': 1}
+
+        call_kwargs = mock_table.update_item.call_args[1]
+        assert call_kwargs['Key'] == {'PK': 'USER#user-123', 'SK': '#DAILY_SCRAPE_COUNT#2026-03-13'}
+        # Verify TTL is set
+        assert ':ttl' in call_kwargs['ExpressionAttributeValues']
+
+    def test_increment_is_atomic(self):
+        mock_table = MagicMock()
+        mock_table.update_item.return_value = {'Attributes': {'count': 5}}
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.increment_daily_scrape_count('user-123', '2026-03-13')
+        assert result == {'count': 5}
+        # Verify ADD expression is used for atomicity
+        call_kwargs = mock_table.update_item.call_args[1]
+        assert 'ADD' in call_kwargs['UpdateExpression']
+
+
+class TestImportCheckpoint:
+    """Tests for import checkpoint methods."""
+
+    def test_save_creates_item(self):
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        checkpoint = {
+            'batchIndex': 2,
+            'lastProfileId': 'john-doe',
+            'connectionType': 'ally',
+            'processedCount': 50,
+            'totalCount': 200,
+            'updatedAt': '2026-03-13T00:00:00Z',
+        }
+        result = service.save_import_checkpoint('user-123', checkpoint)
+        assert result == {'success': True}
+
+        put_item = mock_table.put_item.call_args[1]['Item']
+        assert put_item['PK'] == 'USER#user-123'
+        assert put_item['SK'] == '#IMPORT_CHECKPOINT'
+        assert put_item['batchIndex'] == 2
+
+    def test_get_returns_saved_data(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'PK': 'USER#user-123',
+                'SK': '#IMPORT_CHECKPOINT',
+                'batchIndex': 2,
+                'lastProfileId': 'john-doe',
+            }
+        }
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.get_import_checkpoint('user-123')
+        assert result['checkpoint']['batchIndex'] == 2
+        assert result['checkpoint']['lastProfileId'] == 'john-doe'
+        # PK/SK should be stripped
+        assert 'PK' not in result['checkpoint']
+
+    def test_get_returns_empty_when_not_found(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {}
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.get_import_checkpoint('user-123')
+        assert result == {}
+
+    def test_clear_deletes_item(self):
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.clear_import_checkpoint('user-123')
+        assert result == {'success': True}
+        mock_table.delete_item.assert_called_once_with(
+            Key={'PK': 'USER#user-123', 'SK': '#IMPORT_CHECKPOINT'}
+        )

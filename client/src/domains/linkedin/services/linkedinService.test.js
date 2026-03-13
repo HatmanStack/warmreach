@@ -70,16 +70,6 @@ vi.mock('../../storage/services/dynamoDBService.js', () => ({
   },
 }));
 
-// Mock LinkedInContactService (relative path import)
-vi.mock('./linkedinContactService.js', () => ({
-  default: class MockLinkedInContactService {
-    constructor() {}
-    processContact() {
-      return Promise.resolve();
-    }
-  },
-}));
-
 vi.mock('../selectors/index.js', () => ({
   linkedinResolver: {
     resolveWithWait: vi.fn(),

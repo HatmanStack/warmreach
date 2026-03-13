@@ -2,6 +2,7 @@ import axios from 'axios';
 import { logger } from '#utils/logger.js';
 
 const API_BASE_URL = process.env.API_GATEWAY_BASE_URL;
+const DAILY_SCRAPE_CAP = 200;
 
 class DynamoDBService {
   constructor() {
@@ -212,6 +213,82 @@ class DynamoDBService {
       logger.warn(`checkEdgeExists failed for ${connectionProfileId}: ${error.message}`);
       return false;
     }
+  }
+
+  /**
+   * Get daily scrape count for today (UTC).
+   * @returns {Promise<number>} Count of scrapes today, default 0
+   */
+  async getDailyScrapeCount() {
+    const today = new Date().toISOString().split('T')[0];
+    try {
+      const data = await this._get('dynamodb', {
+        operation: 'get_daily_scrape_count',
+        date: today,
+      });
+      return data?.count || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Increment the daily scrape counter by 1.
+   * @returns {Promise<Object>} The updated count
+   */
+  async incrementDailyScrapeCount() {
+    const today = new Date().toISOString().split('T')[0];
+    return await this._post('dynamodb', {
+      operation: 'increment_daily_scrape_count',
+      date: today,
+    });
+  }
+
+  /**
+   * Check if daily scrape cap has been reached.
+   * @param {number} [dailyCap=200] - Maximum scrapes per day
+   * @returns {Promise<boolean>} true if under cap, false if at or over
+   */
+  async canScrapeToday(dailyCap = DAILY_SCRAPE_CAP) {
+    const count = await this.getDailyScrapeCount();
+    return count < dailyCap;
+  }
+
+  /**
+   * Save an import checkpoint for bulk import resume.
+   * @param {Object} checkpoint - Checkpoint data
+   * @returns {Promise<Object>}
+   */
+  async saveImportCheckpoint(checkpoint) {
+    return await this._post('dynamodb', {
+      operation: 'save_import_checkpoint',
+      checkpoint,
+    });
+  }
+
+  /**
+   * Get the current import checkpoint, or null if none exists.
+   * @returns {Promise<Object|null>}
+   */
+  async getImportCheckpoint() {
+    try {
+      const data = await this._get('dynamodb', {
+        operation: 'get_import_checkpoint',
+      });
+      return data?.checkpoint || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Clear the import checkpoint after completion.
+   * @returns {Promise<Object>}
+   */
+  async clearImportCheckpoint() {
+    return await this._post('dynamodb', {
+      operation: 'clear_import_checkpoint',
+    });
   }
 
   /**

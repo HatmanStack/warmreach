@@ -97,6 +97,20 @@ describe('BrowserSessionManager', () => {
       expect(PuppeteerService).toHaveBeenCalledTimes(1);
     });
 
+    it('should not race when getInstance is called concurrently', async () => {
+      // Call getInstance twice without awaiting the first
+      const [instance1, instance2] = await Promise.all([
+        BrowserSessionManager.getInstance({ reinitializeIfUnhealthy: true }),
+        BrowserSessionManager.getInstance({ reinitializeIfUnhealthy: true }),
+      ]);
+
+      // Both should return the same instance
+      expect(instance1).toBe(instance2);
+
+      // PuppeteerService should have been constructed only once
+      expect(PuppeteerService).toHaveBeenCalledTimes(1);
+    });
+
     it('should reinitialize if session is unhealthy', async () => {
       const first = await BrowserSessionManager.getInstance();
 

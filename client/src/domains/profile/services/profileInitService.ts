@@ -164,15 +164,6 @@ export interface InitializationResult {
 }
 
 /**
- * Scrape result
- */
-interface ScrapeResult {
-  success: boolean;
-  message?: string;
-  data?: unknown;
-}
-
-/**
  * Error details from categorization
  */
 interface ErrorDetails {
@@ -203,15 +194,46 @@ interface DynamoDBService {
   getProfileDetails(profileId: string): Promise<unknown>;
   markBadContact(profileId: string): Promise<void>;
   createProfileMetadata?(profileId: string, metadata: Record<string, string>): Promise<unknown>;
+  canScrapeToday?(): Promise<boolean>;
+  incrementDailyScrapeCount?(): Promise<unknown>;
+  saveImportCheckpoint?(checkpoint: Record<string, unknown>): Promise<unknown>;
+  getImportCheckpoint?(): Promise<Record<string, unknown> | null>;
+  clearImportCheckpoint?(): Promise<unknown>;
 }
 
 /**
- * LinkedIn contact service interface
+ * Local profile scraper interface
  */
-interface LinkedInContactService {
-  scrapeProfile(profileId: string, status: string): Promise<ScrapeResult>;
-  setAuthToken?(token: string): void;
+interface LocalProfileScraperInterface {
+  scrapeProfile(profileId: string): Promise<{
+    name: string | null;
+    headline: string | null;
+    location: string | null;
+    about: string | null;
+    currentPosition: { title: string; company: string } | null;
+    experience: unknown[];
+    education: unknown[];
+    skills: string[];
+    recentActivity: unknown[];
+  }>;
 }
+
+/**
+ * Burst throttle manager interface
+ */
+interface BurstThrottleManagerInterface {
+  waitForNext(): Promise<{ delayed: boolean; delayMs: number }>;
+  reset(): void;
+}
+
+/**
+ * Import mode interface for queue/backoff
+ */
+interface ImportModeToggle {
+  setImportMode(enabled: boolean): void;
+}
+
+// LinkedInContactService interface removed -- replaced by local scraper (Phase 2 wiring)
 
 /**
  * Gets the API base URL from environment, with proper normalization
@@ -229,21 +251,31 @@ function getApiBaseUrl(): string | undefined {
 export class ProfileInitService {
   private puppeteer: PuppeteerService;
   private linkedInService: LinkedInService;
-  private linkedInContactService: LinkedInContactService;
   private dynamoDBService: DynamoDBService;
   private messageScraperService: InstanceType<typeof LinkedInMessageScraperService>;
+  private localProfileScraper: LocalProfileScraperInterface | null;
+  private burstThrottleManager: BurstThrottleManagerInterface | null;
+  private interactionQueue: ImportModeToggle | null;
+  private backoffController: ImportModeToggle | null;
   private batchSize: number;
 
   constructor(
     puppeteerService: PuppeteerService,
     linkedInService: LinkedInService,
-    linkedInContactService: LinkedInContactService,
-    dynamoDBService: DynamoDBService
+    _linkedInContactService: unknown,
+    dynamoDBService: DynamoDBService,
+    localProfileScraper?: LocalProfileScraperInterface,
+    burstThrottleManager?: BurstThrottleManagerInterface,
+    interactionQueue?: ImportModeToggle,
+    backoffController?: ImportModeToggle
   ) {
     this.puppeteer = puppeteerService;
     this.linkedInService = linkedInService;
-    this.linkedInContactService = linkedInContactService;
     this.dynamoDBService = dynamoDBService;
+    this.localProfileScraper = localProfileScraper || null;
+    this.burstThrottleManager = burstThrottleManager || null;
+    this.interactionQueue = interactionQueue || null;
+    this.backoffController = backoffController || null;
     this.messageScraperService = new LinkedInMessageScraperService({
       sessionManager: BrowserSessionManager,
     });
@@ -271,7 +303,6 @@ export class ProfileInitService {
       // Set auth token for DynamoDB and scrape operations
       if (state.jwtToken) {
         this.dynamoDBService.setAuthToken(state.jwtToken);
-        this.linkedInContactService.setAuthToken?.(state.jwtToken);
       }
 
       // Perform LinkedIn login using existing LinkedInService
@@ -348,11 +379,27 @@ export class ProfileInitService {
    * Process connection lists with batch processing
    */
   async processConnectionLists(state: ProfileInitState): Promise<ProcessingResult> {
+    // Enable import mode on queue and backoff
+    this.interactionQueue?.setImportMode(true);
+    this.backoffController?.setImportMode(true);
+
     try {
       logger.info('Starting connection list processing');
 
       // Validate state using ProfileInitStateManager
       ProfileInitStateManager.validateState(state);
+
+      // Load existing import checkpoint for resume after restart
+      const checkpoint = await this.dynamoDBService.getImportCheckpoint?.();
+      if (checkpoint) {
+        logger.info('Resuming from import checkpoint', {
+          connectionType: checkpoint.connectionType,
+          batchIndex: checkpoint.batchIndex,
+          lastProfileId: checkpoint.lastProfileId,
+        });
+        state.currentProcessingList = checkpoint.connectionType as string;
+        state.currentBatch = checkpoint.batchIndex as number;
+      }
 
       // Create master index file if not resuming from healing
       let masterIndexFile = state.masterIndexFile;
@@ -439,6 +486,9 @@ export class ProfileInitService {
       // Phase 2: Scrape message histories and update edges
       await this._scrapeAndStoreMessages(masterIndexFile);
 
+      // Clear import checkpoint on successful completion
+      await this.dynamoDBService.clearImportCheckpoint?.();
+
       // Update final progress summary
       results.progressSummary = ProfileInitStateManager.getProgressSummary(state);
 
@@ -453,6 +503,10 @@ export class ProfileInitService {
     } catch (error) {
       logger.error('Connection list processing failed:', error);
       throw error;
+    } finally {
+      // Always disable import mode
+      this.interactionQueue?.setImportMode(false);
+      this.backoffController?.setImportMode(false);
     }
   }
 
@@ -820,9 +874,24 @@ export class ProfileInitService {
             continue;
           }
 
+          // Burst throttling between connections
+          if (this.burstThrottleManager) {
+            await this.burstThrottleManager.waitForNext();
+          }
+
           // Process the connection (create database entry)
           const pictureUrl = batchData.pictureUrls?.[connectionProfileId];
           await this._processConnection(connectionProfileId, state, connectionStatus, pictureUrl);
+
+          // Save import checkpoint after each connection
+          await this.dynamoDBService.saveImportCheckpoint?.({
+            batchIndex: batchData.batchNumber,
+            lastProfileId: connectionProfileId,
+            connectionType: batchData.connectionType,
+            processedCount: result.processed + 1,
+            totalCount: batchData.connections.length,
+            updatedAt: new Date().toISOString(),
+          });
 
           result.processed++;
           result.connections.push({
@@ -1009,22 +1078,37 @@ export class ProfileInitService {
         currentIndex: state.currentIndex,
       });
 
-      let scrapeResult: ScrapeResult | null = null;
       let databaseResult: unknown = null;
 
       try {
-        const testingMode = process.env.LINKEDIN_TESTING_MODE === 'true';
-
-        if (testingMode) {
-          // In testing mode, skip RAGStack scrape (it would try real linkedin.com)
-          // and create fallback metadata directly from the profileId
-          logger.debug(
-            `Testing mode: skipping scrape, creating fallback metadata for ${connectionProfileId}`,
-            {
-              requestId,
-              profileId: connectionProfileId,
+        // Local scraping with cap and staleness checks
+        try {
+          const canScrape = (await this.dynamoDBService.canScrapeToday?.()) ?? true;
+          if (!canScrape) {
+            logger.warn(`Daily scrape cap reached, skipping scrape for ${connectionProfileId}`);
+          } else {
+            const needsScrape = await this.dynamoDBService.getProfileDetails(connectionProfileId);
+            if (needsScrape && this.localProfileScraper) {
+              const scrapedData = await this.localProfileScraper.scrapeProfile(connectionProfileId);
+              await this.dynamoDBService.createProfileMetadata?.(connectionProfileId, {
+                name: scrapedData.name || '',
+                headline: scrapedData.headline || '',
+                currentTitle: scrapedData.currentPosition?.title || '',
+                currentCompany: scrapedData.currentPosition?.company || '',
+                currentLocation: scrapedData.location || '',
+                ...(pictureUrl ? { profilePictureUrl: pictureUrl } : {}),
+              });
+              await this.dynamoDBService.incrementDailyScrapeCount?.();
+              logger.debug(`Profile scraped locally: ${connectionProfileId}`);
+            } else if (!needsScrape) {
+              logger.debug(`Profile is fresh, skipping scrape: ${connectionProfileId}`);
             }
-          );
+          }
+        } catch (scrapeErr) {
+          logger.warn(`Local scrape failed for ${connectionProfileId} (non-fatal)`, {
+            error: (scrapeErr as Error).message,
+          });
+          // Create a basic fallback metadata record
           try {
             const name = connectionProfileId
               .replace(/-\d+$/, '')
@@ -1033,49 +1117,10 @@ export class ProfileInitService {
               .join(' ');
             await this.dynamoDBService.createProfileMetadata?.(connectionProfileId, {
               name,
-              currentTitle: 'Mock Title',
-              currentCompany: 'Mock Company',
-              headline: `${name} - Mock Profile`,
               ...(pictureUrl ? { profilePictureUrl: pictureUrl } : {}),
             });
           } catch {
             // non-fatal
-          }
-        } else {
-          // Production: scrape profile using RAGStack
-          logger.debug(`Initiating profile scrape for connection: ${connectionProfileId}`, {
-            requestId,
-            profileId: connectionProfileId,
-          });
-
-          scrapeResult = await this.performProfileScrape(connectionProfileId, connectionType);
-
-          if (scrapeResult && scrapeResult.success) {
-            logger.debug(`Profile scrape successful for ${connectionProfileId}`, {
-              requestId,
-              profileId: connectionProfileId,
-            });
-          } else {
-            logger.warn(`Profile scrape failed for ${connectionProfileId}`, {
-              requestId,
-              profileId: connectionProfileId,
-              reason: scrapeResult?.message || 'Unknown scrape error',
-            });
-
-            // Create a basic metadata record so the connection isn't blank
-            try {
-              const name = connectionProfileId
-                .replace(/-\d+$/, '')
-                .split('-')
-                .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
-                .join(' ');
-              await this.dynamoDBService.createProfileMetadata?.(connectionProfileId, {
-                name,
-                ...(pictureUrl ? { profilePictureUrl: pictureUrl } : {}),
-              });
-            } catch {
-              // non-fatal
-            }
           }
         }
 
@@ -1104,7 +1149,6 @@ export class ProfileInitService {
           requestId,
           profileId: connectionProfileId,
           processingDuration,
-          scrapeSuccess: scrapeResult?.success || false,
           databaseSuccess: !!databaseResult,
         });
       } catch (processingErr) {
@@ -1130,8 +1174,6 @@ export class ProfileInitService {
           profileId: connectionProfileId,
           duration: processingDuration,
           errorDetails,
-          scrapeAttempted: !!scrapeResult,
-          scrapeSuccess: scrapeResult?.success || false,
           databaseAttempted: !!databaseResult,
         };
 
@@ -1153,23 +1195,6 @@ export class ProfileInitService {
         },
       });
 
-      throw error;
-    }
-  }
-
-  /**
-   * Scrape profile using RAGStack via LinkedInContactService
-   */
-  async performProfileScrape(profileId: string, status: string = 'ally'): Promise<ScrapeResult> {
-    try {
-      logger.info(`Initiating RAGStack scrape for: ${profileId}`);
-
-      const result = await this.linkedInContactService.scrapeProfile(profileId, status);
-
-      logger.info(`RAGStack scrape completed for: ${profileId}`);
-      return result;
-    } catch (error) {
-      logger.error(`Failed to scrape profile ${profileId}:`, error);
       throw error;
     }
   }

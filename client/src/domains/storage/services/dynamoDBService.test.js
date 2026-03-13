@@ -154,6 +154,87 @@ describe('DynamoDBService', () => {
     });
   });
 
+  describe('daily scrape cap', () => {
+    it('canScrapeToday returns true when count is 0', async () => {
+      mockAxiosInstance.get.mockResolvedValue({ data: { count: 0 } });
+      const result = await service.canScrapeToday();
+      expect(result).toBe(true);
+    });
+
+    it('canScrapeToday returns false when count is 200', async () => {
+      mockAxiosInstance.get.mockResolvedValue({ data: { count: 200 } });
+      const result = await service.canScrapeToday();
+      expect(result).toBe(false);
+    });
+
+    it('incrementDailyScrapeCount calls the correct API endpoint', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: { count: 1 } });
+      const result = await service.incrementDailyScrapeCount();
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        'dynamodb',
+        expect.objectContaining({
+          operation: 'increment_daily_scrape_count',
+        }),
+        expect.any(Object)
+      );
+      expect(result).toEqual({ count: 1 });
+    });
+
+    it('getDailyScrapeCount returns 0 when no data', async () => {
+      mockAxiosInstance.get.mockResolvedValue({ data: {} });
+      const count = await service.getDailyScrapeCount();
+      expect(count).toBe(0);
+    });
+  });
+
+  describe('import checkpoint', () => {
+    it('saveImportCheckpoint calls correct API', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: { success: true } });
+      const checkpoint = {
+        batchIndex: 2,
+        lastProfileId: 'john-doe',
+        connectionType: 'ally',
+        processedCount: 50,
+        totalCount: 200,
+        updatedAt: '2026-03-13T00:00:00Z',
+      };
+      await service.saveImportCheckpoint(checkpoint);
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        'dynamodb',
+        expect.objectContaining({
+          operation: 'save_import_checkpoint',
+          checkpoint,
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it('getImportCheckpoint returns null when no checkpoint exists', async () => {
+      mockAxiosInstance.get.mockResolvedValue({ data: {} });
+      const result = await service.getImportCheckpoint();
+      expect(result).toBeNull();
+    });
+
+    it('getImportCheckpoint returns saved checkpoint', async () => {
+      const checkpoint = { batchIndex: 2, lastProfileId: 'john-doe' };
+      mockAxiosInstance.get.mockResolvedValue({ data: { checkpoint } });
+      const result = await service.getImportCheckpoint();
+      expect(result).toEqual(checkpoint);
+    });
+
+    it('clearImportCheckpoint calls correct API', async () => {
+      mockAxiosInstance.post.mockResolvedValue({ data: { success: true } });
+      await service.clearImportCheckpoint();
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        'dynamodb',
+        expect.objectContaining({
+          operation: 'clear_import_checkpoint',
+        }),
+        expect.any(Object)
+      );
+    });
+  });
+
   describe('handleError', () => {
     it('should handle 401 error', () => {
       const error = { response: { status: 401 } };

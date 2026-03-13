@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LinkedInErrorHandler } from './linkedinErrorHandler.js';
+import { LinkedInError } from './LinkedInError.js';
 
 // Mock logger
 vi.mock('#utils/logger.js', () => ({
@@ -38,6 +39,37 @@ describe('LinkedInErrorHandler', () => {
       const categorized = LinkedInErrorHandler.categorizeError(error);
       expect(categorized.category).toBe('SYSTEM');
       expect(categorized.httpStatus).toBe(500);
+    });
+
+    it('should categorize error by code when present', () => {
+      const error = new Error('some message');
+      error.code = 'LINKEDIN_RATE_LIMIT';
+      const result = LinkedInErrorHandler.categorizeError(error);
+      expect(result).toBe(LinkedInErrorHandler.ERROR_CODES.LINKEDIN_RATE_LIMIT);
+      expect(result.category).toBe('RATE_LIMIT');
+    });
+
+    it('should fall through to string matching when code is not in ERROR_CODES', () => {
+      const error = new Error('Browser session crashed');
+      error.code = 'UNKNOWN_CODE_XYZ';
+      const result = LinkedInErrorHandler.categorizeError(error);
+      expect(result.category).toBe('BROWSER');
+    });
+
+    it('should categorize LinkedInError instance by code', () => {
+      const error = new LinkedInError('something failed', 'ELEMENT_NOT_FOUND');
+      const result = LinkedInErrorHandler.categorizeError(error);
+      expect(result).toBe(LinkedInErrorHandler.ERROR_CODES.ELEMENT_NOT_FOUND);
+      expect(result.category).toBe('BROWSER');
+      expect(result.httpStatus).toBe(422);
+    });
+
+    it('should use code fast path over string matching', () => {
+      // Message would match BROWSER_CRASH via string matching, but code wins
+      const error = new LinkedInError('Browser session crashed', 'LINKEDIN_RATE_LIMIT');
+      const result = LinkedInErrorHandler.categorizeError(error);
+      expect(result).toBe(LinkedInErrorHandler.ERROR_CODES.LINKEDIN_RATE_LIMIT);
+      expect(result.category).toBe('RATE_LIMIT');
     });
   });
 

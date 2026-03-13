@@ -202,7 +202,6 @@ export class SearchController {
   async _processContacts(services, uniqueLinks, state, pictureUrls = {}) {
     const contactProcessor = new ContactProcessor(
       services.linkedInService,
-      services.linkedInContactService,
       services.dynamoDBService,
       config
     );

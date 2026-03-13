@@ -4,6 +4,7 @@ import base64
 import ipaddress
 import logging
 import socket
+import time
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -253,6 +254,73 @@ class DynamoDBApiService(BaseService):
             logger.warning(f'Rejected unknown profile field: {field}')
             return False
         return validator(value)
+
+    def get_daily_scrape_count(self, user_id: str, date: str) -> dict[str, Any]:
+        """Get daily scrape count for a user on a given date."""
+        try:
+            response = self.table.get_item(Key={'PK': f'USER#{user_id}', 'SK': f'#DAILY_SCRAPE_COUNT#{date}'})
+            item = response.get('Item')
+            return {'count': item.get('count', 0) if item else 0}
+        except ClientError as e:
+            logger.error(f'Error getting daily scrape count: {e}')
+            return {'count': 0}
+
+    def increment_daily_scrape_count(self, user_id: str, date: str) -> dict[str, Any]:
+        """Atomically increment daily scrape count. Sets 48h TTL on creation."""
+        ttl = int(time.time()) + (48 * 3600)  # 48 hours
+        try:
+            response = self.table.update_item(
+                Key={'PK': f'USER#{user_id}', 'SK': f'#DAILY_SCRAPE_COUNT#{date}'},
+                UpdateExpression='ADD #cnt :inc SET #ttl = if_not_exists(#ttl, :ttl)',
+                ExpressionAttributeNames={'#cnt': 'count', '#ttl': 'ttl'},
+                ExpressionAttributeValues={':inc': 1, ':ttl': ttl},
+                ReturnValues='ALL_NEW',
+            )
+            new_count = int(response.get('Attributes', {}).get('count', 1))
+            return {'count': new_count}
+        except ClientError as e:
+            logger.error(f'Error incrementing daily scrape count: {e}')
+            raise
+
+    CHECKPOINT_ALLOWED_KEYS = frozenset(
+        {'batchIndex', 'lastProfileId', 'connectionType', 'processedCount', 'totalCount', 'updatedAt'}
+    )
+
+    def save_import_checkpoint(self, user_id: str, checkpoint: dict[str, Any]) -> dict[str, Any]:
+        """Save or update an import checkpoint. TTL auto-expires after 14 days."""
+        safe_checkpoint = {k: v for k, v in checkpoint.items() if k in self.CHECKPOINT_ALLOWED_KEYS}
+        ttl = int(time.time()) + (14 * 24 * 3600)  # 14 days
+        item = {
+            'PK': f'USER#{user_id}',
+            'SK': '#IMPORT_CHECKPOINT',
+            'ttl': ttl,
+            **safe_checkpoint,
+        }
+        self.table.put_item(Item=item)
+        return {'success': True}
+
+    def get_import_checkpoint(self, user_id: str) -> dict[str, Any]:
+        """Get the import checkpoint for a user."""
+        try:
+            response = self.table.get_item(Key={'PK': f'USER#{user_id}', 'SK': '#IMPORT_CHECKPOINT'})
+            item = response.get('Item')
+            if not item:
+                return {}
+            # Strip PK/SK from response
+            checkpoint = {k: v for k, v in item.items() if k not in ('PK', 'SK', 'ttl')}
+            return {'checkpoint': checkpoint}
+        except ClientError as e:
+            logger.error(f'Error getting import checkpoint: {e}')
+            return {}
+
+    def clear_import_checkpoint(self, user_id: str) -> dict[str, Any]:
+        """Delete the import checkpoint for a user."""
+        try:
+            self.table.delete_item(Key={'PK': f'USER#{user_id}', 'SK': '#IMPORT_CHECKPOINT'})
+            return {'success': True}
+        except ClientError as e:
+            logger.error(f'Error clearing import checkpoint: {e}')
+            raise
 
     def _is_safe_url(self, url: str) -> bool:
         """Validate URL is safe (HTTPS, non-private IP, valid hostname)."""

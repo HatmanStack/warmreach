@@ -8,7 +8,6 @@
 
 import { PuppeteerService } from '../../domains/automation/services/puppeteerService.js';
 import { LinkedInService } from '../../domains/linkedin/services/linkedinService.js';
-import { LinkedInContactService } from '../../domains/linkedin/services/linkedinContactService.js';
 import DynamoDBService from '../../domains/storage/services/dynamoDBService.js';
 import ControlPlaneService from '../../shared/services/controlPlaneService.js';
 
@@ -18,7 +17,6 @@ import ControlPlaneService from '../../shared/services/controlPlaneService.js';
  * @returns {Promise<Object>} Object containing initialized services
  * @returns {PuppeteerService} services.puppeteerService - Browser automation service
  * @returns {LinkedInService} services.linkedInService - LinkedIn interaction service
- * @returns {LinkedInContactService} services.linkedInContactService - Contact management service
  * @returns {DynamoDBService} services.dynamoDBService - Database service
  * @returns {ControlPlaneService} services.controlPlaneService - Control plane client
  */
@@ -30,7 +28,7 @@ export async function initializeLinkedInServices() {
   return {
     puppeteerService,
     linkedInService: new LinkedInService(puppeteerService),
-    linkedInContactService: new LinkedInContactService(puppeteerService),
+    linkedInContactService: null, // Stub: replaced by local scraper (Phase 2)
     dynamoDBService: new DynamoDBService(),
     controlPlaneService,
   };

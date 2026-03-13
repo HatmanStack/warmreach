@@ -9,6 +9,7 @@ import { LinkedInMessagingService } from '../../messaging/services/linkedinMessa
 import { LinkedInConnectionService } from '../../connections/services/linkedinConnectionService.js';
 import { LinkedInMessageScraperService } from '../../messaging/services/linkedinMessageScraperService.js';
 import { linkedinResolver } from '../selectors/index.js';
+import { LinkedInError } from '../utils/LinkedInError.js';
 
 const RandomHelpers = {
   /**
@@ -126,7 +127,7 @@ export class LinkedInInteractionService {
     const lastMin = this._actionLog.filter((t) => now - t < 60000).length;
     const lastHour = this._actionLog.filter((t) => now - t < 3600000).length;
     if (lastMin >= 15 || lastHour >= 200 || this._actionLog.length >= 500)
-      throw new Error('Rate limit exceeded');
+      throw new LinkedInError('Rate limit exceeded', 'LINKEDIN_RATE_LIMIT');
     this._actionLog.push(now);
   }
 
@@ -304,7 +305,11 @@ export class LinkedInInteractionService {
       return await this.sessionManager.getInstance({ reinitializeIfUnhealthy: true });
     } catch (error) {
       logger.error('Failed to initialize browser session:', error);
-      throw new Error(`Browser session initialization failed: ${error.message}`);
+      throw new LinkedInError(
+        `Browser session initialization failed: ${error.message}`,
+        'BROWSER_CRASH',
+        { cause: error }
+      );
     }
   }
 
@@ -426,7 +431,10 @@ export class LinkedInInteractionService {
       // Verify we're on a profile page
       const isProfilePage = await this.verifyProfilePage(page);
       if (!isProfilePage) {
-        throw new Error('Navigation did not result in a valid LinkedIn profile page');
+        throw new LinkedInError(
+          'Navigation did not result in a valid LinkedIn profile page',
+          'BROWSER_NAVIGATION_FAILED'
+        );
       }
 
       logger.info(`Successfully navigated to profile: ${profileId}`);
@@ -631,7 +639,10 @@ export class LinkedInInteractionService {
     // Navigate to recipient's profile
     const navigationSuccess = await this.navigateToProfile(recipientProfileId);
     if (!navigationSuccess) {
-      throw new Error(`Failed to navigate to profile: ${recipientProfileId}`);
+      throw new LinkedInError(
+        `Failed to navigate to profile: ${recipientProfileId}`,
+        'BROWSER_NAVIGATION_FAILED'
+      );
     }
 
     // Navigate to messaging interface
@@ -750,7 +761,11 @@ export class LinkedInInteractionService {
 
       // Screenshot capture removed
 
-      throw new Error(`Messaging navigation failed: ${error.message}`);
+      throw new LinkedInError(
+        `Messaging navigation failed: ${error.message}`,
+        'BROWSER_NAVIGATION_FAILED',
+        { cause: error }
+      );
     }
   }
 
@@ -768,7 +783,7 @@ export class LinkedInInteractionService {
         .catch(() => null);
 
       if (!messagingElement) {
-        throw new Error('Messaging interface did not load properly');
+        throw new LinkedInError('Messaging interface did not load properly', 'ELEMENT_NOT_FOUND');
       }
 
       // Additional wait for interface to be fully interactive
@@ -808,7 +823,10 @@ export class LinkedInInteractionService {
       const foundSelector = 'messaging:message-input';
 
       if (!messageInput) {
-        throw new Error('Message input field not found in messaging interface');
+        throw new LinkedInError(
+          'Message input field not found in messaging interface',
+          'ELEMENT_NOT_FOUND'
+        );
       }
 
       // Type message with reusable helper
@@ -859,7 +877,11 @@ export class LinkedInInteractionService {
 
       // Screenshot capture removed
 
-      throw new Error(`Message composition failed: ${error.message}`);
+      throw new LinkedInError(
+        `Message composition failed: ${error.message}`,
+        'POST_CREATION_FAILED',
+        { cause: error }
+      );
     }
   }
 
@@ -1034,7 +1056,10 @@ export class LinkedInInteractionService {
       }
 
       if (!startPostButton) {
-        throw new Error('Start post button not found on LinkedIn feed');
+        throw new LinkedInError(
+          'Start post button not found on LinkedIn feed',
+          'ELEMENT_NOT_FOUND'
+        );
       }
 
       // Move to button
@@ -1056,7 +1081,11 @@ export class LinkedInInteractionService {
 
       // Screenshot capture removed
 
-      throw new Error(`Post creator navigation failed: ${error.message}`);
+      throw new LinkedInError(
+        `Post creator navigation failed: ${error.message}`,
+        'BROWSER_NAVIGATION_FAILED',
+        { cause: error }
+      );
     }
   }
 
@@ -1082,7 +1111,10 @@ export class LinkedInInteractionService {
       }
 
       if (!postCreationElement) {
-        throw new Error('Post creation interface did not load properly');
+        throw new LinkedInError(
+          'Post creation interface did not load properly',
+          'ELEMENT_NOT_FOUND'
+        );
       }
 
       // Additional wait for interface to be fully interactive
@@ -1121,7 +1153,7 @@ export class LinkedInInteractionService {
       }
 
       if (!contentInput) {
-        throw new Error('Post content input field not found');
+        throw new LinkedInError('Post content input field not found', 'ELEMENT_NOT_FOUND');
       }
 
       // Simulate human mouse movement to input field
@@ -1145,7 +1177,9 @@ export class LinkedInInteractionService {
       logger.info('Post content composed successfully');
     } catch (error) {
       logger.error('Failed to compose post content:', error);
-      throw new Error(`Post composition failed: ${error.message}`);
+      throw new LinkedInError(`Post composition failed: ${error.message}`, 'POST_CREATION_FAILED', {
+        cause: error,
+      });
     }
   }
 
@@ -1238,7 +1272,9 @@ export class LinkedInInteractionService {
         error: error.message,
       });
 
-      throw new Error(`Media attachment failed: ${error.message}`);
+      throw new LinkedInError(`Media attachment failed: ${error.message}`, 'POST_CREATION_FAILED', {
+        cause: error,
+      });
     }
   }
 
@@ -1260,7 +1296,7 @@ export class LinkedInInteractionService {
         timeout: 5000,
       });
       if (!modal) {
-        throw new Error('Connection request modal did not appear.');
+        throw new LinkedInError('Connection request modal did not appear.', 'ELEMENT_NOT_FOUND');
       }
       logger.info('Connection modal appeared.');
 
@@ -1268,7 +1304,7 @@ export class LinkedInInteractionService {
         .resolveWithWait(page, 'connection:send-invitation', { timeout: 5000 })
         .catch(() => null);
       if (!sendButton) {
-        throw new Error('Send button not found within the modal.');
+        throw new LinkedInError('Send button not found within the modal.', 'ELEMENT_NOT_FOUND');
       }
 
       // 4. Click the button and wait for confirmation.
@@ -1306,7 +1342,11 @@ export class LinkedInInteractionService {
     } catch (error) {
       logger.error('Failed to send connection request:', error.message);
       this.humanBehavior.recordAction('connection_request_failed', { error: error.message });
-      throw new Error(`Connection request failed: ${error.message}`);
+      throw new LinkedInError(
+        `Connection request failed: ${error.message}`,
+        'BROWSER_NAVIGATION_FAILED',
+        { cause: error }
+      );
     }
   }
 
@@ -1485,7 +1525,7 @@ export class LinkedInInteractionService {
         }
         return false;
       } else {
-        throw new Error(`Invalid button name: ${buttonName}`);
+        throw new LinkedInError(`Invalid button name: ${buttonName}`, 'MISSING_REQUIRED_FIELD');
       }
     } catch (error) {
       logger.debug('Pending container check failed:', error.message);
@@ -1533,7 +1573,7 @@ export class LinkedInInteractionService {
         .catch(() => null);
 
       if (!contentInput) {
-        throw new Error('Post content input field not found');
+        throw new LinkedInError('Post content input field not found', 'ELEMENT_NOT_FOUND');
       }
 
       // Clear existing content and type
@@ -1614,13 +1654,16 @@ export class LinkedInInteractionService {
         .catch(() => null);
 
       if (!publishButton) {
-        throw new Error('Publish button not found');
+        throw new LinkedInError('Publish button not found', 'ELEMENT_NOT_FOUND');
       }
 
       // Check if publish button is enabled
       const isDisabled = await publishButton.getAttribute('disabled');
       if (isDisabled) {
-        throw new Error('Publish button is disabled - post may be incomplete');
+        throw new LinkedInError(
+          'Publish button is disabled - post may be incomplete',
+          'POST_CREATION_FAILED'
+        );
       }
 
       // Click publish button
@@ -1661,7 +1704,9 @@ export class LinkedInInteractionService {
       };
     } catch (error) {
       logger.error('Failed to publish post:', error);
-      throw new Error(`Post publishing failed: ${error.message}`);
+      throw new LinkedInError(`Post publishing failed: ${error.message}`, 'POST_CREATION_FAILED', {
+        cause: error,
+      });
     }
   }
 
@@ -1783,7 +1828,10 @@ export class LinkedInInteractionService {
     logger.info('Step 1/4: Navigating to profile');
     const navigationSuccess = await this.navigateToProfile(recipientProfileId);
     if (!navigationSuccess) {
-      throw new Error(`Failed to navigate to profile: ${recipientProfileId}`);
+      throw new LinkedInError(
+        `Failed to navigate to profile: ${recipientProfileId}`,
+        'BROWSER_NAVIGATION_FAILED'
+      );
     }
 
     // Step 4: Navigate to messaging interface
@@ -1910,7 +1958,10 @@ export class LinkedInInteractionService {
     logger.info('Step 1/4: Navigating to profile');
     const navigationSuccess = await this.navigateToProfile(profileId);
     if (!navigationSuccess) {
-      throw new Error(`Failed to navigate to profile: ${profileId}`);
+      throw new LinkedInError(
+        `Failed to navigate to profile: ${profileId}`,
+        'BROWSER_NAVIGATION_FAILED'
+      );
     }
 
     // Step 4: Check current connection status
@@ -1938,7 +1989,10 @@ export class LinkedInInteractionService {
         await this.isProfileContainer('connect');
       } else {
         logger.error('Connect button not found in profile container');
-        throw new Error('Connect button not found in profile container');
+        throw new LinkedInError(
+          'Connect button not found in profile container',
+          'ELEMENT_NOT_FOUND'
+        );
       }
     }
 
@@ -2132,7 +2186,10 @@ export class LinkedInInteractionService {
       logger.info('Step 1/3: Navigating to profile');
       const navigationSuccess = await this.navigateToProfile(profileId);
       if (!navigationSuccess) {
-        throw new Error(`Failed to navigate to profile: ${profileId}`);
+        throw new LinkedInError(
+          `Failed to navigate to profile: ${profileId}`,
+          'BROWSER_NAVIGATION_FAILED'
+        );
       }
 
       // Step 4: Check if already following
@@ -2279,7 +2336,7 @@ export class LinkedInInteractionService {
       }
 
       if (!followButton) {
-        throw new Error('Follow button not found on profile page');
+        throw new LinkedInError('Follow button not found on profile page', 'ELEMENT_NOT_FOUND');
       }
 
       // Click the follow button
@@ -2296,7 +2353,9 @@ export class LinkedInInteractionService {
       };
     } catch (error) {
       logger.error(`Failed to click follow button for ${profileId}:`, error);
-      throw new Error(`Follow button click failed: ${error.message}`);
+      throw new LinkedInError(`Follow button click failed: ${error.message}`, 'ELEMENT_NOT_FOUND', {
+        cause: error,
+      });
     }
   }
 

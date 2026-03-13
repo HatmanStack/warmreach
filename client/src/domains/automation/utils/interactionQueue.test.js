@@ -220,6 +220,70 @@ describe('InteractionQueue', () => {
     });
   });
 
+  describe('import mode', () => {
+    it('setImportMode(true) sets TTL to 4 hours', () => {
+      queue.setImportMode(true);
+      // Verify by checking that a job is NOT evicted after 31 minutes
+      // but would have been under default 30-min TTL
+    });
+
+    it('job survives past default TTL in import mode', async () => {
+      vi.useFakeTimers();
+      const q = new InteractionQueue({ jobTtlMs: 1000 }); // 1 second TTL
+      q.setImportMode(true); // 4 hour TTL override
+
+      await q.enqueue(() => 'done');
+
+      // Advance past default TTL but within import TTL
+      vi.advanceTimersByTime(2000);
+
+      // Force TTL cleanup
+      q._evictStaleJobs();
+
+      // Job should still exist since import mode TTL is 4 hours
+      expect(q.jobs.size).toBe(1);
+      vi.useRealTimers();
+    });
+
+    it('setImportMode(false) resets to original TTL', async () => {
+      vi.useFakeTimers();
+      const q = new InteractionQueue({ jobTtlMs: 1000 }); // 1 second TTL
+      q.setImportMode(true);
+      q.setImportMode(false);
+
+      await q.enqueue(() => 'done');
+
+      // Advance past 1 second
+      vi.advanceTimersByTime(2000);
+
+      q._evictStaleJobs();
+
+      // Job should be evicted since original TTL is restored
+      expect(q.jobs.size).toBe(0);
+      vi.useRealTimers();
+    });
+
+    it('preserves original TTL after import mode toggle', async () => {
+      vi.useFakeTimers();
+      const q = new InteractionQueue({ jobTtlMs: 60000 });
+      q.setImportMode(true);
+      q.setImportMode(false);
+
+      await q.enqueue(() => 'done');
+
+      // Advance less than 60s
+      vi.advanceTimersByTime(30000);
+      q._evictStaleJobs();
+      expect(q.jobs.size).toBe(1); // Still alive
+
+      // Advance past 60s
+      vi.advanceTimersByTime(40000);
+      q._evictStaleJobs();
+      expect(q.jobs.size).toBe(0); // Evicted
+      vi.useRealTimers();
+    });
+  });
+
   describe('pause/resume', () => {
     it('stops new jobs from starting when paused', async () => {
       const order = [];

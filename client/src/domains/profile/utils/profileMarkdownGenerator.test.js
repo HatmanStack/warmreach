@@ -244,6 +244,62 @@ describe('generateProfileMarkdown', () => {
     });
   });
 
+  describe('recent activity section', () => {
+    it('should include Recent Activity section when activity data is provided', () => {
+      const profile = createMockProfile({
+        recent_activity: [{ text: 'Excited to announce...', timestamp: '2 days ago' }],
+      });
+      const markdown = generateProfileMarkdown(profile);
+      expect(markdown).toContain('## Recent Activity');
+      expect(markdown).toContain('### 2 days ago');
+      expect(markdown).toContain('Excited to announce...');
+    });
+
+    it('should not include Recent Activity section when no activity data', () => {
+      const profile = createMockProfile();
+      const markdown = generateProfileMarkdown(profile);
+      expect(markdown).not.toContain('## Recent Activity');
+    });
+
+    it('should not include Recent Activity section for empty activity array', () => {
+      const profile = createMockProfile({ recent_activity: [] });
+      const markdown = generateProfileMarkdown(profile);
+      expect(markdown).not.toContain('## Recent Activity');
+    });
+
+    it('should escape markdown special characters in activity text', () => {
+      const profile = createMockProfile({
+        recent_activity: [{ text: 'Check *this* _out_ <tag>', timestamp: '1 day ago' }],
+      });
+      const markdown = generateProfileMarkdown(profile);
+      expect(markdown).toContain('\\*this\\*');
+      expect(markdown).toContain('\\_out\\_');
+      expect(markdown).toContain('&lt;tag&gt;');
+    });
+
+    it('should cap activity at 10 entries', () => {
+      const activities = Array.from({ length: 15 }, (_, i) => ({
+        text: `Post ${i + 1}`,
+        timestamp: `${i + 1} days ago`,
+      }));
+      const profile = createMockProfile({ recent_activity: activities });
+      const markdown = generateProfileMarkdown(profile);
+      expect(markdown).toContain('Post 10');
+      expect(markdown).not.toContain('Post 11');
+    });
+
+    it('should place activity section after skills section', () => {
+      const profile = createMockProfile({
+        skills: ['JavaScript'],
+        recent_activity: [{ text: 'Hello world', timestamp: '1 day ago' }],
+      });
+      const markdown = generateProfileMarkdown(profile);
+      const skillsIndex = markdown.indexOf('## Skills');
+      const activityIndex = markdown.indexOf('## Recent Activity');
+      expect(skillsIndex).toBeLessThan(activityIndex);
+    });
+  });
+
   describe('date formatting', () => {
     it('should format date ranges correctly', () => {
       const profile = createMockProfile({

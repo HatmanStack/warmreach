@@ -4,11 +4,11 @@ import fs from 'fs/promises';
 import path from 'path';
 
 export class ContactProcessor {
-  constructor(linkedInService, linkedInContactService, dynamoDBService, config) {
+  constructor(linkedInService, dynamoDBService, config, localProfileScraper) {
     this.linkedInService = linkedInService;
-    this.linkedInContactService = linkedInContactService;
     this.dynamoDBService = dynamoDBService;
     this.config = config;
+    this.localProfileScraper = localProfileScraper;
   }
 
   async processAllContacts(uniqueLinks, state, onHealingNeeded, pictureUrls = {}) {
@@ -71,8 +71,31 @@ export class ContactProcessor {
       goodContacts.push(link);
       logger.info(`Found good contact: ${link} (${goodContacts.length})`);
 
-      // During Search, scrape profile to RAGStack and mark edges as "possible"
-      await this.linkedInContactService.scrapeProfile(link, 'possible');
+      // Scrape profile locally if stale and under daily cap
+      try {
+        const needsScrape = await this.dynamoDBService.getProfileDetails(link);
+        const canScrape = await this.dynamoDBService.canScrapeToday();
+        if (needsScrape && canScrape && this.localProfileScraper) {
+          const scrapedData = await this.localProfileScraper.scrapeProfile(link);
+          await this.dynamoDBService.incrementDailyScrapeCount();
+          await this.dynamoDBService.createProfileMetadata(link, {
+            name: scrapedData.name,
+            headline: scrapedData.headline,
+            currentTitle: scrapedData.currentPosition?.title,
+            currentCompany: scrapedData.currentPosition?.company,
+            currentLocation: scrapedData.location,
+          });
+          logger.info('Profile scraped and metadata stored', { profileId: link });
+        } else if (!needsScrape) {
+          logger.info('Profile is fresh, skipping scrape', { profileId: link });
+        } else if (!canScrape) {
+          logger.info('Daily scrape cap reached, skipping scrape', { profileId: link });
+        }
+      } catch (scrapeError) {
+        logger.warn(`Local scrape failed for ${link} (non-fatal)`, {
+          error: scrapeError.message,
+        });
+      }
 
       // Update profile picture URL if available (non-fatal)
       if (pictureUrl) {

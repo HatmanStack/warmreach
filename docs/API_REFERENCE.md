@@ -81,7 +81,7 @@ All endpoints require a Cognito JWT in the `Authorization: Bearer <token>` heade
 | ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `/llm`      | `POST` | Operations: `generate_ideas`, `research_selected_ideas`, `get_research_result`, `synthesize_research`, `generate_message`, `analyze_message_patterns` |
 | `/edges`    | `POST` | Operations: `get_connections_by_status`, `upsert_status`, `add_message`, `update_messages`, `get_messages`, `check_exists`                            |
-| `/ragstack` | `POST` | Operations: `search`, `ingest`, `status`, `scrape_start`, `scrape_status`                                                 |
+| `/ragstack` | `POST` | Operations: `search`, `ingest`, `status`                                                                                   |
 
 ## Authentication
 

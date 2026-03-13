@@ -52,6 +52,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 | `ingestion_service.py` | Profile data ingestion                               |
 | `observability.py`     | Correlation context and structured JSON logging      |
 | `message_utils.py`    | Shared message analysis utilities                    |
+| `dynamodb_types.py`   | TypedDict definitions for DynamoDB item schemas      |
 
 ### RAGStack (optional nested stack)
 

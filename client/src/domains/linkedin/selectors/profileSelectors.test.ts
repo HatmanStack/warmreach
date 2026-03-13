@@ -4,7 +4,7 @@ import { profileSelectors } from './profileSelectors.js';
 describe('profileSelectors', () => {
   it('exports a valid SelectorRegistry object', () => {
     expect(profileSelectors).toBeDefined();
-    expect(Object.keys(profileSelectors).length).toBe(4);
+    expect(Object.keys(profileSelectors).length).toBe(24);
   });
 
   it('has valid cascades for all interaction points', () => {

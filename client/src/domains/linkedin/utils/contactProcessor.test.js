@@ -22,8 +22,8 @@ vi.mock('fs/promises', () => ({
 describe('ContactProcessor', () => {
   let processor;
   let mockLinkedInService;
-  let mockLinkedInContactService;
   let mockDynamoDBService;
+  let mockLocalProfileScraper;
   let config;
 
   beforeEach(() => {
@@ -32,11 +32,25 @@ describe('ContactProcessor', () => {
     mockLinkedInService = {
       analyzeContactActivity: vi.fn(),
     };
-    mockLinkedInContactService = {
-      scrapeProfile: vi.fn(),
-    };
     mockDynamoDBService = {
       updateProfilePictureUrl: vi.fn(),
+      getProfileDetails: vi.fn().mockResolvedValue(true),
+      createProfileMetadata: vi.fn().mockResolvedValue({}),
+      canScrapeToday: vi.fn().mockResolvedValue(true),
+      incrementDailyScrapeCount: vi.fn().mockResolvedValue({}),
+    };
+    mockLocalProfileScraper = {
+      scrapeProfile: vi.fn().mockResolvedValue({
+        name: 'Jane Doe',
+        headline: 'Engineer',
+        location: 'San Francisco',
+        about: 'About text',
+        currentPosition: { title: 'Engineer', company: 'Acme' },
+        experience: [],
+        education: [],
+        skills: ['JavaScript'],
+        recentActivity: [],
+      }),
     };
     config = {
       paths: {
@@ -47,9 +61,9 @@ describe('ContactProcessor', () => {
 
     processor = new ContactProcessor(
       mockLinkedInService,
-      mockLinkedInContactService,
       mockDynamoDBService,
-      config
+      config,
+      mockLocalProfileScraper
     );
   });
 
@@ -69,7 +83,6 @@ describe('ContactProcessor', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]).toBe('link1');
-      expect(mockLinkedInContactService.scrapeProfile).toHaveBeenCalledWith('link1', 'possible');
       expect(FileHelpers.writeJSON).toHaveBeenCalledWith('good.json', ['link1']);
     });
 
@@ -107,6 +120,53 @@ describe('ContactProcessor', () => {
 
       expect(onHealingNeeded).toHaveBeenCalled();
       vi.useRealTimers();
+    });
+  });
+
+  describe('local scraper integration', () => {
+    it('should skip scraping when profile is fresh', async () => {
+      const links = ['fresh-profile'];
+      const state = { resumeIndex: 0, jwtToken: 'token' };
+
+      fs.readFile.mockRejectedValue(new Error('File not found'));
+      mockLinkedInService.analyzeContactActivity.mockResolvedValue({ isGoodContact: true });
+      mockDynamoDBService.getProfileDetails.mockResolvedValue(false); // fresh
+
+      await processor.processAllContacts(links, state, vi.fn());
+
+      expect(mockLocalProfileScraper.scrapeProfile).not.toHaveBeenCalled();
+    });
+
+    it('should scrape and store metadata when profile is stale', async () => {
+      const links = ['stale-profile'];
+      const state = { resumeIndex: 0, jwtToken: 'token' };
+
+      fs.readFile.mockRejectedValue(new Error('File not found'));
+      mockLinkedInService.analyzeContactActivity.mockResolvedValue({ isGoodContact: true });
+      mockDynamoDBService.getProfileDetails.mockResolvedValue(true); // stale
+
+      await processor.processAllContacts(links, state, vi.fn());
+
+      expect(mockLocalProfileScraper.scrapeProfile).toHaveBeenCalledWith('stale-profile');
+      expect(mockDynamoDBService.createProfileMetadata).toHaveBeenCalledWith(
+        'stale-profile',
+        expect.objectContaining({ name: 'Jane Doe' })
+      );
+    });
+
+    it('should handle scrape failure gracefully', async () => {
+      const links = ['error-profile'];
+      const state = { resumeIndex: 0, jwtToken: 'token' };
+
+      fs.readFile.mockRejectedValue(new Error('File not found'));
+      mockLinkedInService.analyzeContactActivity.mockResolvedValue({ isGoodContact: true });
+      mockDynamoDBService.getProfileDetails.mockResolvedValue(true);
+      mockLocalProfileScraper.scrapeProfile.mockRejectedValue(new Error('scrape failed'));
+
+      const result = await processor.processAllContacts(links, state, vi.fn());
+
+      // Should still succeed overall, just skip scraping
+      expect(result).toHaveLength(1);
     });
   });
 
