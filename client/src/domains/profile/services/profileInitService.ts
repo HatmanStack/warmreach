@@ -11,6 +11,7 @@ import type { PuppeteerService } from '../../automation/services/puppeteerServic
 import type { LinkedInService, ConnectionType } from '../../linkedin/services/linkedinService.js';
 import { LinkedInMessageScraperService } from '../../messaging/services/linkedinMessageScraperService.js';
 import { BrowserSessionManager } from '../../session/services/browserSessionManager.js';
+import { RagstackProxyService } from '../../ragstack/services/ragstackProxyService.js';
 
 /**
  * Profile initialization state
@@ -257,6 +258,7 @@ export class ProfileInitService {
   private burstThrottleManager: BurstThrottleManagerInterface | null;
   private interactionQueue: ImportModeToggle | null;
   private backoffController: ImportModeToggle | null;
+  private ragstackProxy: RagstackProxyService;
   private batchSize: number;
 
   constructor(
@@ -278,6 +280,10 @@ export class ProfileInitService {
     this.backoffController = backoffController || null;
     this.messageScraperService = new LinkedInMessageScraperService({
       sessionManager: BrowserSessionManager,
+    });
+    this.ragstackProxy = new RagstackProxyService({
+      apiBaseUrl: getApiBaseUrl(),
+      httpClient: axios,
     });
     this.batchSize = 100;
   }
@@ -1255,8 +1261,7 @@ export class ProfileInitService {
     const requestId = state.requestId || 'unknown';
 
     try {
-      const apiBaseUrl = getApiBaseUrl();
-      if (!apiBaseUrl) {
+      if (!this.ragstackProxy.isConfigured()) {
         logger.debug('RAGStack ingestion skipped: API_GATEWAY_BASE_URL not configured', {
           requestId,
           profileId,
@@ -1264,8 +1269,11 @@ export class ProfileInitService {
         return null;
       }
 
-      // Fetch profile data from DynamoDB
-      const profileResponse = await this._fetchProfileForIngestion(profileId, state);
+      // Fetch profile data from DynamoDB via ragstack proxy
+      const profileResponse = await this.ragstackProxy.fetchProfile({
+        profileId,
+        jwtToken: state.jwtToken,
+      });
 
       if (!profileResponse || !profileResponse.profile) {
         logger.debug('RAGStack ingestion skipped: profile not found in DynamoDB', {
@@ -1314,18 +1322,15 @@ export class ProfileInitService {
       });
 
       // Call RAGStack proxy to ingest
-      const result = await this._callRAGStackProxy(
-        {
-          operation: 'ingest',
-          profileId: profileId,
-          markdownContent: markdown,
-          metadata: {
-            source: 'profile_init',
-            ingested_at: new Date().toISOString(),
-          },
+      const result = await this.ragstackProxy.ingest({
+        profileId,
+        markdownContent: markdown,
+        metadata: {
+          source: 'profile_init',
+          ingested_at: new Date().toISOString(),
         },
-        state
-      );
+        jwtToken: state.jwtToken,
+      });
 
       logger.info('RAGStack ingestion triggered successfully', {
         requestId,
@@ -1342,56 +1347,5 @@ export class ProfileInitService {
       });
       return null;
     }
-  }
-
-  /**
-   * Fetch profile data from DynamoDB for ingestion
-   */
-  private async _fetchProfileForIngestion(
-    profileId: string,
-    state: ProfileInitState
-  ): Promise<{ profile?: Record<string, unknown> } | null> {
-    try {
-      const apiBaseUrl = getApiBaseUrl();
-      if (!apiBaseUrl) return null;
-
-      const response = await axios.get(`${apiBaseUrl}profiles`, {
-        params: { profileId },
-        headers: {
-          'Content-Type': 'application/json',
-          ...(state.jwtToken && { Authorization: `Bearer ${state.jwtToken}` }),
-        },
-      });
-
-      return response.data;
-    } catch (error) {
-      logger.debug('Failed to fetch profile for ingestion', {
-        profileId,
-        error: (error as Error).message,
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Call RAGStack proxy Lambda
-   */
-  private async _callRAGStackProxy(
-    payload: Record<string, unknown>,
-    state: ProfileInitState
-  ): Promise<{ documentId?: string } | null> {
-    const apiBaseUrl = getApiBaseUrl();
-    if (!apiBaseUrl) {
-      throw new Error('API_GATEWAY_BASE_URL not configured');
-    }
-
-    const response = await axios.post(`${apiBaseUrl}ragstack`, payload, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(state.jwtToken && { Authorization: `Bearer ${state.jwtToken}` }),
-      },
-    });
-
-    return response.data;
   }
 }

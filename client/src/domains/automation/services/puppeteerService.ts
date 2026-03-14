@@ -80,6 +80,9 @@ interface ExtractLinksOptions {
 export class PuppeteerService {
   private browser: Browser | null;
   private page: Page | null;
+  private _requestHandler: ((req: any) => void) | null = null;
+  private _consoleHandler: ((msg: any) => void) | null = null;
+  private _pageerrorHandler: ((err: unknown) => void) | null = null;
 
   constructor() {
     this.browser = null;
@@ -198,17 +201,18 @@ export class PuppeteerService {
       // Request interception: block chrome-extension:// requests
       if (config.puppeteer.enableRequestInterception) {
         await this.page.setRequestInterception(true);
-        this.page.on('request', (req) => {
+        this._requestHandler = (req) => {
           if (req.url().startsWith('chrome-extension://')) {
             req.abort('blockedbyclient');
           } else {
             req.continue();
           }
-        });
+        };
+        this.page.on('request', this._requestHandler);
       }
 
       // Capture page console logs and errors to debug LinkedIn logouts/crashes
-      this.page.on('console', (msg) => {
+      this._consoleHandler = (msg) => {
         const type = msg.type();
         const rawText = msg.text();
 
@@ -224,11 +228,14 @@ export class PuppeteerService {
         if (type === 'error' || type === 'warn' || type === 'log') {
           logger.debug(`[PAGE_${type.toUpperCase()}] ${rawText} `);
         }
-      });
-      this.page.on('pageerror', (err: unknown) => {
+      };
+      this.page.on('console', this._consoleHandler);
+
+      this._pageerrorHandler = (err: unknown) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
         logger.error(`[PAGE_EXCEPTION] ${errorMessage} `);
-      });
+      };
+      this.page.on('pageerror', this._pageerrorHandler);
 
       // Custom headless evasion (always enabled to spoof platform fingerprints regardless of head)
       if (profile) {
@@ -691,6 +698,14 @@ export class PuppeteerService {
   async close(): Promise<void> {
     try {
       responseTimingInterceptor.detach();
+      if (this.page) {
+        if (this._requestHandler) this.page.off('request', this._requestHandler);
+        if (this._consoleHandler) this.page.off('console', this._consoleHandler);
+        if (this._pageerrorHandler) this.page.off('pageerror', this._pageerrorHandler);
+        this._requestHandler = null;
+        this._consoleHandler = null;
+        this._pageerrorHandler = null;
+      }
       if (this.browser) {
         await this.browser.close();
         this.browser = null;

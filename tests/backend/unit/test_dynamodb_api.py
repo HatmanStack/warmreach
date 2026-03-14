@@ -124,7 +124,7 @@ def test_cors_preflight_response(dynamodb_table_with_data, api_gateway_event_opt
     assert 'Access-Control-Allow-Origin' in response['headers']
     assert response['headers']['Access-Control-Allow-Origin'] == 'http://localhost:5173'
     assert 'Access-Control-Allow-Methods' in response['headers']
-    assert response['body'] == ''
+    assert response['body'] == '""'
 
 
 def test_get_user_settings_authenticated(dynamodb_table_with_data, api_gateway_event_get, lambda_context, dynamodb_api_module):
@@ -256,10 +256,9 @@ def test_unknown_origin_cors(dynamodb_table_with_data, api_gateway_event_options
 
     response = dynamodb_api_module.lambda_handler(event, lambda_context)
 
-    # Should still return 204 but with restricted origin
+    # Should still return 204 but omit CORS origin header for unrecognized origins
     assert response['statusCode'] == 204
-    allowed_origin = response['headers']['Access-Control-Allow-Origin']
-    assert allowed_origin != 'https://malicious-site.com'
+    assert 'Access-Control-Allow-Origin' not in response['headers']
 
 
 def test_dynamodb_error_handling(dynamodb_table_with_data, api_gateway_event_get, lambda_context, dynamodb_api_module):

@@ -11,6 +11,7 @@ import time
 import uuid
 
 import boto3
+from shared_services.request_utils import api_response, extract_user_id
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
@@ -21,9 +22,6 @@ WEBSOCKET_ENDPOINT = os.environ.get('WEBSOCKET_ENDPOINT', '')
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(TABLE_NAME)
 
-ALLOWED_ORIGINS_ENV = os.environ.get('ALLOWED_ORIGINS', 'http://localhost:5173')
-ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_ENV.split(',') if o.strip()]
-
 # Command TTL: 24 hours
 COMMAND_TTL_SECONDS = 86400
 
@@ -31,35 +29,11 @@ COMMAND_TTL_SECONDS = 86400
 RATE_LIMIT_MAX = int(os.environ.get('COMMAND_RATE_LIMIT_MAX', '10'))
 RATE_LIMIT_WINDOW = 60  # seconds
 
-
-def _extract_user_id(event):
-    rc = event.get('requestContext') or {}
-    auth = rc.get('authorizer') or {}
-    jwt_claims = (auth.get('jwt') or {}).get('claims') or {}
-    if jwt_claims.get('sub'):
-        return jwt_claims['sub']
-    rest_claims = auth.get('claims') or {}
-    return rest_claims.get('sub')
+_ALLOWED_METHODS = 'GET,POST,OPTIONS'
 
 
-def _get_origin(event):
-    headers = event.get('headers') or {}
-    return headers.get('origin') or headers.get('Origin')
-
-
-def _response(status_code, body, origin=None):
-    allow_origin = origin if origin in ALLOWED_ORIGINS else (ALLOWED_ORIGINS[0] if ALLOWED_ORIGINS else '*')
-    return {
-        'statusCode': status_code,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': allow_origin,
-            'Vary': 'Origin',
-            'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-            'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-        },
-        'body': json.dumps(body, default=str),
-    }
+class RateLimitUnavailableError(Exception):
+    """Raised when the rate limit check fails due to a backend error (not actual rate limiting)."""
 
 
 def lambda_handler(event, context):
@@ -68,19 +42,18 @@ def lambda_handler(event, context):
     setup_correlation_context(event, context)
 
     http_method = (event.get('httpMethod') or event.get('requestContext', {}).get('http', {}).get('method', '')).upper()
-    origin = _get_origin(event)
 
     if http_method == 'OPTIONS':
-        return _response(204, '', origin)
+        return api_response(204, '', event, allowed_methods=_ALLOWED_METHODS)
 
-    user_sub = _extract_user_id(event)
+    user_sub = extract_user_id(event)
     if not user_sub:
-        return _response(401, {'error': 'Authentication required'}, origin)
+        return api_response(401, {'error': 'Authentication required'}, event, allowed_methods=_ALLOWED_METHODS)
 
     raw_path = event.get('rawPath', '') or event.get('path', '')
 
     if http_method == 'POST' and raw_path.rstrip('/').endswith('/commands'):
-        return _create_command(event, user_sub, origin)
+        return _create_command(event, user_sub)
     elif http_method == 'GET' and '/commands/' in raw_path:
         command_id = (event.get('pathParameters') or {}).get('commandId')
         if not command_id:
@@ -88,14 +61,18 @@ def lambda_handler(event, context):
             parts = raw_path.rstrip('/').split('/')
             command_id = parts[-1] if parts else None
         if not command_id:
-            return _response(400, {'error': 'Missing commandId'}, origin)
-        return _get_command(command_id, user_sub, origin)
+            return api_response(400, {'error': 'Missing commandId'}, event, allowed_methods=_ALLOWED_METHODS)
+        return _get_command(command_id, user_sub, event)
 
-    return _response(404, {'error': 'Not found'}, origin)
+    return api_response(404, {'error': 'Not found'}, event, allowed_methods=_ALLOWED_METHODS)
 
 
 def _check_rate_limit(user_sub):
-    """Check per-user command rate limit using DynamoDB atomic counter. Returns True if allowed."""
+    """Check per-user command rate limit using DynamoDB atomic counter.
+
+    Returns True if allowed, False if rate-limited.
+    Raises RateLimitUnavailableError on backend failures (fail closed).
+    """
     now = int(time.time())
     window_key = now // RATE_LIMIT_WINDOW  # bucket per minute
 
@@ -117,31 +94,43 @@ def _check_rate_limit(user_sub):
     except ClientError as e:
         if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
             return False
-        logger.warning(f'Rate limit check error: {e}')
-        return True  # Allow on error (fail open)
+        logger.error(f'Rate limit check DynamoDB error: {e}')
+        raise RateLimitUnavailableError(str(e)) from e
     except Exception as e:
-        logger.warning(f'Rate limit check error: {e}')
-        return True
+        logger.error(f'Rate limit check error: {e}')
+        raise RateLimitUnavailableError(str(e)) from e
 
 
-def _create_command(event, user_sub, origin):
+def _create_command(event, user_sub):
     body = json.loads(event.get('body', '{}')) if event.get('body') else {}
     command_type = body.get('type')
     payload = body.get('payload', {})
 
     if not command_type:
-        return _response(400, {'error': 'type is required'}, origin)
+        return api_response(400, {'error': 'type is required'}, event, allowed_methods=_ALLOWED_METHODS)
 
     # Rate limit check
-    if not _check_rate_limit(user_sub):
-        return _response(
-            429,
+    try:
+        if not _check_rate_limit(user_sub):
+            return api_response(
+                429,
+                {
+                    'error': 'Too many commands. Please wait before sending more.',
+                    'code': 'RATE_LIMITED',
+                    'retryAfter': RATE_LIMIT_WINDOW,
+                },
+                event,
+                allowed_methods=_ALLOWED_METHODS,
+            )
+    except RateLimitUnavailableError:
+        return api_response(
+            503,
             {
-                'error': 'Too many commands. Please wait before sending more.',
-                'code': 'RATE_LIMITED',
-                'retryAfter': RATE_LIMIT_WINDOW,
+                'error': 'Rate limit check unavailable. Please try again.',
+                'code': 'RATE_LIMIT_UNAVAILABLE',
             },
-            origin,
+            event,
+            allowed_methods=_ALLOWED_METHODS,
         )
 
     from shared_services.websocket_service import WebSocketService
@@ -151,7 +140,7 @@ def _create_command(event, user_sub, origin):
     # Look up user's agent connection
     agent_conns = ws_service.get_user_connections(user_sub, 'agent')
     if not agent_conns:
-        return _response(409, {'error': 'No agent connected'}, origin)
+        return api_response(409, {'error': 'No agent connected'}, event, allowed_methods=_ALLOWED_METHODS)
 
     agent_conn = agent_conns[0]
     command_id = str(uuid.uuid4())
@@ -191,14 +180,15 @@ def _create_command(event, user_sub, origin):
             ExpressionAttributeNames={'#s': 'status'},
             ExpressionAttributeValues={':s': 'failed'},
         )
-        return _response(
+        return api_response(
             503,
             {
                 'error': 'Agent disconnected',
                 'commandId': command_id,
                 'status': 'failed',
             },
-            origin,
+            event,
+            allowed_methods=_ALLOWED_METHODS,
         )
 
     # Update status to dispatched
@@ -220,20 +210,20 @@ def _create_command(event, user_sub, origin):
             },
         )
 
-    return _response(200, {'commandId': command_id, 'status': 'dispatched'}, origin)
+    return api_response(200, {'commandId': command_id, 'status': 'dispatched'}, event, allowed_methods=_ALLOWED_METHODS)
 
 
-def _get_command(command_id, user_sub, origin):
+def _get_command(command_id, user_sub, event):
     resp = table.get_item(Key={'PK': f'COMMAND#{command_id}', 'SK': '#METADATA'})
     item = resp.get('Item')
     if not item:
-        return _response(404, {'error': 'Command not found'}, origin)
+        return api_response(404, {'error': 'Command not found'}, event, allowed_methods=_ALLOWED_METHODS)
 
     # Ownership check
     if item.get('cognitoSub') != user_sub:
-        return _response(404, {'error': 'Command not found'}, origin)
+        return api_response(404, {'error': 'Command not found'}, event, allowed_methods=_ALLOWED_METHODS)
 
-    return _response(
+    return api_response(
         200,
         {
             'commandId': item['commandId'],
@@ -243,5 +233,6 @@ def _get_command(command_id, user_sub, origin):
             'error': item.get('errorMessage'),
             'createdAt': item.get('createdAt'),
         },
-        origin,
+        event,
+        allowed_methods=_ALLOWED_METHODS,
     )

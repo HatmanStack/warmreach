@@ -291,6 +291,36 @@ def test_analyze_message_patterns_feature_gated(lambda_context, llm_module, mock
     assert body['feature'] == 'message_intelligence'
 
 
+class TestConfigurableOpenAITimeout:
+    """Tests for configurable OpenAI timeout via OPENAI_TIMEOUT env var."""
+
+    def test_default_timeout_is_60(self):
+        """Default timeout should be 60 when OPENAI_TIMEOUT is not set."""
+        import os
+        # Ensure OPENAI_TIMEOUT is not set
+        env_val = os.environ.pop('OPENAI_TIMEOUT', None)
+        try:
+            from moto import mock_aws
+            with mock_aws():
+                module = load_lambda_module('llm')
+                assert module.OPENAI_TIMEOUT == 60
+        finally:
+            if env_val is not None:
+                os.environ['OPENAI_TIMEOUT'] = env_val
+
+    def test_custom_timeout_from_env(self):
+        """Should use custom timeout when OPENAI_TIMEOUT is set."""
+        import os
+        os.environ['OPENAI_TIMEOUT'] = '120'
+        try:
+            from moto import mock_aws
+            with mock_aws():
+                module = load_lambda_module('llm')
+                assert module.OPENAI_TIMEOUT == 120
+        finally:
+            del os.environ['OPENAI_TIMEOUT']
+
+
 def test_analyze_message_patterns_metered(lambda_context, llm_module, mock_services):
     """analyze_message_patterns calls report_usage (it's a metered op)."""
     mock_services['feature_flags'].get_feature_flags.return_value = {

@@ -6,6 +6,7 @@ import { MessageSquare, ExternalLink, User, Building, MapPin, Tag } from 'lucide
 import { FeatureGate } from '@/features/tier';
 import { RelationshipStrengthBadge } from './RelationshipStrengthBadge';
 import { ReplyProbabilityBadge } from './ReplyProbabilityBadge';
+import { buildLinkedInProfileUrl } from '@/shared/utils/linkedinUrl';
 import type { ConnectionCardProps } from '@/types';
 
 /**
@@ -57,77 +58,11 @@ const ConnectionCard = ({
     setImgError(false);
   }, [connection.profile_picture_url]);
 
-  const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value);
-
-  const isVanitySlug = (value: string): boolean => /^[a-zA-Z0-9-]+$/.test(value);
-
-  const decodeBase64UrlSafe = (value: string): string | null => {
-    try {
-      // Normalize URL-safe base64 to standard base64 and add padding
-      let normalized = value.replace(/-/g, '+').replace(/_/g, '/');
-      const pad = normalized.length % 4;
-      if (pad === 2) normalized += '==';
-      if (pad === 3) normalized += '=';
-      const decoded = atob(normalized);
-      return decoded;
-    } catch {
-      return null;
-    }
-  };
-
-  const buildLinkedInProfileUrl = (): string | null => {
-    // 1) Prefer explicit linkedin_url when present
-    const rawLinkedin = (connection.linkedin_url || '').trim();
-    if (rawLinkedin) {
-      if (isHttpUrl(rawLinkedin)) {
-        return rawLinkedin;
-      }
-      const trimmed = rawLinkedin.replace(/^\/+|\/+$/g, '');
-      // Handle formats like "in/vanity" or just "vanity"
-      if (trimmed.toLowerCase().startsWith('in/')) {
-        const slug = trimmed.split('/')[1] || '';
-        if (slug) return `https://www.linkedin.com/in/${slug}`;
-      }
-      if (isVanitySlug(trimmed)) {
-        return `https://www.linkedin.com/in/${trimmed}`;
-      }
-      // If it's not a clean vanity slug, fall through to ID decode
-    }
-
-    // 2) Try decoding id (our types state this is base64-encoded LinkedIn URL)
-    if (connection.id) {
-      const decoded = decodeBase64UrlSafe(connection.id);
-      if (decoded) {
-        const cleaned = decoded.trim();
-        if (isHttpUrl(cleaned)) {
-          return cleaned;
-        }
-        const trimmed = cleaned.replace(/^\/+|\/+$/g, '');
-        if (trimmed.toLowerCase().startsWith('in/')) {
-          return `https://www.linkedin.com/${trimmed}`;
-        }
-        if (isVanitySlug(trimmed)) {
-          return `https://www.linkedin.com/in/${trimmed}`;
-        }
-      }
-    }
-
-    // 3) Last resort: people search with name + company
-    const query = [connection.first_name, connection.last_name, connection.company]
-      .filter(Boolean)
-      .join(' ')
-      .trim();
-    if (query) {
-      return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(query)}`;
-    }
-    return null;
-  };
-
   /**
    * Handles card click events, opening LinkedIn profile in new tab
    */
   const handleClick = () => {
-    const url = buildLinkedInProfileUrl();
+    const url = buildLinkedInProfileUrl(connection);
     if (url) {
       window.open(url, '_blank', 'noopener,noreferrer');
       return;
@@ -437,7 +372,7 @@ const ConnectionCard = ({
                       <button
                         type="button"
                         onClick={handleOpenSummary}
-                        className="text-xs text-blue-200 over:text-blue-100"
+                        className="text-xs text-blue-200 hover:text-blue-100"
                         style={{ marginLeft: '10px' }}
                       >
                         ...more

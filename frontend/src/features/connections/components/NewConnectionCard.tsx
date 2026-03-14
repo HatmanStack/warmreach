@@ -19,6 +19,7 @@ import { lambdaApiService as dbConnector } from '@/services/lambdaApiService';
 import { commandService } from '@/shared/services/commandService';
 import { transformErrorForUser, getToastVariant, ERROR_MESSAGES } from '@/utils/errorHandling';
 import { createLogger } from '@/shared/utils/logger';
+import { buildLinkedInProfileUrl } from '@/shared/utils/linkedinUrl';
 
 const logger = createLogger('NewConnectionCard');
 import type { NewConnectionCardProps } from '@/types';
@@ -69,14 +70,6 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
     }
   }, [connection?.id]);
 
-  // Build a LinkedIn profile URL from either a full URL, profile id, or fallback to id
-  const buildLinkedInProfileUrl = (): string | null => {
-    const raw = connection.linkedin_url || connection.id;
-    if (!raw) return null;
-    const hasProtocol = /^https?:\/\//i.test(raw);
-    return hasProtocol ? raw : `https://www.linkedin.com/in/${raw}`;
-  };
-
   /**
    * Handles tag click events, preventing bubbling and delegating to parent
    */
@@ -89,7 +82,7 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
   const handleCardClick = (e: React.MouseEvent) => {
     if (isRemoving || isConnecting) return;
 
-    const url = buildLinkedInProfileUrl();
+    const url = buildLinkedInProfileUrl(connection);
     // Only navigate if the original event target wasn't a button inside our controls area
     const target = e.target as HTMLElement | null;
     if (target && target.closest('button')) return;

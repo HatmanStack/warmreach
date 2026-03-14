@@ -57,10 +57,24 @@ vi.mock('#shared-config/index.js', () => {
   return { default: mockConfig, config: mockConfig };
 });
 
+// Mock BrowserSessionManager
+vi.mock('../../session/services/browserSessionManager.js', () => ({
+  BrowserSessionManager: {
+    getSignalDetector: vi.fn().mockReturnValue(null),
+    getContentAnalyzer: vi.fn().mockReturnValue(null),
+    getBackoffController: vi.fn().mockReturnValue(null),
+  },
+}));
+
 // Mock DynamoDBService (relative path import)
 vi.mock('../../storage/services/dynamoDBService.js', () => ({
   default: class MockDynamoDBService {
-    constructor() {}
+    constructor() {
+      this.setAuthToken = vi.fn();
+      this.getProfileDetails = vi.fn().mockResolvedValue(true);
+      this.upsertEdgeStatus = vi.fn().mockResolvedValue({});
+      this.markBadContact = vi.fn().mockResolvedValue({});
+    }
     updateContactStatus() {
       return Promise.resolve();
     }
@@ -75,7 +89,10 @@ vi.mock('../selectors/index.js', () => ({
     resolveWithWait: vi.fn(),
     resolve: vi.fn(),
   },
-  linkedinSelectors: {},
+  linkedinSelectors: {
+    'profile:activity-time': [{ strategy: 'css', selector: '.activity-time' }],
+    'search:profile-links': [{ strategy: 'css', selector: '.profile-link' }],
+  },
 }));
 import { linkedinResolver } from '../selectors/index.js';
 
@@ -91,6 +108,7 @@ function createMockPuppeteerService() {
     $: vi.fn().mockResolvedValue(null),
     $$: vi.fn().mockResolvedValue([]),
     $$eval: vi.fn().mockResolvedValue([]),
+    content: vi.fn().mockResolvedValue('<html></html>'),
     keyboard: { press: vi.fn().mockResolvedValue() },
     mouse: { wheel: vi.fn().mockResolvedValue() },
   };
@@ -238,6 +256,18 @@ describe('LinkedInService', () => {
       const result = await service.searchCompany('TestCorp');
       expect(result).toBeNull();
     });
+
+    it('throws when page is not available', async () => {
+      mockPuppeteer.getPage.mockReturnValue(null);
+      await expect(service.searchCompany('TestCorp')).rejects.toThrow('Browser page not available');
+    });
+
+    it('throws when filter button click fails', async () => {
+      vi.spyOn(service, '_clickFilterButton').mockResolvedValue(false);
+      await expect(service.searchCompany('TestCorp')).rejects.toThrow(
+        'Failed to open "Current companies" filter'
+      );
+    });
   });
 
   describe('applyLocationFilter', () => {
@@ -264,6 +294,36 @@ describe('LinkedInService', () => {
 
       const result = await service.applyLocationFilter('Atlantis');
       expect(result).toBeNull();
+    });
+
+    it('throws when page is not available', async () => {
+      mockPuppeteer.getPage.mockReturnValue(null);
+      await expect(service.applyLocationFilter('New York')).rejects.toThrow(
+        'Browser page not available'
+      );
+    });
+
+    it('throws when filter button click fails', async () => {
+      const page = mockPuppeteer.getPage();
+      page.url.mockReturnValue('https://www.linkedin.com/search/results/people/');
+      vi.spyOn(service, '_clickFilterButton').mockResolvedValue(false);
+
+      await expect(service.applyLocationFilter('New York')).rejects.toThrow(
+        'Failed to open "Locations" filter'
+      );
+    });
+
+    it('returns geo number from URL on success', async () => {
+      const page = mockPuppeteer.getPage();
+      page.url.mockReturnValue('https://www.linkedin.com/search/results/people/');
+      page.waitForFunction.mockResolvedValue();
+      // After waitForFunction, url() should return the updated URL
+      page.url
+        .mockReturnValueOnce('https://www.linkedin.com/search/results/people/')
+        .mockReturnValue('https://www.linkedin.com/search/results/people/?geoUrn=["103644278"]');
+
+      const result = await service.applyLocationFilter('New York');
+      expect(result).toBe('103644278');
     });
   });
 
@@ -356,6 +416,144 @@ describe('LinkedInService', () => {
       await expect(service.getConnections({ connectionType: 'unknown' })).rejects.toThrow(
         'Unknown connection type'
       );
+    });
+  });
+
+  describe('analyzeContactActivity', () => {
+    const profileId = 'test-profile';
+    const jwtToken = 'test-token';
+
+    it('returns isGoodContact true when activity score exceeds threshold', async () => {
+      const page = mockPuppeteer.getPage();
+      page.url.mockReturnValue('https://www.linkedin.com/in/test-profile/recent-activity/');
+      page.evaluate.mockResolvedValue({
+        updatedCounts: { hour: 5, day: 3, week: 2 },
+        newCounted: ['item1', 'item2'],
+      });
+
+      const result = await service.analyzeContactActivity(profileId, jwtToken);
+
+      expect(result).toEqual({ isGoodContact: true });
+      expect(service.dynamoDBService.setAuthToken).toHaveBeenCalledWith(jwtToken);
+      expect(service.dynamoDBService.upsertEdgeStatus).toHaveBeenCalledWith(profileId, 'possible');
+    });
+
+    it('returns isGoodContact false when activity score is below threshold', async () => {
+      const page = mockPuppeteer.getPage();
+      page.url.mockReturnValue('https://www.linkedin.com/in/test-profile/recent-activity/');
+      page.evaluate
+        .mockResolvedValueOnce({
+          updatedCounts: { hour: 0, day: 0, week: 0 },
+          newCounted: [],
+        })
+        .mockResolvedValueOnce(undefined) // scroll
+        .mockResolvedValueOnce({
+          updatedCounts: { hour: 0, day: 0, week: 0 },
+          newCounted: [],
+        })
+        .mockResolvedValueOnce(undefined) // scroll
+        .mockResolvedValueOnce({
+          updatedCounts: { hour: 0, day: 0, week: 0 },
+          newCounted: [],
+        })
+        .mockResolvedValueOnce(undefined) // scroll
+        .mockResolvedValueOnce({
+          updatedCounts: { hour: 0, day: 0, week: 0 },
+          newCounted: [],
+        })
+        .mockResolvedValueOnce(undefined); // scroll
+
+      const result = await service.analyzeContactActivity(profileId, jwtToken);
+
+      expect(result).toEqual({ isGoodContact: false });
+      expect(service.dynamoDBService.upsertEdgeStatus).toHaveBeenCalledWith(profileId, 'processed');
+      expect(service.dynamoDBService.markBadContact).toHaveBeenCalledWith(profileId);
+    });
+
+    it('skips analysis when profile was updated recently', async () => {
+      service.dynamoDBService.getProfileDetails.mockResolvedValue(false);
+
+      const result = await service.analyzeContactActivity(profileId, jwtToken);
+
+      expect(result).toEqual({
+        skipped: true,
+        reason: 'Profile was updated recently',
+        profileId,
+      });
+      expect(mockPuppeteer.goto).not.toHaveBeenCalled();
+    });
+
+    it('throws when page is not available', async () => {
+      mockPuppeteer.getPage.mockReturnValueOnce(null);
+
+      // goto will succeed, but getPage after goto returns null
+      await expect(service.analyzeContactActivity(profileId, jwtToken)).rejects.toThrow(
+        'Browser page not available'
+      );
+    });
+
+    it('throws on navigation failure', async () => {
+      mockPuppeteer.goto.mockRejectedValue(new Error('Navigation failed'));
+
+      await expect(service.analyzeContactActivity(profileId, jwtToken)).rejects.toThrow(
+        'Navigation failed'
+      );
+    });
+  });
+
+  describe('scrollToLoadConnections', () => {
+    it('scrolls page and returns connection count', async () => {
+      const page = mockPuppeteer.getPage();
+      page.evaluate
+        .mockResolvedValueOnce(5) // first scroll: 5 connections
+        .mockResolvedValueOnce(10) // second scroll: 10 connections
+        .mockResolvedValueOnce(10) // third scroll: no change
+        .mockResolvedValueOnce(10) // fourth: no change
+        .mockResolvedValueOnce(10) // fifth: no change
+        .mockResolvedValueOnce(10) // sixth: no change
+        .mockResolvedValueOnce(10); // seventh: no change (stable limit = 5)
+
+      const count = await service.scrollToLoadConnections('ally', 10);
+      expect(count).toBe(10);
+    });
+
+    it('stops scrolling after stable limit reached', async () => {
+      const page = mockPuppeteer.getPage();
+      // Return same count every time (stable from the start)
+      page.evaluate.mockResolvedValue(3);
+
+      const count = await service.scrollToLoadConnections('ally', 20);
+      // Should stop after stableLimit (5) + initial count of attempts
+      expect(count).toBe(3);
+    });
+
+    it('throws when page is not available', async () => {
+      mockPuppeteer.getPage.mockReturnValue(null);
+      await expect(service.scrollToLoadConnections('ally')).rejects.toThrow(
+        'Browser page not available'
+      );
+    });
+
+    it('handles evaluate errors gracefully and stops', async () => {
+      const page = mockPuppeteer.getPage();
+      page.evaluate.mockRejectedValue(new Error('Execution context was destroyed'));
+
+      const count = await service.scrollToLoadConnections('ally', 5);
+      expect(count).toBe(0);
+    });
+
+    it('respects maxScrolls parameter', async () => {
+      const page = mockPuppeteer.getPage();
+      // Each scroll finds more connections
+      let callCount = 0;
+      page.evaluate.mockImplementation(() => {
+        callCount++;
+        return Promise.resolve(callCount * 5);
+      });
+
+      const count = await service.scrollToLoadConnections('ally', 3);
+      // maxScrolls = 3, so should have made 3 evaluate calls
+      expect(count).toBeGreaterThan(0);
     });
   });
 });

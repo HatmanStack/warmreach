@@ -91,7 +91,7 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
 
     try {
       const storedResearch = sessionStorage.getItem(RESEARCH_STORAGE_KEY);
-      if (storedResearch) setResearchContent(storedResearch);
+      if (storedResearch) setResearchContent(JSON.parse(storedResearch));
     } catch {
       /* ignore */
     }
@@ -141,7 +141,7 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
         if (result) {
           setResearchContent(result);
           try {
-            sessionStorage.setItem(RESEARCH_STORAGE_KEY, result);
+            sessionStorage.setItem(RESEARCH_STORAGE_KEY, JSON.stringify(result));
           } catch {
             /* ignore */
           }

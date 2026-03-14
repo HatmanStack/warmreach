@@ -1,31 +1,28 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import useSessionStorage from '@/shared/hooks/useSessionStorage';
 
 interface ResearchResultsCardProps {
   isResearching: boolean;
   onClear: () => void;
 }
 
-const RESEARCH_STORAGE_KEY = 'ai_research_content';
-
 const ResearchResultsCard = ({ isResearching, onClear }: ResearchResultsCardProps) => {
-  const [localResearch, setLocalResearch] = useState<string | null>(null);
+  const [localResearch, setLocalResearch, , rehydrate] = useSessionStorage<string | null>(
+    'ai_research_content',
+    null
+  );
 
-  // Local hydration from sessionStorage on mount and whenever research completes
+  // Re-sync from sessionStorage when research completes (PostComposerContext writes to this key)
   useEffect(() => {
     if (!isResearching) {
-      try {
-        const stored = sessionStorage.getItem(RESEARCH_STORAGE_KEY);
-        setLocalResearch(stored ?? null);
-      } catch {
-        setLocalResearch(null);
-      }
+      rehydrate();
     }
-  }, [isResearching]);
+  }, [isResearching, rehydrate]);
 
   if (!isResearching && !localResearch) return null;
 

@@ -97,7 +97,7 @@ describe('PostComposerContext', () => {
     });
 
     it('should hydrate research from sessionStorage', () => {
-      sessionStorage.setItem('ai_research_content', 'stored research');
+      sessionStorage.setItem('ai_research_content', JSON.stringify('stored research'));
 
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
 
@@ -124,7 +124,7 @@ describe('PostComposerContext', () => {
   describe('state clears when user logs out', () => {
     it('should clear all state when user becomes null', async () => {
       sessionStorage.setItem('ai_generated_ideas', JSON.stringify(['Idea']));
-      sessionStorage.setItem('ai_research_content', 'research');
+      sessionStorage.setItem('ai_research_content', JSON.stringify('research'));
       sessionStorage.setItem('ai_synthesized_post', 'post');
 
       const { result, rerender } = renderHook(() => usePostComposer(), {
@@ -202,7 +202,9 @@ describe('PostComposerContext', () => {
 
       expect(result.current.researchContent).toBe('Research results');
       expect(result.current.isResearching).toBe(false);
-      expect(sessionStorage.getItem('ai_research_content')).toBe('Research results');
+      expect(sessionStorage.getItem('ai_research_content')).toBe(
+        JSON.stringify('Research results')
+      );
     });
   });
 

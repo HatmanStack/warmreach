@@ -10,6 +10,7 @@ import { LinkedInConnectionService } from '../../connections/services/linkedinCo
 import { LinkedInMessageScraperService } from '../../messaging/services/linkedinMessageScraperService.js';
 import { linkedinResolver } from '../selectors/index.js';
 import { LinkedInError } from '../utils/LinkedInError.js';
+import { RateLimiter, RateLimitExceededError } from '../../automation/utils/rateLimiter.js';
 
 const RandomHelpers = {
   /**
@@ -97,8 +98,8 @@ export class LinkedInInteractionService {
     this.maxRetries = errorConfig.retryAttempts;
     this.baseRetryDelay = errorConfig.retryBaseDelay;
 
-    // Rate-limit action log for _enforceRateLimit()
-    this._actionLog = [];
+    // Rate limiter (extracted to automation/utils/rateLimiter.ts)
+    this._rateLimiter = new RateLimiter();
 
     logger.debug('LinkedInInteractionService initialized as facade', {
       maxRetries: this.maxRetries,
@@ -118,17 +119,18 @@ export class LinkedInInteractionService {
   }
 
   /**
-   * Enforce hard-coded rate limits. Constants are literal values — not imported
-   * from config, not overrideable via env vars.
+   * Enforce hard-coded rate limits. Delegates to the extracted RateLimiter class.
+   * Wraps RateLimitExceededError as LinkedInError for backward compatibility.
    */
   _enforceRateLimit() {
-    const now = Date.now();
-    this._actionLog = this._actionLog.filter((t) => now - t < 86400000);
-    const lastMin = this._actionLog.filter((t) => now - t < 60000).length;
-    const lastHour = this._actionLog.filter((t) => now - t < 3600000).length;
-    if (lastMin >= 15 || lastHour >= 200 || this._actionLog.length >= 500)
-      throw new LinkedInError('Rate limit exceeded', 'LINKEDIN_RATE_LIMIT');
-    this._actionLog.push(now);
+    try {
+      this._rateLimiter.enforce();
+    } catch (err) {
+      if (err instanceof RateLimitExceededError) {
+        throw new LinkedInError('Rate limit exceeded', 'LINKEDIN_RATE_LIMIT');
+      }
+      throw err;
+    }
   }
 
   /**

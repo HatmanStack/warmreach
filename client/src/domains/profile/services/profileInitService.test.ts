@@ -285,13 +285,25 @@ describe('ProfileInitService', () => {
     });
 
     it('should ingest profile if data is available', async () => {
+      // Must set env before constructing service so RagstackProxyService picks it up
       process.env.API_GATEWAY_BASE_URL = 'https://api.test';
+      const freshService = new ProfileInitService(
+        mockPuppeteer,
+        mockLinkedIn,
+        mockContact,
+        mockDynamo,
+        mockLocalScraper,
+        mockBurstThrottle,
+        mockInteractionQueue,
+        mockBackoffController
+      );
+
       (axios.get as any).mockResolvedValue({
         data: { profile: { name: 'John Doe', headline: 'Engineer' } },
       });
       (axios.post as any).mockResolvedValue({ data: { documentId: 'doc1' } });
 
-      const result = await service.triggerRAGStackIngestion('p1', { jwtToken: 't' });
+      const result = await freshService.triggerRAGStackIngestion('p1', { jwtToken: 't' });
 
       expect(result).toEqual({ documentId: 'doc1' });
       expect(axios.post).toHaveBeenCalled();

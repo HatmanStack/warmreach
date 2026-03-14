@@ -3,10 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sparkles, Search, X } from 'lucide-react';
-import { createLogger } from '@/shared/utils/logger';
+import useSessionStorage from '@/shared/hooks/useSessionStorage';
 import { usePostComposer } from '../contexts/PostComposerContext';
-
-const logger = createLogger('PostAIAssistant');
 
 interface PostAIAssistantProps {
   onGenerateIdeas: (prompt?: string) => Promise<void>;
@@ -31,30 +29,16 @@ const PostAIAssistant = ({
   const [researchQuery, setResearchQuery] = useState('');
   const [ideaPrompt, setIdeaPrompt] = useState('');
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
-  const [localIdeas, setLocalIdeas] = useState<string[]>([]);
+  const [localIdeas, setLocalIdeas] = useSessionStorage<string[]>('ai_generated_ideas', []);
 
-  // Session storage key for ideas
-  const IDEAS_STORAGE_KEY = 'ai_generated_ideas';
-
-  // Load ideas from session storage on component mount
+  // Hydrate selected indices from context's selected ideas on mount
   useEffect(() => {
-    try {
-      const storedIdeas = sessionStorage.getItem(IDEAS_STORAGE_KEY);
-      let parsed: string[] | null = null;
-      if (storedIdeas) {
-        parsed = JSON.parse(storedIdeas);
-        setLocalIdeas(parsed ?? []);
-      }
-      // hydrate selected indices from context's selected ideas
-      if (contextSelectedIdeas.length > 0) {
-        const indices = new Set<number>();
-        (parsed || localIdeas).forEach((idea: string, idx: number) => {
-          if (contextSelectedIdeas.includes(idea)) indices.add(idx);
-        });
-        if (indices.size > 0) setSelectedIndices(indices);
-      }
-    } catch (error) {
-      logger.error('Failed to load ideas from session storage', { error });
+    if (contextSelectedIdeas.length > 0 && localIdeas.length > 0) {
+      const indices = new Set<number>();
+      localIdeas.forEach((idea: string, idx: number) => {
+        if (contextSelectedIdeas.includes(idea)) indices.add(idx);
+      });
+      if (indices.size > 0) setSelectedIndices(indices);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -63,14 +47,8 @@ const PostAIAssistant = ({
   useEffect(() => {
     if (ideas && ideas.length > 0) {
       setLocalIdeas(ideas);
-      // Save to session storage
-      try {
-        sessionStorage.setItem(IDEAS_STORAGE_KEY, JSON.stringify(ideas));
-      } catch (error) {
-        logger.error('Failed to save ideas to session storage', { error });
-      }
     }
-  }, [ideas]);
+  }, [ideas, setLocalIdeas]);
 
   // Sync selected ideas to context whenever selection or list changes
   useEffect(() => {
@@ -95,13 +73,6 @@ const PostAIAssistant = ({
   const handleDeleteIdea = async (index: number) => {
     const newIdeas = localIdeas.filter((_, i) => i !== index);
     setLocalIdeas(newIdeas);
-
-    // Update session storage
-    try {
-      sessionStorage.setItem(IDEAS_STORAGE_KEY, JSON.stringify(newIdeas));
-    } catch (error) {
-      logger.error('Failed to update ideas in session storage', { error });
-    }
 
     // Clear selection if deleted idea was selected and shift indices
     const newSelected = new Set(selectedIndices);
