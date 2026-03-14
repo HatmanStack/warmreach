@@ -37,16 +37,17 @@ def _get_origin_from_event(event: dict[str, Any]) -> str | None:
 def preflight_response(event: dict[str, Any]) -> dict[str, Any]:
     """Return a proper CORS preflight (OPTIONS) response without requiring auth."""
     origin = _get_origin_from_event(event)
-    allow_origin = origin if origin in ALLOWED_ORIGINS else (ALLOWED_ORIGINS[0] if ALLOWED_ORIGINS else '*')
+    headers = {
+        'Content-Type': 'application/json',
+        'Vary': 'Origin',
+        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+    }
+    if origin is not None and origin in ALLOWED_ORIGINS:
+        headers['Access-Control-Allow-Origin'] = origin
     return {
         'statusCode': 204,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': allow_origin,
-            'Vary': 'Origin',
-            'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-            'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-        },
+        'headers': headers,
         'body': '',
     }
 
@@ -201,15 +202,16 @@ def _update_user_profile(event: dict[str, Any], user_id: str) -> dict[str, Any]:
 
 def create_response(status_code: int, body: dict[str, Any], origin: str | None = None) -> dict[str, Any]:
     """Create standardized API response"""
-    allow_origin = origin if origin in ALLOWED_ORIGINS else (ALLOWED_ORIGINS[0] if ALLOWED_ORIGINS else '*')
+    headers = {
+        'Content-Type': 'application/json',
+        'Vary': 'Origin',
+        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+    }
+    if origin is not None and origin in ALLOWED_ORIGINS:
+        headers['Access-Control-Allow-Origin'] = origin
     return {
         'statusCode': status_code,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': allow_origin,
-            'Vary': 'Origin',
-            'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-            'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-        },
+        'headers': headers,
         'body': json.dumps(body, default=str),
     }

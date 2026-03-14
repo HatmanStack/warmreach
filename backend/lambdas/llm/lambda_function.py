@@ -19,7 +19,8 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Clients
-openai_client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'), timeout=60)
+OPENAI_TIMEOUT = int(os.environ.get('OPENAI_TIMEOUT', '60'))
+openai_client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'), timeout=OPENAI_TIMEOUT)
 bedrock_client = boto3.client('bedrock-runtime')
 table_name = os.environ.get('DYNAMODB_TABLE_NAME')
 table = boto3.resource('dynamodb').Table(table_name) if table_name else None
@@ -62,8 +63,10 @@ def _get_origin_from_event(event):
 
 def _cors_headers(event):
     origin = _get_origin_from_event(event)
-    allow_origin = origin if origin in ALLOWED_ORIGINS else (ALLOWED_ORIGINS[0] if ALLOWED_ORIGINS else '*')
-    return {**BASE_HEADERS, 'Access-Control-Allow-Origin': allow_origin, 'Vary': 'Origin'}
+    headers = {**BASE_HEADERS, 'Vary': 'Origin'}
+    if origin is not None and origin in ALLOWED_ORIGINS:
+        headers['Access-Control-Allow-Origin'] = origin
+    return headers
 
 
 def _resp(code, body, event=None):
