@@ -5,6 +5,71 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-14
+
+### Added
+
+- **Local Profile Scraping** — Puppeteer + cheerio-based local profile scraper with fallback selector cascades and Recent Activity extraction, wired into contact processor with staleness checks
+- **Import Mode** — `BackoffController` and `InteractionQueue` gain import modes (10s polling, 4-hour TTL) for bulk operations with human-like burst-pattern throttling
+- **Cross-User Ingestion Dedup** — 30-day dedup window prevents redundant RAGStack ingestion across users for the same profile
+- **Daily Scrape Cap** — Import checkpoint counter with daily limits and startup state restoration
+- **Frontend:** `useSessionStorage` hook mirroring `useLocalStorage` API with `rehydrate()` for external-writer sync
+- **Frontend:** `buildLinkedInProfileUrl()` shared utility replacing duplicate implementations across connection cards
+- **Backend:** `request_utils.py` shared module (`extract_user_id`, `cors_headers`, `api_response`) eliminating CORS/response boilerplate across 4 Lambda handlers
+- **Backend:** `RateLimitUnavailableError` — DynamoDB errors during rate limit checks now return 503 (distinguishable from 429 rate limiting)
+- **Backend:** TypedDict definitions for DynamoDB item shapes (`ImportCheckpointItem`, `IngestStateItem`)
+- **Backend:** RAGStack document ID stored on edge records
+- **Client:** `RateLimiter` class extracted from `linkedinInteractionService.js` to `rateLimiter.ts`
+- **Client:** `RagstackProxyService` extracted from `linkedinInteractionService.js` / `profileInitService.ts`
+- **Client:** Structured error codes in LinkedIn service layer
+- **Client:** Async initialization lock on `BrowserSessionManager`
+- **Tests:** LinkedIn service method coverage (searchCompany, applyLocationFilter, analyzeContactActivity, scrollToLoadConnections)
+- **Tests:** EdgeDataService rollback path, InsightCacheService error paths, RAGStackProxyService encoding edge cases
+- **CI:** Bandit security scanning and npm audit added to CI workflow
+
+### Changed
+
+- **Backend:** EdgeService (933 LOC) decomposed into `EdgeDataService`, `InsightCacheService`, `RAGStackProxyService` in `shared_services/`; original `EdgeService` deprecated as thin facade
+- **Backend:** Rate limit and feature flag checks are now fail-closed (deny on error) in `command-dispatch` and `edge-processing`
+- **Backend:** OpenAI timeout configurable via `OPENAI_TIMEOUT` env var (default 60s)
+- **Backend:** SSM Stripe secret loading uses boto3 adaptive retry (`max_attempts: 2, mode: adaptive`) with 5-minute TTL refresh
+- **Backend:** `EdgeDataService` public API uniformly accepts raw `profile_id` and encodes internally
+- **Backend:** `is_recently_ingested` promoted to public API on `EdgeDataService`
+- **Backend:** CORS handler omits `Access-Control-Allow-Origin` header for requests with no Origin or unrecognized origins
+- **Backend:** CORS preflight in `edge-processing` returns 204 (matching `command-dispatch` convention)
+- **Backend:** `_get_cached_or_compute` returns consistent `computedAt` timestamp; all timestamps standardized to `.isoformat()`
+- **Backend:** LLM Lambda timeout increased to 120s
+- **Backend:** EdgeService made module-level singleton for warm container reuse
+- **Frontend:** `PostAIAssistant` and `ResearchResultsCard` migrated from direct `sessionStorage` to `useSessionStorage` hook
+- **Client:** Puppeteer page event listeners stored as named references and removed individually via `page.off()` in `close()`
+
+### Fixed
+
+- **Backend:** `ragstack_proxy_service.ingest()` now passes b64-encoded `profile_id` to `ingest_profile` (was passing raw URL, producing invalid S3 keys)
+- **Backend:** `ragstack_ingest` no longer mutates caller's metadata dict
+- **Backend:** `_trigger_ragstack_ingestion` short-circuits before DynamoDB reads when services not injected
+- **Backend:** Removed `PROFILE#` prefix guard in `ragstack_proxy_service` (wrong encoding sentinel)
+- **Backend:** Removed dead `table` parameter from `compute_and_store_scores`
+- **Backend:** Removed unreachable `computedAt` fallback in `get_priority_recommendations`
+- **Backend:** Removed duplicated facade methods from `edge_service.py` (canonical implementations in `InsightCacheService`)
+- **Frontend:** `useSessionStorage` `setValue` stabilized with ref-based pattern (no recreation on state changes)
+- **Frontend:** `useSessionStorage` `initialValue` stabilized via `useRef` (prevents infinite re-render loops with inline objects)
+- **Frontend:** Fixed CSS typo `over:` to `hover:` in `ConnectionCard.tsx`
+- **Frontend:** Fixed JSON serialization format mismatch between `PostComposerContext` and `useSessionStorage` for shared `ai_research_content` key
+- **Client:** `rateLimiter.recordAction()` now prunes stale entries (was growing unbounded)
+- **Client:** `ragstackProxyService.ingest()` error handling added (try/catch with `{ success: false }` return)
+- **Docs:** Fixed broken link in Phase-3 plan doc
+- **Docs:** Redacted real AWS resource IDs from plan docs
+- **Docs:** Removed stale RAGStack scrape references from docs and overlays
+- **Docs:** Fixed env var documentation in CONFIGURATION.md
+
+### Dependencies
+
+- Bump PyJWT[crypto] from 2.11.0 to 2.12.0
+- Add stripe to backend test requirements
+- Bump frontend and client production/dev dependencies (multiple Dependabot PRs)
+- Add cheerio dependency for local profile scraping
+
 ## [1.2.3] - 2026-03-06
 
 ### Added
