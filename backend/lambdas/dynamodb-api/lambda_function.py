@@ -27,6 +27,9 @@ service = DynamoDBApiService(table)
 ALLOWED_ORIGINS_ENV = os.environ.get('ALLOWED_ORIGINS', 'http://localhost:5173')
 ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_ENV.split(',') if o.strip()]
 
+# Thread-local event storage for CORS resolution
+_current_event: dict[str, Any] | None = None
+
 
 def _get_origin_from_event(event: dict[str, Any]) -> str | None:
     headers = event.get('headers') or {}
@@ -34,21 +37,28 @@ def _get_origin_from_event(event: dict[str, Any]) -> str | None:
     return origin
 
 
-def preflight_response(event: dict[str, Any]) -> dict[str, Any]:
-    """Return a proper CORS preflight (OPTIONS) response without requiring auth."""
-    origin = _get_origin_from_event(event)
-    headers = {
+def _cors_headers(event: dict[str, Any] | None = None) -> dict[str, str]:
+    """Build CORS headers. Only sets ACAO for recognized origins."""
+    headers: dict[str, str] = {
         'Content-Type': 'application/json',
         'Vary': 'Origin',
         'Access-Control-Allow-Headers': 'Content-Type,Authorization',
         'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
     }
-    if origin is not None and origin in ALLOWED_ORIGINS:
-        headers['Access-Control-Allow-Origin'] = origin
+    evt = event or _current_event
+    if evt is not None:
+        origin = _get_origin_from_event(evt)
+        if origin is not None and origin in ALLOWED_ORIGINS:
+            headers['Access-Control-Allow-Origin'] = origin
+    return headers
+
+
+def preflight_response(event: dict[str, Any]) -> dict[str, Any]:
+    """Return a proper CORS preflight (OPTIONS) response without requiring auth."""
     return {
         'statusCode': 204,
-        'headers': headers,
-        'body': '',
+        'headers': _cors_headers(event),
+        'body': json.dumps(''),
     }
 
 
@@ -69,6 +79,8 @@ def _extract_user_id(event: dict[str, Any]) -> str | None:
 
 def lambda_handler(event: dict[str, Any], context) -> dict[str, Any]:
     """Main Lambda handler - thin routing layer delegating to DynamoDBApiService."""
+    global _current_event
+    _current_event = event
     try:
         from shared_services.observability import setup_correlation_context
 
@@ -102,16 +114,14 @@ def lambda_handler(event: dict[str, Any], context) -> dict[str, Any]:
 
             if not user_id:
                 logger.error('No user ID found in JWT token for profile GET')
-                return create_response(
-                    401, {'error': 'Unauthorized: Missing or invalid JWT token'}, _get_origin_from_event(event)
-                )
+                return create_response(401, {'error': 'Unauthorized: Missing or invalid JWT token'})
 
             result = service.get_user_settings(user_id)
             return create_response(200, result)
 
         if not user_id:
             logger.error('No user ID found in JWT token for POST operation')
-            return create_response(401, {'error': 'Authentication required'}, _get_origin_from_event(event))
+            return create_response(401, {'error': 'Authentication required'})
 
         body = json.loads(event.get('body', '{}')) if event.get('body') else {}
         operation = body.get('operation')
@@ -145,7 +155,6 @@ def lambda_handler(event: dict[str, Any], context) -> dict[str, Any]:
                         'update_profile_picture',
                     ],
                 },
-                _get_origin_from_event(event),
             )
 
     except ClientError:
@@ -156,6 +165,8 @@ def lambda_handler(event: dict[str, Any], context) -> dict[str, Any]:
         # This ensures malformed requests don't crash the Lambda and always return valid HTTP.
         logger.error(f'Error processing request: {str(e)}')
         return create_response(500, {'error': 'Internal server error'})
+    finally:
+        _current_event = None
 
 
 def handle_profiles_route(event: dict[str, Any], http_method: str, user_id: str | None) -> dict[str, Any]:
@@ -200,18 +211,10 @@ def _update_user_profile(event: dict[str, Any], user_id: str) -> dict[str, Any]:
         return create_response(400, {'error': 'Invalid JSON in request body'})
 
 
-def create_response(status_code: int, body: dict[str, Any], origin: str | None = None) -> dict[str, Any]:
-    """Create standardized API response"""
-    headers = {
-        'Content-Type': 'application/json',
-        'Vary': 'Origin',
-        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    }
-    if origin is not None and origin in ALLOWED_ORIGINS:
-        headers['Access-Control-Allow-Origin'] = origin
+def create_response(status_code: int, body: dict[str, Any]) -> dict[str, Any]:
+    """Create standardized API response with CORS headers from current event."""
     return {
         'statusCode': status_code,
-        'headers': headers,
+        'headers': _cors_headers(),
         'body': json.dumps(body, default=str),
     }
