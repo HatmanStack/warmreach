@@ -6,7 +6,7 @@ allowed-tools: Agent, Read, Write, Glob, Grep, Bash
 
 # Audit
 
-You coordinate one or more codebase audits. Each audit runs sequentially with its own scoping questions and produces an intake doc. All docs land in the same plan directory so a single `/pipeline` command remediates everything.
+You coordinate one or more codebase audits. All scoping questions are asked upfront in a single batch. Then all agents run without further user interaction, producing intake docs for a single `/pipeline` command.
 
 ## Input
 
@@ -14,20 +14,45 @@ You coordinate one or more codebase audits. Each audit runs sequentially with it
 
 ## Process
 
-### Step 1: Select Audits
+### Step 1: Collect All Configuration Upfront
 
-Ask the user which audits to run:
+Present **one message** with all questions. The user answers everything at once, then you execute.
 
-```
+```text
 Which audits should I run?
 
 A) All three (health → eval → docs)
 B) Code evaluation — 12-pillar scoring across 3 lenses
 C) Technical debt — audit across 4 vectors
 D) Documentation — drift detection across 6 phases
+
+---
+
+For the audits you selected, answer the relevant sections below.
+Skip sections for audits you didn't select.
+
+### Code Evaluation (if B or A)
+1. Role level: [Junior | Mid | Senior | Staff+]
+2. Focus areas: [any specific concerns? or "none"]
+3. Context: [side project | production app | interview take-home]
+4. Exclusions: [directories/files to skip, or "none"]
+5. Pillar overrides: [any pillars to accept below 9? e.g., "Creativity: 7", or "none"]
+
+### Technical Debt (if C or A)
+1. Goal: [general health check | production hardening | onboarding prep | pre-release cleanup]
+2. Scope: [full repo | specific directories]
+3. Existing tooling: [linters, CI, pre-commit hooks already in place? or "none"]
+4. Constraints: [anything off-limits? or "none"]
+
+### Documentation (if D or A)
+1. Doc scope: [all docs | specific directories | README and API docs only]
+2. Constraints: [any docs that shouldn't be touched? or "none"]
+3. Language stack: [JS/TS | Python | both]
+4. CI platform: [GitHub Actions | GitLab CI | other | none]
+5. Prevention tooling: [markdown linting + link checking | auto-gen API docs | both | none]
 ```
 
-If `$ARGUMENTS` already specifies which audits (e.g., "eval and health"), skip this question.
+If `$ARGUMENTS` already provides answers (e.g., "/audit all, senior, production app, no exclusions"), extract what you can and only ask for missing information.
 
 ### Step 2: Generate Plan Identifier
 
@@ -38,85 +63,117 @@ Generate the directory name: `YYYY-MM-DD-audit-slug`
 
 Create the directory.
 
-### Step 3: Run Selected Audits Sequentially
+### Step 3: Read Role Prompts
 
-Run each selected audit in this order (skip any not selected):
+Before spawning agents, read all required role prompt files. Only read prompts for selected audits.
 
-#### 3a: Repo Health (if selected)
+- **If health selected:** Read `.claude/skills/pipeline/health-auditor.md`
+- **If eval selected:** Read `.claude/skills/pipeline/eval-hire.md`, `.claude/skills/pipeline/eval-stress.md`, `.claude/skills/pipeline/eval-day2.md`
+- **If docs selected:** Read `.claude/skills/pipeline/doc-auditor.md`
 
-Run the repo-health intake flow:
+### Step 4: Spawn All Agents in Parallel
 
-1. Ask repo-health scoping questions (goal, scope, existing tooling, constraints) — **one at a time**, preferring multiple choice
-2. **Read** `.claude/skills/pipeline/health-auditor.md` for the role prompt
-3. Spawn an **Agent** with the role prompt embedded:
+All auditor/evaluator agents are read-only — they explore the codebase but don't modify it. Spawn all selected agents in a single parallel batch (up to 5 agents for "all"):
 
+```text
++-------------------------------------------------------------------+
+|                    PARALLEL AGENT SPAWN                            |
++-------------------------------------------------------------------+
+|                                                                   |
+|  health auditor ─┐                                                |
+|  eval hire ──────┤                                                |
+|  eval stress ────┤  all agents run simultaneously                 |
+|  eval day2 ──────┤                                                |
+|  doc auditor ────┘                                                |
+|                  ↓                                                |
+|  orchestrator collects all responses, writes intake docs          |
+|                                                                   |
++-------------------------------------------------------------------+
 ```
+
+**Agent 1: Health Auditor** (if health selected)
+```xml
 <role_prompt>
 [Contents of health-auditor.md]
 </role_prompt>
 
 <task>
 Audit the codebase in the current working directory.
-Goal: [from scoping]
-Scope: [from scoping]
-Existing tooling: [from scoping]
-Constraints: [from scoping]
+Goal: [from Step 1]
+Scope: [from Step 1]
+Existing tooling: [from Step 1]
+Constraints: [from Step 1]
 </task>
 ```
 
-4. Read the agent output. **Write** `docs/plans/YYYY-MM-DD-audit-slug/health-audit.md` with the standard repo-health format (see repo-health/SKILL.md Step 4 for template). Include `type: repo-health` in frontmatter.
-5. Report: `Health audit complete. Findings: X critical, Y high, Z medium, W low`
-
-#### 3b: Repo Eval (if selected)
-
-Run the repo-eval intake flow:
-
-1. Ask repo-eval scoping questions (role level, focus areas, context, exclusions, pillar overrides) — **one at a time**, preferring multiple choice
-2. **Read** `.claude/skills/pipeline/eval-hire.md`, `.claude/skills/pipeline/eval-stress.md`, `.claude/skills/pipeline/eval-day2.md` for role prompts
-3. Spawn **3 Agents in parallel**, each with their role prompt embedded:
-
-```
+**Agent 2: Eval — The Pragmatist** (if eval selected)
+```xml
 <role_prompt>
-[Contents of eval-{hire|stress|day2}.md]
+[Contents of eval-hire.md]
 </role_prompt>
 
 <task>
 Evaluate the codebase in the current working directory.
-Role level: [from scoping]
-Focus areas: [from scoping]
-Exclusions: [from scoping]
+Role level: [from Step 1]
+Focus areas: [from Step 1]
+Exclusions: [from Step 1]
 </task>
 ```
 
-4. Read all 3 agent outputs. **Write** `docs/plans/YYYY-MM-DD-audit-slug/eval.md` with the standard repo-eval format (see repo-eval/SKILL.md Step 4 for template). Include `type: repo-eval` and `pillar_overrides` in frontmatter.
-5. Report: `Evaluation complete. Scores: N/12 pillars at target`
+**Agent 3: Eval — The Oncall Engineer** (if eval selected)
+```xml
+<role_prompt>
+[Contents of eval-stress.md]
+</role_prompt>
 
-#### 3c: Doc Health (if selected)
-
-Run the doc-health intake flow:
-
-1. Ask doc-health scoping questions (doc scope, constraints, language stack, CI platform, prevention scope) — **one at a time**, preferring multiple choice
-2. **Read** `.claude/skills/pipeline/doc-auditor.md` for the role prompt
-3. Spawn an **Agent** with the role prompt embedded:
-
+<task>
+Evaluate the codebase in the current working directory.
+Role level: [from Step 1]
+Focus areas: [from Step 1]
+Exclusions: [from Step 1]
+</task>
 ```
+
+**Agent 4: Eval — The Team Lead** (if eval selected)
+```xml
+<role_prompt>
+[Contents of eval-day2.md]
+</role_prompt>
+
+<task>
+Evaluate the codebase in the current working directory.
+Role level: [from Step 1]
+Focus areas: [from Step 1]
+Exclusions: [from Step 1]
+</task>
+```
+
+**Agent 5: Doc Auditor** (if docs selected)
+```xml
 <role_prompt>
 [Contents of doc-auditor.md]
 </role_prompt>
 
 <task>
 Audit documentation in the current working directory against codebase reality.
-Doc scope: [from scoping]
-Constraints: [from scoping]
+Doc scope: [from Step 1]
+Constraints: [from Step 1]
 </task>
 ```
 
-4. Read the agent output. **Write** `docs/plans/YYYY-MM-DD-audit-slug/doc-audit.md` with the standard doc-health format (see doc-health/SKILL.md Step 4 for template). Include `type: doc-health` in frontmatter.
-5. Report: `Doc audit complete. Findings: X drift, Y gaps, Z stale, W broken links`
+### Step 5: Collect Results and Write Intake Docs
 
-### Step 4: Handoff
+After all agents complete, the **orchestrator** (you) reads each agent's output and writes the intake docs:
 
-```
+- **Health:** Write `docs/plans/YYYY-MM-DD-audit-slug/health-audit.md` with `type: repo-health` in frontmatter
+- **Eval:** Combine all 3 evaluator outputs into `docs/plans/YYYY-MM-DD-audit-slug/eval.md` with `type: repo-eval` and `pillar_overrides` in frontmatter
+- **Docs:** Write `docs/plans/YYYY-MM-DD-audit-slug/doc-audit.md` with `type: doc-health` in frontmatter
+
+See the individual intake skill SKILL.md files (repo-health, repo-eval, doc-health) for the exact output templates.
+
+### Step 6: Handoff
+
+```text
 Audit complete: docs/plans/YYYY-MM-DD-audit-slug/
 
 Intake docs produced:
@@ -132,8 +189,8 @@ The pipeline will run flows in order: health → eval → docs
 
 ## Rules
 
-- **DO NOT** skip scoping questions for any selected audit
-- **DO NOT** run audits in parallel — run them sequentially so scoping questions don't interleave
+- **DO NOT** ask questions one at a time — present all questions in a single message
+- **DO NOT** prompt the user again after they answer — run all agents autonomously
 - **DO NOT** start remediation — your only output is the intake docs
 - **DO** embed role prompt contents in agent prompts (agents cannot access skill directory files)
 - **DO** produce all intake docs in the same plan directory
