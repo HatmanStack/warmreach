@@ -13,6 +13,7 @@ export interface IntroPath {
   averageScore: number;
 }
 
-export function useWarmIntroPaths(_targetProfileId: string | null) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function useWarmIntroPaths(targetProfileId: string | null) {
   return { data: null, isLoading: false, error: null, refetch: () => {} };
 }
