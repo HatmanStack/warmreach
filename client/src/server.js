@@ -17,6 +17,16 @@ import { linkedInInteractionQueue } from './domains/automation/utils/interaction
 import { BrowserSessionManager } from './domains/session/services/browserSessionManager.js';
 import { stopMonitoring as stopProfileMonitoring } from './domains/profile/utils/profileInitMonitor.js';
 
+// Global error handlers to prevent silent crashes
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled rejection', { reason, promise });
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception', { error });
+  process.exit(1);
+});
+
 // Use Redis rate limiter if REDIS_URL is configured, otherwise use memory
 const createRateLimiter = process.env.REDIS_URL ? createRedisRateLimiter : createMemoryRateLimiter;
 if (process.env.REDIS_URL) {

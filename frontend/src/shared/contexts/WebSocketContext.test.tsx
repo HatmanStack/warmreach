@@ -1,5 +1,6 @@
 import { render, waitFor } from '@testing-library/react';
 import { useAuth } from '@/features/auth';
+import { buildMockAuthReturn } from '@/test-utils';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Use hoisted mock
@@ -26,10 +27,12 @@ describe('WebSocketContext', () => {
 
   it('should connect when user is authenticated', async () => {
     vi.stubEnv('VITE_WEBSOCKET_URL', 'ws://test');
-    vi.mocked(useAuth).mockReturnValue({
-      user: { id: 'u1' },
-      getToken: vi.fn().mockResolvedValue('token'),
-    } as any);
+    vi.mocked(useAuth).mockReturnValue(
+      buildMockAuthReturn({
+        user: { id: 'u1', email: 'u1@test.com' },
+        getToken: vi.fn().mockResolvedValue('token'),
+      })
+    );
 
     const { WebSocketProvider } = await import('./WebSocketContext');
     render(
@@ -50,10 +53,12 @@ describe('WebSocketContext', () => {
     vi.stubEnv('VITE_WEBSOCKET_URL', 'ws://test');
     // Initially authenticated
     const mockUseAuth = vi.mocked(useAuth);
-    mockUseAuth.mockReturnValueOnce({
-      user: { id: 'u1' },
-      getToken: vi.fn().mockResolvedValue('token'),
-    } as any);
+    mockUseAuth.mockReturnValueOnce(
+      buildMockAuthReturn({
+        user: { id: 'u1', email: 'u1@test.com' },
+        getToken: vi.fn().mockResolvedValue('token'),
+      })
+    );
 
     const { WebSocketProvider } = await import('./WebSocketContext');
     const { rerender } = render(
@@ -63,10 +68,11 @@ describe('WebSocketContext', () => {
     );
 
     // Now unauthenticate
-    mockUseAuth.mockReturnValue({
-      user: null,
-      getToken: vi.fn(),
-    } as any);
+    mockUseAuth.mockReturnValue(
+      buildMockAuthReturn({
+        user: null,
+      })
+    );
 
     rerender(
       <WebSocketProvider>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as fs from 'fs';
+import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import {
@@ -8,7 +8,7 @@ import {
   rotateProfile,
 } from './fingerprintProfile';
 
-vi.mock('fs');
+vi.mock('fs/promises');
 vi.mock('crypto', async () => {
   const actual = (await vi.importActual('crypto')) as any;
   return {
@@ -69,30 +69,31 @@ describe('fingerprintProfile', () => {
   });
 
   describe('loadOrCreateProfile', () => {
-    it('creates and saves a new profile if none exists', () => {
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-      vi.mocked(fs.readFileSync).mockReturnValue('');
+    it('creates and saves a new profile if none exists', async () => {
+      vi.mocked(fsPromises.access).mockRejectedValue(new Error('ENOENT'));
+      vi.mocked(fsPromises.writeFile).mockResolvedValue();
+      vi.mocked(fsPromises.mkdir).mockResolvedValue(undefined);
 
-      const profile = loadOrCreateProfile(mockProfileDir);
+      const profile = await loadOrCreateProfile(mockProfileDir);
 
-      expect(fs.existsSync).toHaveBeenCalledWith(mockProfilePath);
-      expect(fs.writeFileSync).toHaveBeenCalled();
+      expect(fsPromises.access).toHaveBeenCalledWith(mockProfilePath);
+      expect(fsPromises.writeFile).toHaveBeenCalled();
       expect(profile.version).toBe(1);
     });
 
-    it('loads an existing profile if it exists and is not due for rotation', () => {
+    it('loads an existing profile if it exists and is not due for rotation', async () => {
       const existingProfile = generateFingerprintProfile();
 
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(existingProfile));
+      vi.mocked(fsPromises.access).mockResolvedValue();
+      vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(existingProfile));
 
-      const profile = loadOrCreateProfile(mockProfileDir);
+      const profile = await loadOrCreateProfile(mockProfileDir);
 
       expect(profile.seed).toBe(existingProfile.seed);
-      expect(fs.writeFileSync).not.toHaveBeenCalled();
+      expect(fsPromises.writeFile).not.toHaveBeenCalled();
     });
 
-    it('rotates the profile if it is expired', () => {
+    it('rotates the profile if it is expired', async () => {
       const expiredDate = new Date('2025-11-01T00:00:00Z');
 
       const existingProfile = generateFingerprintProfile();
@@ -103,14 +104,16 @@ describe('fingerprintProfile', () => {
       const newSeed = Buffer.alloc(32, 2);
       vi.mocked(crypto.randomBytes).mockReturnValue(newSeed as any);
 
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(existingProfile));
+      vi.mocked(fsPromises.access).mockResolvedValue();
+      vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(existingProfile));
+      vi.mocked(fsPromises.writeFile).mockResolvedValue();
+      vi.mocked(fsPromises.mkdir).mockResolvedValue(undefined);
 
-      const profile = loadOrCreateProfile(mockProfileDir);
+      const profile = await loadOrCreateProfile(mockProfileDir);
 
       expect(profile.seed).not.toBe(oldSeed);
       expect(profile.rotatedAt).toBe('2026-01-01T00:00:00.000Z');
-      expect(fs.writeFileSync).toHaveBeenCalled();
+      expect(fsPromises.writeFile).toHaveBeenCalled();
     });
   });
 

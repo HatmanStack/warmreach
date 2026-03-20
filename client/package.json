@@ -33,7 +33,6 @@
     "electron-updater": "^6.8.3",
     "express": "^5.2.1",
     "ioredis": "^5.10.0",
-    "jose": "^6.2.1",
     "libsodium-wrappers-sumo": "^0.8.2",
     "puppeteer": "^24.39.1",
     "tsx": "^4.19.2",

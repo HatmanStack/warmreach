@@ -8,7 +8,7 @@ const config: KnipConfig = {
       ignore: ['src/shared/types/libsodium-wrappers-sumo.d.ts'],
     },
     client: {
-      entry: ['electron-main.js', 'src/server.js', 'routes/**/*.js'],
+      entry: ['electron-main.js', 'routes/**/*.js'],
       project: [
         'src/**/*.{js,ts}',
         'routes/**/*.js',
@@ -28,7 +28,6 @@ const config: KnipConfig = {
     'mock-linkedin/**',
     'scripts/**',
     'backend/**',
-    'docs/**',
   ],
 };
 

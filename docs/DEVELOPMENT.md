@@ -43,7 +43,7 @@ If you prefer to set up manually:
     cd tests/backend
     python -m venv .venv
     source .venv/bin/activate
-    uv pip install -r requirements-test.lock --system
+    uv pip install -r requirements-test.lock
     cd ../..
     ```
 

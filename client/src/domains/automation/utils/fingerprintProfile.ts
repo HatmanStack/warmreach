@@ -1,4 +1,4 @@
-import * as fs from 'fs';
+import { readFile, writeFile, mkdir, access } from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { createSeededRandom, seedFromString } from './seededRandom.js';
@@ -132,12 +132,21 @@ export function rotateProfile(existing: FingerprintProfile): FingerprintProfile 
   return newProfile;
 }
 
-export function loadOrCreateProfile(profileDir: string): FingerprintProfile {
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function loadOrCreateProfile(profileDir: string): Promise<FingerprintProfile> {
   const profilePath = path.join(profileDir, 'fingerprint-profile.json');
 
-  if (fs.existsSync(profilePath)) {
+  if (await pathExists(profilePath)) {
     try {
-      const data = fs.readFileSync(profilePath, 'utf8');
+      const data = await readFile(profilePath, 'utf8');
       const profile = JSON.parse(data) as FingerprintProfile;
 
       const rotatedAt = new Date(profile.rotatedAt).getTime();
@@ -146,7 +155,7 @@ export function loadOrCreateProfile(profileDir: string): FingerprintProfile {
 
       if (daysSinceRotation > profile.rotationIntervalDays) {
         const rotated = rotateProfile(profile);
-        saveProfile(profileDir, rotated);
+        await saveProfile(profileDir, rotated);
         return rotated;
       }
 
@@ -157,17 +166,17 @@ export function loadOrCreateProfile(profileDir: string): FingerprintProfile {
   }
 
   const newProfile = generateFingerprintProfile();
-  saveProfile(profileDir, newProfile);
+  await saveProfile(profileDir, newProfile);
   return newProfile;
 }
 
-function saveProfile(profileDir: string, profile: FingerprintProfile): void {
+async function saveProfile(profileDir: string, profile: FingerprintProfile): Promise<void> {
   try {
-    if (!fs.existsSync(profileDir)) {
-      fs.mkdirSync(profileDir, { recursive: true });
+    if (!(await pathExists(profileDir))) {
+      await mkdir(profileDir, { recursive: true });
     }
     const profilePath = path.join(profileDir, 'fingerprint-profile.json');
-    fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2), 'utf8');
+    await writeFile(profilePath, JSON.stringify(profile, null, 2), 'utf8');
   } catch (e) {
     logger.error(`[FingerprintProfile] Error saving profile: ${e}`);
   }

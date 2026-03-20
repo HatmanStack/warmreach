@@ -1,7 +1,7 @@
 import { renderHook, act } from '@testing-library/react';
 import { useProfileInit } from '../useProfileInit';
 import { useCommand, useToast } from '@/shared/hooks';
-import { createWrapper } from '@/test-utils';
+import { createWrapper, buildMockToastReturn, buildMockCommandReturn } from '@/test-utils';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/shared/hooks', () => ({
@@ -16,14 +16,13 @@ describe('useProfileInit', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(useToast).mockReturnValue({ toast: mockToast } as any);
-    vi.mocked(useCommand).mockReturnValue({
-      execute: mockExecute,
-      reset: mockReset,
-      status: 'idle',
-      result: null,
-      error: null,
-    } as any);
+    vi.mocked(useToast).mockReturnValue(buildMockToastReturn(mockToast));
+    vi.mocked(useCommand).mockReturnValue(
+      buildMockCommandReturn({
+        execute: mockExecute,
+        reset: mockReset,
+      })
+    );
   });
 
   const Wrapper = createWrapper();
@@ -48,13 +47,14 @@ describe('useProfileInit', () => {
     });
 
     // Simulate completion
-    vi.mocked(useCommand).mockReturnValue({
-      execute: mockExecute,
-      reset: mockReset,
-      status: 'completed',
-      result: { success: true },
-      error: null,
-    } as any);
+    vi.mocked(useCommand).mockReturnValue(
+      buildMockCommandReturn({
+        execute: mockExecute,
+        reset: mockReset,
+        status: 'completed',
+        result: { success: true },
+      })
+    );
 
     rerender();
 
@@ -65,13 +65,14 @@ describe('useProfileInit', () => {
   it('should handle healing status', async () => {
     const { result, rerender } = renderHook(() => useProfileInit(), { wrapper: Wrapper });
 
-    vi.mocked(useCommand).mockReturnValue({
-      execute: mockExecute,
-      reset: mockReset,
-      status: 'completed',
-      result: { healing: true, message: 'Healing...' },
-      error: null,
-    } as any);
+    vi.mocked(useCommand).mockReturnValue(
+      buildMockCommandReturn({
+        execute: mockExecute,
+        reset: mockReset,
+        status: 'completed',
+        result: { healing: true, message: 'Healing...' },
+      })
+    );
 
     rerender();
 
@@ -82,13 +83,14 @@ describe('useProfileInit', () => {
   it('should handle failure', async () => {
     const { result, rerender } = renderHook(() => useProfileInit(), { wrapper: Wrapper });
 
-    vi.mocked(useCommand).mockReturnValue({
-      execute: mockExecute,
-      reset: mockReset,
-      status: 'failed',
-      result: null,
-      error: 'Dispatch failed',
-    } as any);
+    vi.mocked(useCommand).mockReturnValue(
+      buildMockCommandReturn({
+        execute: mockExecute,
+        reset: mockReset,
+        status: 'failed',
+        error: 'Dispatch failed',
+      })
+    );
 
     rerender();
 

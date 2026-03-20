@@ -1,9 +1,6 @@
-import { CognitoAuthService } from '@/features/auth';
 import { API_CONFIG } from '@/config/appConfig';
+import { httpClient } from '@/shared/utils/httpClient';
 import type { Message, UserProfile } from '@/shared/types/index';
-import { createLogger } from '@/shared/utils/logger';
-
-const logger = createLogger('MessageGenerationService');
 
 // =============================================================================
 // INTERFACES
@@ -70,10 +67,8 @@ export class MessageGenerationError extends Error {
 // =============================================================================
 
 const MESSAGE_GENERATION_CONFIG = {
-  BASE_URL: import.meta.env.VITE_API_GATEWAY_URL || API_CONFIG.BASE_URL,
   ENDPOINT: API_CONFIG.ENDPOINTS.MESSAGE_GENERATION,
-  TIMEOUT: 30000, // 30 seconds for AI generation
-  MOCK_MODE: import.meta.env.VITE_MOCK_MODE === 'true' || process.env.NODE_ENV === 'development', // Use mock responses in development
+  MOCK_MODE: import.meta.env.VITE_MOCK_MODE === 'true',
 } as const;
 
 // =============================================================================
@@ -87,99 +82,6 @@ const MESSAGE_GENERATION_CONFIG = {
  * personalized messages based on connection data and conversation topics.
  */
 class MessageGenerationService {
-  private baseURL: string;
-  private timeout: number;
-
-  constructor() {
-    this.baseURL = MESSAGE_GENERATION_CONFIG.BASE_URL;
-    this.timeout = MESSAGE_GENERATION_CONFIG.TIMEOUT;
-  }
-
-  /**
-   * Get JWT token from Cognito for API authentication
-   */
-  private async getAuthToken(): Promise<string | null> {
-    try {
-      const token = await CognitoAuthService.getCurrentUserToken();
-      if (token) {
-        // Store in session storage for future use
-        sessionStorage.setItem('jwt_token', token);
-        return token;
-      }
-      return null;
-    } catch (error) {
-      logger.error('Error getting auth token', { error });
-      return null;
-    }
-  }
-
-  /**
-   * Make authenticated HTTP request to the API
-   */
-  private async makeRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    try {
-      // Get JWT token for authentication
-      const token = await this.getAuthToken();
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(options.headers as Record<string, string>),
-      };
-
-      // Add Authorization header if token is available
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const response = await fetch(`${this.baseURL}${endpoint}`, {
-        ...options,
-        signal: controller.signal,
-        headers,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new MessageGenerationError({
-          message: errorData.message || `HTTP error! status: ${response.status}`,
-          status: response.status,
-          code: errorData.code,
-        });
-      }
-
-      const data = await response.json();
-      return data;
-    } catch (error) {
-      clearTimeout(timeoutId);
-
-      if (error instanceof MessageGenerationError) {
-        throw error;
-      }
-
-      if (error instanceof Error) {
-        if (error.name === 'AbortError') {
-          throw new MessageGenerationError({
-            message: 'Request timeout - message generation is taking too long',
-            code: 'TIMEOUT',
-          });
-        }
-        throw new MessageGenerationError({
-          message: error.message || 'An unexpected error occurred',
-          code: 'NETWORK_ERROR',
-        });
-      }
-
-      throw new MessageGenerationError({
-        message: 'An unexpected error occurred',
-        code: 'UNKNOWN_ERROR',
-      });
-    }
-  }
-
   /**
    * Generate a personalized message for a specific connection
    *
@@ -200,24 +102,29 @@ class MessageGenerationService {
       // Prepare the API request payload
       const payload = this.formatRequestPayload(request);
 
-      // Make the API call
-      const response = await this.makeRequest<MessageGenerationResponse>(
+      // Make the API call via httpClient
+      const result = await httpClient.post<MessageGenerationResponse>(
         MESSAGE_GENERATION_CONFIG.ENDPOINT,
-        {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        }
+        payload
       );
 
+      if (!result.success) {
+        throw new MessageGenerationError({
+          message: result.error?.message || 'Message generation failed',
+          status: result.error?.status,
+          code: result.error?.code,
+        });
+      }
+
       // Validate and return the generated message
-      if (!response.generatedMessage) {
+      if (!result.data?.generatedMessage) {
         throw new MessageGenerationError({
           message: 'Invalid response: missing generated message',
           code: 'INVALID_RESPONSE',
         });
       }
 
-      return response.generatedMessage;
+      return result.data.generatedMessage;
     } catch (error) {
       // Re-throw MessageGenerationError instances
       if (error instanceof MessageGenerationError) {
@@ -236,9 +143,11 @@ class MessageGenerationService {
    * Generate messages for multiple connections in batch
    *
    * @param requests - Array of message generation requests
-   * @returns Promise resolving to Map of connectionId -> generated message
+   * @returns Promise resolving to object with successful results and any errors
    */
-  async generateBatchMessages(requests: MessageGenerationRequest[]): Promise<Map<string, string>> {
+  async generateBatchMessages(
+    requests: MessageGenerationRequest[]
+  ): Promise<{ results: Map<string, string>; errors: Map<string, MessageGenerationError> }> {
     const results = new Map<string, string>();
     const errors = new Map<string, MessageGenerationError>();
 
@@ -269,7 +178,7 @@ class MessageGenerationService {
       });
     }
 
-    return results;
+    return { results, errors };
   }
 
   /**
@@ -370,8 +279,6 @@ class MessageGenerationService {
         : undefined,
     };
   }
-
-  // Removed unused handleApiError to reduce complexity
 }
 
 // =============================================================================

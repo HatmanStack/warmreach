@@ -17,13 +17,9 @@ const RandomHelpers = {
    * Wait for a random duration between minMs and maxMs
    */
   async randomDelay(minMs = 300, maxMs = 800) {
-    try {
-      const span = Math.max(0, maxMs - minMs);
-      const delayMs = minMs + Math.floor(Math.random() * (span + 1));
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    } catch {
-      // No-op on failure
-    }
+    const span = Math.max(0, maxMs - minMs);
+    const delayMs = minMs + Math.floor(Math.random() * (span + 1));
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   },
 };
 
@@ -370,18 +366,8 @@ export class LinkedInInteractionService {
    * @returns {Promise<Object>} Suspicious activity analysis and actions taken
    */
   async checkSuspiciousActivity() {
-    const suspiciousActivity = { isSuspicious: false, patterns: [], recommendation: '' };
-
-    if (suspiciousActivity.isSuspicious) {
-      logger.warn('Suspicious activity detected, applying enhanced cooling-off period', {
-        patterns: suspiciousActivity.patterns,
-        recommendation: suspiciousActivity.recommendation,
-      });
-
-      // Cooling off disabled
-    }
-
-    return suspiciousActivity;
+    // Cooling-off detection disabled; returns safe default
+    return { isSuspicious: false, patterns: [], recommendation: '' };
   }
 
   /**

@@ -1,7 +1,7 @@
 import { logger } from '#utils/logger.js';
 import { encryptCredentials } from '#utils/crypto.js';
 import path from 'path';
-import fsSync from 'fs';
+import { writeFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -144,7 +144,7 @@ export class HealingManager {
       timestamp: new Date().toISOString(),
     };
 
-    fsSync.writeFileSync(stateFile, JSON.stringify(profileInitState, null, 2));
+    await writeFile(stateFile, JSON.stringify(profileInitState, null, 2));
 
     logger.info(`Created profile init healing state file: ${stateFile}`, {
       requestId: stateData.requestId,
@@ -198,7 +198,7 @@ export class HealingManager {
       jwtToken: encryptedCreds?.jwtToken || null,
     };
 
-    fsSync.writeFileSync(stateFile, JSON.stringify(stateToWrite, null, 2));
+    await writeFile(stateFile, JSON.stringify(stateToWrite, null, 2));
 
     logger.info(`Created search healing state file: ${stateFile}`, {
       credentialsEncrypted: !!encryptedCreds,

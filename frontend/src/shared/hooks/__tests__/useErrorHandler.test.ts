@@ -3,6 +3,7 @@ import { useErrorHandler } from '../useErrorHandler';
 import { useToast } from '@/shared/hooks';
 import { MessageGenerationError } from '@/features/messages';
 import { ApiError } from '@/shared/services';
+import { buildMockToastReturn } from '@/test-utils';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/shared/hooks', () => ({
@@ -14,7 +15,7 @@ describe('useErrorHandler', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(useToast).mockReturnValue({ toast: mockToast } as any);
+    vi.mocked(useToast).mockReturnValue(buildMockToastReturn(mockToast));
     vi.useFakeTimers();
   });
 

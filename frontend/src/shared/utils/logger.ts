@@ -23,6 +23,60 @@ interface LogEntry {
 }
 
 /**
+ * Rate limiter for error telemetry — max 10 sends per 60 seconds, with deduplication.
+ */
+const TELEMETRY_RATE_LIMIT = 10;
+const TELEMETRY_WINDOW_MS = 60_000;
+const _telemetrySendTimestamps: number[] = [];
+const _recentErrorHashes = new Map<string, number>(); // hash -> timestamp
+
+function _hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const chr = str.charCodeAt(i);
+    hash = ((hash << 5) - hash + chr) | 0;
+  }
+  return hash.toString(36);
+}
+
+function _shouldSendTelemetry(message: string): boolean {
+  const now = Date.now();
+
+  // Deduplicate: skip if same error was reported in the last window
+  const msgHash = _hashString(message);
+  const lastSent = _recentErrorHashes.get(msgHash);
+  if (lastSent && now - lastSent < TELEMETRY_WINDOW_MS) {
+    return false;
+  }
+
+  // Rate limit: sliding window counter
+  while (
+    _telemetrySendTimestamps.length > 0 &&
+    now - _telemetrySendTimestamps[0] > TELEMETRY_WINDOW_MS
+  ) {
+    _telemetrySendTimestamps.shift();
+  }
+  if (_telemetrySendTimestamps.length >= TELEMETRY_RATE_LIMIT) {
+    return false;
+  }
+
+  // Allow the send
+  _telemetrySendTimestamps.push(now);
+  _recentErrorHashes.set(msgHash, now);
+
+  // Clean up old hashes periodically
+  if (_recentErrorHashes.size > 100) {
+    for (const [key, ts] of _recentErrorHashes) {
+      if (now - ts > TELEMETRY_WINDOW_MS) {
+        _recentErrorHashes.delete(key);
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
  * Sensitive field patterns to mask in logs
  */
 const SENSITIVE_PATTERNS = [
@@ -132,8 +186,8 @@ const log = (level: LogLevel, message: string, context?: LogContext): void => {
       break;
   }
 
-  // In production, send errors to a monitoring service
-  if (!isDevelopment() && level === 'error') {
+  // In production, send errors to a monitoring service (rate-limited)
+  if (!isDevelopment() && level === 'error' && _shouldSendTelemetry(message)) {
     try {
       const telemetryEndpoint = import.meta.env.VITE_TELEMETRY_ENDPOINT || '/api/telemetry/error';
       fetch(telemetryEndpoint, {

@@ -44,7 +44,7 @@ describe('ProtectedRoute', () => {
 
   it('should render children if authenticated', () => {
     renderWithAuth(<div>Protected Content</div>, {
-      user: { id: 'u1' } as any,
+      user: { id: 'u1', email: 'u1@test.com' },
       loading: false,
     });
 

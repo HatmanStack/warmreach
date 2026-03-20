@@ -50,15 +50,13 @@ The server auto-rewrites `linkedin.com` URLs to `localhost:3333`, but you may wa
 ```
 mock-linkedin/
 ├── server.js           # Express server with all routes
-├── pages/              # Your saved HTML files go here
-│   ├── login.html
-│   ├── feed.html
-│   ├── profile.html
-│   └── ...
+├── pages/              # Placeholder for saved HTML files (.gitkeep only)
 ├── data/
 │   └── mock-data.json  # Seed data (connections, invitations, etc.)
 └── public/             # Static assets (CSS, images)
 ```
+
+> **Note:** The `pages/` directory currently contains only `.gitkeep`. Real LinkedIn HTML files are not committed. The server generates placeholder pages with correct DOM selectors when saved HTML is not present. See "Capturing Real LinkedIn Pages" above to populate this directory.
 
 ## Routes Supported
 

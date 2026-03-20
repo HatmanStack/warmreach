@@ -231,13 +231,12 @@ describe('Healing encryption integration', () => {
         })),
       }));
 
-      vi.doMock('fs', () => ({
-        default: { writeFileSync: vi.fn() },
-        writeFileSync: vi.fn(),
+      const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+      vi.doMock('fs/promises', () => ({
+        writeFile: mockWriteFile,
       }));
 
       const { HealingManager } = await import('../../domains/automation/utils/healingManager.js');
-      const fsSync = (await import('fs')).default;
 
       const manager = new HealingManager();
       await manager._createStateFile({
@@ -246,10 +245,10 @@ describe('Healing encryption integration', () => {
       });
 
       // Verify write was called
-      expect(fsSync.writeFileSync).toHaveBeenCalled();
+      expect(mockWriteFile).toHaveBeenCalled();
 
       // Get written content
-      const writeCall = fsSync.writeFileSync.mock.calls[0];
+      const writeCall = mockWriteFile.mock.calls[0];
       const written = JSON.parse(writeCall[1]);
 
       // Verify credentials are encrypted format

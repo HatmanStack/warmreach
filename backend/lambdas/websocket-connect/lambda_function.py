@@ -32,7 +32,7 @@ def _get_jwks_client():
         import urllib.request
 
         jwks_url = f'{_cognito_issuer}/.well-known/jwks.json'
-        with urllib.request.urlopen(jwks_url, timeout=5) as resp:
+        with urllib.request.urlopen(jwks_url, timeout=5) as resp:  # nosec B310 - URL from Cognito issuer config, not user input
             _jwks_client = json.loads(resp.read())
     return _jwks_client
 

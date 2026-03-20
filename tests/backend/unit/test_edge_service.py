@@ -134,7 +134,7 @@ class TestEdgeServiceAddMessage:
 
         result = service.add_message(
             user_id='test-user-123',
-            profile_id_b64='dGVzdC1wcm9maWxl',
+            profile_id='test-profile',
             message='Hello!',
             message_type='outbound'
         )
@@ -150,7 +150,7 @@ class TestEdgeServiceAddMessage:
         with pytest.raises(ValidationError):
             service.add_message(
                 user_id='test-user-123',
-                profile_id_b64='dGVzdC1wcm9maWxl',
+                profile_id='test-profile',
                 message='',
                 message_type='outbound'
             )
@@ -231,7 +231,7 @@ class TestEdgeServiceGetMessages:
 
         result = service.get_messages(
             user_id='test-user',
-            profile_id_b64='dGVzdC1wcm9maWxl'
+            profile_id='test-profile'
         )
 
         assert result['success'] is True
@@ -248,7 +248,7 @@ class TestEdgeServiceGetMessages:
 
         result = service.get_messages(
             user_id='test-user',
-            profile_id_b64='dGVzdC1wcm9maWxl'
+            profile_id='test-profile'
         )
 
         assert result['success'] is True
@@ -433,7 +433,7 @@ class TestEdgeServiceMessageCap:
 
         result = service.add_message(
             user_id='test-user',
-            profile_id_b64='dGVzdC1wcm9maWxl',
+            profile_id='test-profile',
             message='New message',
             message_type='outbound'
         )
@@ -453,7 +453,7 @@ class TestEdgeServiceMessageCap:
 
         result = service.add_message(
             user_id='test-user',
-            profile_id_b64='dGVzdC1wcm9maWxl',
+            profile_id='test-profile',
             message='Message 101',
             message_type='outbound'
         )
@@ -477,7 +477,7 @@ class TestEdgeServiceMessageCap:
 
         result = service.add_message(
             user_id='test-user',
-            profile_id_b64='dGVzdC1wcm9maWxl',
+            profile_id='test-profile',
             message='Latest message',
             message_type='outbound'
         )
@@ -499,7 +499,7 @@ class TestEdgeServiceMessageCap:
 
         result = service.add_message(
             user_id='test-user',
-            profile_id_b64='dGVzdC1wcm9maWxl',
+            profile_id='test-profile',
             message='First message',
             message_type='outbound'
         )
@@ -518,7 +518,7 @@ class TestEdgeServiceMessageCap:
 
         result = service.add_message(
             user_id='test-user',
-            profile_id_b64='dGVzdC1wcm9maWxl',
+            profile_id='test-profile',
             message='First message',
             message_type='outbound'
         )
@@ -757,3 +757,110 @@ class TestEdgeServiceTransactionErrors:
                 profile_id='https://linkedin.com/in/test',
                 status='possible'
             )
+
+
+class TestUpdateIngestionFlag:
+    """Tests for _update_ingestion_flag with document_id support."""
+
+    def test_stores_document_id_when_provided(self):
+        """Should include ragstack_document_id in the update when document_id is given."""
+        mock_table = MagicMock()
+        service = EdgeService(table=mock_table)
+
+        service._update_ingestion_flag('user1', 'profile1', '2025-01-01T00:00:00Z', document_id='doc-123')
+
+        mock_table.update_item.assert_called_once()
+        call_kwargs = mock_table.update_item.call_args[1]
+        assert ':doc_id' in call_kwargs['ExpressionAttributeValues']
+        assert call_kwargs['ExpressionAttributeValues'][':doc_id'] == 'doc-123'
+        assert 'ragstack_document_id' in call_kwargs['UpdateExpression']
+
+    def test_omits_document_id_when_not_provided(self):
+        """Should not include ragstack_document_id when document_id is None."""
+        mock_table = MagicMock()
+        service = EdgeService(table=mock_table)
+
+        service._update_ingestion_flag('user1', 'profile1', '2025-01-01T00:00:00Z')
+
+        mock_table.update_item.assert_called_once()
+        call_kwargs = mock_table.update_item.call_args[1]
+        assert ':doc_id' not in call_kwargs['ExpressionAttributeValues']
+        assert 'ragstack_document_id' not in call_kwargs['UpdateExpression']
+
+    def test_stores_ingestion_flag_fields(self):
+        """Should always store ragstack_ingested and ragstack_ingested_at."""
+        mock_table = MagicMock()
+        service = EdgeService(table=mock_table)
+
+        service._update_ingestion_flag('user1', 'profile1', '2025-01-01T00:00:00Z')
+
+        call_kwargs = mock_table.update_item.call_args[1]
+        assert call_kwargs['ExpressionAttributeValues'][':ingested'] is True
+        assert call_kwargs['ExpressionAttributeValues'][':ingested_at'] == '2025-01-01T00:00:00Z'
+
+
+class TestIngestionDedup:
+    """Tests for cross-user ingestion deduplication."""
+
+    def test_no_previous_ingestion_returns_false(self):
+        """Profile with no ingest state should not be considered recently ingested."""
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {}
+        service = EdgeService(table=mock_table)
+
+        result = service.is_recently_ingested('profile-abc')
+        assert result is False
+        mock_table.get_item.assert_called_once_with(
+            Key={'PK': 'PROFILE#profile-abc', 'SK': '#INGEST_STATE'}
+        )
+
+    def test_recent_ingestion_returns_true(self):
+        """Profile ingested 10 days ago should be considered recently ingested."""
+        from datetime import timedelta
+        ten_days_ago = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'PK': 'PROFILE#profile-abc',
+                'SK': '#INGEST_STATE',
+                'ingested_at': ten_days_ago,
+            }
+        }
+        service = EdgeService(table=mock_table)
+
+        result = service.is_recently_ingested('profile-abc')
+        assert result is True
+
+    def test_stale_ingestion_returns_false(self):
+        """Profile ingested 45 days ago should not be considered recently ingested."""
+        from datetime import timedelta
+        forty_five_days_ago = (datetime.now(UTC) - timedelta(days=45)).isoformat()
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'PK': 'PROFILE#profile-abc',
+                'SK': '#INGEST_STATE',
+                'ingested_at': forty_five_days_ago,
+            }
+        }
+        service = EdgeService(table=mock_table)
+
+        result = service.is_recently_ingested('profile-abc')
+        assert result is False
+
+    def test_cross_user_dedup(self):
+        """Shared ingest state means any user's ingestion is visible to all."""
+        from datetime import timedelta
+        five_days_ago = (datetime.now(UTC) - timedelta(days=5)).isoformat()
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'PK': 'PROFILE#profile-abc',
+                'SK': '#INGEST_STATE',
+                'ingested_at': five_days_ago,
+            }
+        }
+        service = EdgeService(table=mock_table)
+
+        result = service.is_recently_ingested('profile-abc')
+        assert result is True

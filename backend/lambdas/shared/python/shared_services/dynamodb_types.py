@@ -210,3 +210,40 @@ class RateLimitCounterItem(TypedDict, total=False):
     SK: str
     count: int
     ttl: int
+
+
+# --- Service method return types ---
+
+
+class LinkedInInteractionLimits(TypedDict):
+    """Rate limit status for LinkedIn interactions."""
+
+    daily_limit: int
+    hourly_limit: int
+    current_daily: int
+    current_hourly: int
+
+
+class RateLimitsResult(TypedDict):
+    """Return type for QuotaService.get_rate_limits()."""
+
+    linkedin_interactions: LinkedInInteractionLimits
+
+
+class QuotaStatusResult(TypedDict):
+    """Return type for QuotaService.get_quota_status()."""
+
+    allowed: bool
+    remaining: int
+    dailyLimit: int
+    monthlyRemaining: int
+    monthlyLimit: int
+
+
+class FeatureFlagResult(TypedDict):
+    """Return type for FeatureFlagService.get_feature_flags()."""
+
+    tier: str
+    features: dict[str, bool]
+    quotas: dict[str, int]
+    rateLimits: dict[str, Any]

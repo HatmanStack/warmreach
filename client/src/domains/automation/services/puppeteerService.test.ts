@@ -80,7 +80,7 @@ describe('PuppeteerService', () => {
       rotatedAt: new Date().toISOString(),
       rotationIntervalDays: 30,
     };
-    vi.mocked(fingerprintProfile.loadOrCreateProfile).mockReturnValue(mockProfile as any);
+    vi.mocked(fingerprintProfile.loadOrCreateProfile).mockResolvedValue(mockProfile as any);
 
     const page = await service.initialize();
 
@@ -103,9 +103,7 @@ describe('PuppeteerService', () => {
   });
 
   it('falls back to random behavior if no profile is available', async () => {
-    vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
-      throw new Error('No profile');
-    });
+    vi.mocked(fingerprintProfile.loadOrCreateProfile).mockRejectedValue(new Error('No profile'));
 
     const page = await service.initialize();
 

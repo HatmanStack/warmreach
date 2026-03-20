@@ -1,7 +1,7 @@
 import { renderHook, act } from '@testing-library/react';
 import useSearchResults from '../useSearchResults';
 import { useCommand } from '@/shared/hooks';
-import { createWrapper } from '@/test-utils';
+import { createWrapper, buildMockCommandReturn } from '@/test-utils';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/shared/hooks', () => ({
@@ -22,13 +22,12 @@ describe('useSearchResults', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(useCommand).mockReturnValue({
-      execute: mockExecute,
-      reset: mockReset,
-      status: 'idle',
-      result: null,
-      error: null,
-    } as any);
+    vi.mocked(useCommand).mockReturnValue(
+      buildMockCommandReturn({
+        execute: mockExecute,
+        reset: mockReset,
+      })
+    );
   });
 
   const Wrapper = createWrapper();
@@ -47,13 +46,14 @@ describe('useSearchResults', () => {
   it('should update infoMessage on failure', async () => {
     const { result, rerender } = renderHook(() => useSearchResults(), { wrapper: Wrapper });
 
-    vi.mocked(useCommand).mockReturnValue({
-      execute: mockExecute,
-      reset: mockReset,
-      status: 'failed',
-      result: null,
-      error: 'Network error',
-    } as any);
+    vi.mocked(useCommand).mockReturnValue(
+      buildMockCommandReturn({
+        execute: mockExecute,
+        reset: mockReset,
+        status: 'failed',
+        error: 'Network error',
+      })
+    );
 
     rerender();
 

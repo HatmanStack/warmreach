@@ -1,12 +1,9 @@
-import { CognitoUserPool, CognitoUserSession } from 'amazon-cognito-identity-js';
-import { cognitoConfig } from '@/config/appConfig';
+import { httpClient } from '@/shared/utils/httpClient';
 import { websocketService } from './websocketService';
 import type { WebSocketMessage } from './websocketService';
 import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('CommandService');
-
-const COMMAND_API_URL = import.meta.env.VITE_API_GATEWAY_URL || '';
 
 export type CommandStatus = 'idle' | 'dispatching' | 'executing' | 'completed' | 'failed';
 
@@ -36,47 +33,32 @@ class CommandService {
    * The caller should listen for WebSocket messages with that commandId.
    */
   async dispatch(type: string, payload: Record<string, unknown>): Promise<{ commandId: string }> {
-    const token = await this._getCognitoToken();
-    if (!token) {
-      throw new Error('Not authenticated');
-    }
-
     // Attach ciphertext credentials for LinkedIn operations
-    const augmentedPayload = await this._attachCredentials(type, payload);
+    const augmentedPayload = this._attachCredentials(type, payload);
 
-    const response = await fetch(`${COMMAND_API_URL}/commands`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ type, payload: augmentedPayload }),
+    const result = await httpClient.post<{ commandId: string }>('commands', {
+      type,
+      payload: augmentedPayload,
     });
 
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const errorMsg =
-        body.error || body.message || `Command dispatch failed: HTTP ${response.status}`;
+    if (!result.success) {
+      const errorMsg = result.error?.message || 'Command dispatch failed';
       throw new Error(errorMsg);
     }
 
-    const data = await response.json();
-    return { commandId: data.commandId };
+    return { commandId: result.data!.commandId };
   }
 
   /**
    * Poll for command status (fallback when WebSocket reconnects).
    */
   async getCommandStatus(commandId: string): Promise<Record<string, unknown>> {
-    const token = await this._getCognitoToken();
-    const response = await fetch(`${COMMAND_API_URL}/commands/${commandId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const result = await httpClient.get<Record<string, unknown>>(`commands/${commandId}`);
 
-    if (!response.ok) {
-      throw new Error(`Failed to get command status: HTTP ${response.status}`);
+    if (!result.success) {
+      throw new Error(result.error?.message || `Failed to get command status`);
     }
-    return response.json();
+    return result.data!;
   }
 
   /**
@@ -105,10 +87,10 @@ class CommandService {
     });
   }
 
-  private async _attachCredentials(
+  private _attachCredentials(
     type: string,
     payload: Record<string, unknown>
-  ): Promise<Record<string, unknown>> {
+  ): Record<string, unknown> {
     const linkedInTypes = [
       'linkedin:search',
       'linkedin:send-message',
@@ -125,30 +107,6 @@ class CommandService {
 
     logger.warn('No LinkedIn credentials found for command', { type });
     return payload;
-  }
-
-  private async _getCognitoToken(): Promise<string> {
-    try {
-      const userPool = new CognitoUserPool({
-        UserPoolId: cognitoConfig.userPoolId,
-        ClientId: cognitoConfig.userPoolWebClientId,
-      });
-
-      const cognitoUser = userPool.getCurrentUser();
-      if (!cognitoUser) return '';
-
-      return new Promise<string>((resolve) => {
-        cognitoUser.getSession((err: Error | null, session: CognitoUserSession) => {
-          if (err || !session.isValid()) {
-            resolve('');
-            return;
-          }
-          resolve(session.getIdToken().getJwtToken());
-        });
-      });
-    } catch {
-      return '';
-    }
   }
 
   destroy() {

@@ -102,7 +102,7 @@ class RAGStackClient:
         endpoint: str,
         api_key: str,
         max_retries: int = 3,
-        retry_delay: float = 1.0,
+        retry_delay: float = 0.5,
     ):
         """
         Initialize RAGStack client.
@@ -111,7 +111,8 @@ class RAGStackClient:
             endpoint: GraphQL API endpoint URL
             api_key: AppSync API key for authentication
             max_retries: Maximum number of retry attempts for transient failures
-            retry_delay: Base delay between retries (exponential backoff)
+            retry_delay: Base delay between retries in seconds (exponential backoff).
+                         Max block time: ~3.5s with defaults (0.5 + 1.0 + 2.0).
         """
         if not endpoint:
             raise ValueError('endpoint is required')
@@ -211,6 +212,7 @@ class RAGStackClient:
                     last_error = RAGStackError(f'Invalid JSON response: {e}')
                     logger.warning(f'JSON decode error on attempt {attempt + 1}/{self.max_retries}')
 
+                # WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
                 # Exponential backoff before retry
                 if attempt < self.max_retries - 1:
                     delay = self.retry_delay * (2**attempt)

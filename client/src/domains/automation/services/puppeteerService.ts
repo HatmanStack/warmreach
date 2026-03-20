@@ -149,7 +149,7 @@ export class PuppeteerService {
       let profile: FingerprintProfile | null = null;
       if (profileDir) {
         try {
-          profile = loadOrCreateProfile(profileDir);
+          profile = await loadOrCreateProfile(profileDir);
           const rotatedAt = new Date(profile.rotatedAt);
           const daysOld = Math.floor((Date.now() - rotatedAt.getTime()) / (1000 * 60 * 60 * 24));
           logger.info(

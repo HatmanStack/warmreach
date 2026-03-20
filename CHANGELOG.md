@@ -5,6 +5,56 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-03-20
+
+### Refactored
+
+- **Backend:** Lambda handlers (`edge-processing`, `llm`, `dynamodb-api`) refactored from if/elif dispatch chains to routing table pattern (`HANDLERS = { 'op': fn }`)
+- **Backend:** Feature gate checks consolidated into `_gated_handler()` wrapper in edge-processing
+- **Backend:** `LLMService` moved to module-level singleton for warm container reuse
+- **Frontend:** `commandService` and `messageGenerationService` migrated from raw `fetch()` to shared `httpClient`
+
+### Fixed
+
+- **Backend:** Stripe error handling stratified: `InvalidRequestError` -> 400, `AuthenticationError` -> 502, generic -> 502
+- **Backend:** `os.environ['DYNAMODB_TABLE_NAME']` now fails fast on missing config (was silently defaulting to `'warmreach'` in edge-processing)
+- **Backend:** OPTIONS preflight returns 204 No Content in llm Lambda (was 200)
+- **Backend:** `time.sleep()` exposure reduced in Lambda retry paths (ingestion polling timeout 60s -> 15s, retry base delays 1.0s -> 0.5s)
+- **Backend:** Dead `if table else None` guard removed from dynamodb-api
+- **Frontend:** `process.env.NODE_ENV` mock mode check removed from `messageGenerationService` (Vite apps use `import.meta.env`)
+- **Frontend:** Error telemetry rate-limited with sliding window (10/min) and hash-based deduplication
+- **Frontend:** `generateBatchMessages` now returns `{ results, errors }` so callers can detect partial failures
+- **Client:** Synchronous file I/O replaced with `fs/promises` in `fingerprintProfile.ts` and `healingManager.js`
+- **Client:** Duplicate `unhandledRejection`/`uncaughtException` handlers removed from `electron-main.js` (server.js handles it)
+- **Docs:** 7 drift findings fixed (PRO_FEATURES_ROADMAP, CONFIGURATION.md, DEPLOYMENT.md, DEVELOPMENT.md, CLAUDE.md, ARCHITECTURE.md, .env.example)
+- **Docs:** 5 gap findings filled (missing shared services in doc tables, undocumented `get_warm_intro_paths` operation)
+- **Docs:** 3 config drift findings fixed (`OPENAI_TIMEOUT`, `DEV_MODE`, `COMMAND_RATE_LIMIT_MAX` documented)
+- **Sync:** 6 stale overlay files updated to match routing table refactor
+
+### Added
+
+- **Backend:** `TypedDict` return types: `FeatureFlagResult`, `QuotaStatusResult`, `RateLimitsResult` in `dynamodb_types.py`
+- **Frontend:** Typed mock helpers (`buildMockAuthReturn`, `buildMockTierReturn`, `buildMockToastReturn`, `buildMockCommandReturn`) reducing `as any` in tests
+- **Frontend:** Unlisted dependencies declared: `next-themes`, `sonner`, `@tailwindcss/typography`, `libsodium-wrappers-sumo`
+- **CI:** Backend test coverage enforcement (`--cov-fail-under=75`)
+- **CI:** Security scans (Bandit, npm audit) now blocking (removed `continue-on-error`)
+- **CI:** Status-check catches cancelled jobs (not just failures)
+- **CI:** `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` for GitHub Actions compatibility
+- **CI:** `markdownlint-cli2` added to pre-commit pipeline via lint-staged
+- **Client:** `unhandledRejection` and `uncaughtException` handlers in Express server
+
+### Removed
+
+- **Client:** Dead code files: `domains/ragstack/index.ts`, `shared/utils/jwksValidator.js`
+- **Client:** Dead code in `linkedinInteractionService.js`: unnecessary try/catch in `randomDelay`, dead `checkSuspiciousActivity` branch
+- **Client:** Placeholder smoke test (`expect(true).toBe(true)`) replaced with meaningful assertions
+- **Frontend:** Unused dependencies: `date-fns`
+- **Client:** Unused dependency: `jose`
+
+### Security
+
+- Resolve `flatted` prototype pollution vulnerability (GHSA-rf6f-7fwh-wjgh) via `npm audit fix`
+
 ## [1.3.0] - 2026-03-14
 
 ### Added

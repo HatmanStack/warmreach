@@ -6,7 +6,7 @@ import {
 } from '@/shared/services/commandService';
 import type { WebSocketMessage } from '@/shared/services/websocketService';
 
-interface UseCommandReturn<T = unknown> {
+export interface UseCommandReturn<T = unknown> {
   execute: (payload: Record<string, unknown>) => Promise<void>;
   status: CommandStatus;
   progress: CommandProgress | null;

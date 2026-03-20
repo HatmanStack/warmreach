@@ -13,7 +13,7 @@
     "test": "npm run test:frontend && npm run test:client && npm run test:backend",
     "test:frontend": "cd frontend && npm run test",
     "test:client": "cd client && npm run test",
-    "test:backend": "cd tests/backend && . .venv/bin/activate && python -m pytest unit/ -v --tb=short",
+    "test:backend": "cd tests/backend && . .venv/bin/activate && python -m pytest unit/ -v --tb=short --cov=../../backend/lambdas --cov-fail-under=75",
     "typecheck:frontend": "cd frontend && npx tsc --noEmit",
     "typecheck:client": "cd client && npx tsc --noEmit",
     "lint": "npm run lint:frontend && npm run lint:client && npm run lint:backend",
@@ -49,6 +49,9 @@
     "backend/lambdas/**/*.py": [
       "uvx ruff check --fix",
       "uvx ruff format"
+    ],
+    "**/*.md": [
+      "markdownlint-cli2 --fix"
     ]
   },
   "devDependencies": {
@@ -58,6 +61,7 @@
     "eslint": "^10.0.3",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
+    "markdownlint-cli2": "^0.21.0",
     "prettier": "^3.8.1"
   }
 }

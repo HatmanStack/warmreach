@@ -44,7 +44,7 @@ class IngestionService:
         self,
         ragstack_client: RAGStackClient,
         max_upload_retries: int = 3,
-        upload_retry_delay: float = 1.0,
+        upload_retry_delay: float = 0.5,
     ):
         """
         Initialize ingestion service.
@@ -64,7 +64,7 @@ class IngestionService:
         markdown_content: str,
         metadata: dict[str, Any] | None = None,
         wait_for_indexing: bool = False,
-        indexing_timeout: int = 60,
+        indexing_timeout: int = 15,
     ) -> dict[str, Any]:
         """
         Ingest a profile document into RAGStack.
@@ -187,6 +187,10 @@ class IngestionService:
         """
         Upload content to S3 via presigned URL.
 
+        Synchronous retry in Lambda. Max block time: ~7 seconds (3 retries with exponential backoff).
+        WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
+        Consider Step Functions for long-running operations.
+
         Args:
             presigned_url: Presigned S3 URL
             fields: Additional form fields for multipart upload (if any)
@@ -237,6 +241,7 @@ class IngestionService:
                 last_error = UploadError(f'S3 upload request failed: {e}')
                 logger.warning(f'Upload error on attempt {attempt + 1}: {e}')
 
+            # WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
             # Exponential backoff before retry
             if attempt < self.max_upload_retries - 1:
                 delay = self.upload_retry_delay * (2**attempt)
@@ -249,14 +254,18 @@ class IngestionService:
     def _wait_for_indexing(
         self,
         document_id: str,
-        timeout: int = 60,
+        timeout: int = 15,
     ) -> dict[str, Any]:
         """
         Poll for document indexing completion.
 
+        Synchronous polling in Lambda. Max block time: 15 seconds.
+        WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
+        Consider Step Functions for long-running operations.
+
         Args:
             document_id: Document ID to check
-            timeout: Maximum seconds to wait
+            timeout: Maximum seconds to wait (default reduced from 60 to 15)
 
         Returns:
             Status dict with current state

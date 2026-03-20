@@ -1,6 +1,12 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useConnectionsManager } from '../useConnectionsManager';
-import { createWrapper, buildConnection } from '@/test-utils';
+import {
+  createWrapper,
+  buildConnection,
+  buildMockAuthReturn,
+  buildMockTierReturn,
+  buildMockToastReturn,
+} from '@/test-utils';
 import { lambdaApiService as dbConnector, ApiError } from '@/shared/services';
 import { useAuth } from '@/features/auth';
 import { useTier } from '@/features/tier';
@@ -32,9 +38,11 @@ describe('useConnectionsManager', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(useAuth).mockReturnValue({ user: { id: 'u1' } } as any);
-    vi.mocked(useTier).mockReturnValue({ isFeatureEnabled: vi.fn().mockReturnValue(false) } as any);
-    vi.mocked(useToast).mockReturnValue({ toast: mockToast } as any);
+    vi.mocked(useAuth).mockReturnValue(
+      buildMockAuthReturn({ user: { id: 'u1', email: 'u1@test.com' } })
+    );
+    vi.mocked(useTier).mockReturnValue(buildMockTierReturn());
+    vi.mocked(useToast).mockReturnValue(buildMockToastReturn(mockToast));
     vi.mocked(dbConnector.getConnectionsByStatus).mockResolvedValue(mockConnections);
   });
 
@@ -56,8 +64,12 @@ describe('useConnectionsManager', () => {
   });
 
   it('should trigger score computation for pro users', async () => {
-    vi.mocked(useTier).mockReturnValue({ isFeatureEnabled: vi.fn().mockReturnValue(true) } as any);
-    vi.mocked(useAuth).mockReturnValue({ user: { id: 'u-pro' } } as any);
+    vi.mocked(useTier).mockReturnValue(
+      buildMockTierReturn({ isFeatureEnabled: vi.fn().mockReturnValue(true) })
+    );
+    vi.mocked(useAuth).mockReturnValue(
+      buildMockAuthReturn({ user: { id: 'u-pro', email: 'pro@test.com' } })
+    );
 
     renderHook(() => useConnectionsManager(), { wrapper: createWrapper() });
 
@@ -174,7 +186,7 @@ describe('useConnectionsManager', () => {
 
   it('should not compute scores if already triggered or disabled', async () => {
     const isFeatureEnabled = vi.fn().mockReturnValue(false);
-    vi.mocked(useTier).mockReturnValue({ isFeatureEnabled } as any);
+    vi.mocked(useTier).mockReturnValue(buildMockTierReturn({ isFeatureEnabled }));
 
     const { result } = renderHook(() => useConnectionsManager(), { wrapper: Wrapper });
 

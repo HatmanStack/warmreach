@@ -67,15 +67,15 @@ def test_invalid_operation_returns_400(lambda_context, llm_module):
     assert body['error'] == 'Invalid operation'
 
 
-def test_options_preflight_returns_200(lambda_context, llm_module):
-    """OPTIONS preflight returns 200."""
+def test_options_preflight_returns_204(lambda_context, llm_module):
+    """OPTIONS preflight returns 204 No Content."""
     event = {
         'requestContext': {
             'http': {'method': 'OPTIONS'},
         },
     }
     response = llm_module.lambda_handler(event, lambda_context)
-    assert response['statusCode'] == 200
+    assert response['statusCode'] == 204
 
 
 def test_missing_job_id_returns_400(lambda_context, llm_module, mock_services):
@@ -143,9 +143,14 @@ def test_quota_exceeded_returns_429(lambda_context, llm_module, mock_services):
             'authorizer': {'claims': {'sub': 'test-user'}}
         },
     }
-    with patch.object(llm_module, 'LLMService') as MockSvc:
-        MockSvc.return_value.generate_message.return_value = {'message': 'Hello'}
+    mock_svc = MagicMock()
+    mock_svc.generate_message.return_value = {'message': 'Hello'}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
         response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
     assert response['statusCode'] == 429
     body = json.loads(response['body'])
     assert body['code'] == 'QUOTA_EXCEEDED'
@@ -209,9 +214,14 @@ def test_non_metered_op_skips_usage_report(lambda_context, llm_module, mock_serv
             'authorizer': {'claims': {'sub': 'test-user'}}
         },
     }
-    with patch.object(llm_module, 'LLMService') as MockSvc:
-        MockSvc.return_value.get_research_result.return_value = {'status': 'pending'}
+    mock_svc = MagicMock()
+    mock_svc.get_research_result.return_value = {'status': 'pending'}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
         response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
     assert response['statusCode'] == 200
     mock_services['quota'].report_usage.assert_not_called()
 
@@ -229,9 +239,14 @@ def test_usage_report_failure_still_succeeds(lambda_context, llm_module, mock_se
             'authorizer': {'claims': {'sub': 'test-user'}}
         },
     }
-    with patch.object(llm_module, 'LLMService') as MockSvc:
-        MockSvc.return_value.generate_message.return_value = {'message': 'Hello'}
+    mock_svc = MagicMock()
+    mock_svc.generate_message.return_value = {'message': 'Hello'}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
         response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
     assert response['statusCode'] == 200
 
 
@@ -256,14 +271,19 @@ def test_analyze_message_patterns_routes_correctly(lambda_context, llm_module, m
             'authorizer': {'claims': {'sub': 'test-user'}}
         },
     }
-    with patch.object(llm_module, 'LLMService') as MockSvc:
-        mock_result = {'insights': ['Insight 1', 'Insight 2'], 'analyzedAt': '2026-01-01T00:00:00'}
-        MockSvc.return_value.analyze_message_patterns.return_value = mock_result
+    mock_svc = MagicMock()
+    mock_result = {'insights': ['Insight 1', 'Insight 2'], 'analyzedAt': '2026-01-01T00:00:00'}
+    mock_svc.analyze_message_patterns.return_value = mock_result
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
         response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
     assert response['statusCode'] == 200
     body = json.loads(response['body'])
     assert body['insights'] == ['Insight 1', 'Insight 2']
-    MockSvc.return_value.analyze_message_patterns.assert_called_once()
+    mock_svc.analyze_message_patterns.assert_called_once()
 
 
 def test_analyze_message_patterns_feature_gated(lambda_context, llm_module, mock_services):
@@ -339,8 +359,13 @@ def test_analyze_message_patterns_metered(lambda_context, llm_module, mock_servi
             'authorizer': {'claims': {'sub': 'test-user'}}
         },
     }
-    with patch.object(llm_module, 'LLMService') as MockSvc:
-        MockSvc.return_value.analyze_message_patterns.return_value = {'insights': [], 'analyzedAt': '2026-01-01'}
+    mock_svc = MagicMock()
+    mock_svc.analyze_message_patterns.return_value = {'insights': [], 'analyzedAt': '2026-01-01'}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
         response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
     assert response['statusCode'] == 200
     mock_services['quota'].report_usage.assert_called_once_with('test-user', 'analyze_message_patterns', count=1)

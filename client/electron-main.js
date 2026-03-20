@@ -14,6 +14,8 @@ import { WsClient } from './src/transport/wsClient.js';
 import { handleExecuteCommand } from './src/transport/commandRouter.js';
 import { CredentialStore } from './src/credentials/credentialStore.js';
 import { BrowserSessionManager } from './src/domains/session/services/browserSessionManager.js';
+// Import server.js first — it registers unhandledRejection/uncaughtException
+// handlers using the structured logger. No need to duplicate them here.
 import './src/server.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

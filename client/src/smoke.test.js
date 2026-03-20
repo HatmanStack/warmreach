@@ -6,10 +6,6 @@ import { describe, it, expect } from 'vitest';
 import { createMockProfile, createMockPage } from './setupTests.js';
 
 describe('Vitest Setup', () => {
-  it('should run tests successfully', () => {
-    expect(true).toBe(true);
-  });
-
   it('should have access to createMockProfile helper', () => {
     const profile = createMockProfile();
     expect(profile).toHaveProperty('profile_id');

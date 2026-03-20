@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { http, HttpResponse } from 'msw';
-import { server } from '@/test-utils';
 
 // Hoist the messageHandlers mock container
-const { messageHandlers } = vi.hoisted(() => ({
+const { messageHandlers, mockPost, mockGet } = vi.hoisted(() => ({
   messageHandlers: [] as any[],
+  mockPost: vi.fn(),
+  mockGet: vi.fn(),
 }));
 
 // Mock websocketService with a way to capture and trigger handlers
@@ -20,6 +20,14 @@ vi.mock('./websocketService', () => ({
   },
 }));
 
+// Mock httpClient
+vi.mock('@/shared/utils/httpClient', () => ({
+  httpClient: {
+    post: mockPost,
+    get: mockGet,
+  },
+}));
+
 // Now import the service under test
 import { commandService } from './commandService';
 
@@ -27,48 +35,44 @@ describe('CommandService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
-    server.resetHandlers();
   });
 
   describe('dispatch', () => {
     it('should dispatch command successfully', async () => {
-      server.use(
-        http.post('*/commands', () => {
-          return HttpResponse.json({ commandId: 'cmd-unit-test' });
-        })
-      );
-
-      vi.spyOn(commandService as any, '_getCognitoToken').mockResolvedValue('mock-token');
+      mockPost.mockResolvedValueOnce({
+        success: true,
+        data: { commandId: 'cmd-unit-test' },
+      });
 
       const result = await commandService.dispatch('test:op', { foo: 'bar' });
       expect(result.commandId).toBe('cmd-unit-test');
+      expect(mockPost).toHaveBeenCalledWith('commands', {
+        type: 'test:op',
+        payload: { foo: 'bar' },
+      });
     });
 
     it('should attach LinkedIn credentials when required', async () => {
       sessionStorage.setItem('li_credentials_ciphertext', 'sealbox_x25519:b64:valid');
 
-      let capturedBody: any;
-      server.use(
-        http.post('*/commands', async ({ request }) => {
-          capturedBody = await request.json();
-          return HttpResponse.json({ commandId: 'cmd-li' });
-        })
-      );
-
-      vi.spyOn(commandService as any, '_getCognitoToken').mockResolvedValue('mock-token');
+      mockPost.mockResolvedValueOnce({
+        success: true,
+        data: { commandId: 'cmd-li' },
+      });
 
       await commandService.dispatch('linkedin:search', { query: 'test' });
 
-      expect(capturedBody.payload.linkedinCredentialsCiphertext).toBe('sealbox_x25519:b64:valid');
+      expect(mockPost).toHaveBeenCalledWith('commands', {
+        type: 'linkedin:search',
+        payload: { query: 'test', linkedinCredentialsCiphertext: 'sealbox_x25519:b64:valid' },
+      });
     });
 
     it('should handle API errors with body message', async () => {
-      server.use(
-        http.post('*/commands', () => {
-          return HttpResponse.json({ error: 'Specific error' }, { status: 400 });
-        })
-      );
-      vi.spyOn(commandService as any, '_getCognitoToken').mockResolvedValue('mock-token');
+      mockPost.mockResolvedValueOnce({
+        success: false,
+        error: { message: 'Specific error', status: 400 },
+      });
 
       await expect(commandService.dispatch('op', {})).rejects.toThrow('Specific error');
     });

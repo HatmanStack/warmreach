@@ -9,6 +9,7 @@ on:
 env:
   NODE_VERSION: '24'
   PYTHON_VERSION: '3.13'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   format:
@@ -96,13 +97,12 @@ jobs:
       - name: Run Bandit security scan
         working-directory: ./backend
         run: uvx bandit -r lambdas --exclude .aws-sam -ll -q
-        continue-on-error: true
       - name: Install test dependencies
         working-directory: ./tests/backend
         run: uv pip install -r requirements-test.lock --system
-      - name: Run pytest
+      - name: Run pytest with coverage
         working-directory: ./tests/backend
-        run: python -m pytest unit/ -v --tb=short
+        run: python -m pytest unit/ -v --tb=short --cov=../../backend/lambdas --cov-fail-under=75
 
   security:
     name: Security Scan
@@ -116,11 +116,9 @@ jobs:
       - name: Frontend npm audit
         working-directory: ./frontend
         run: npm audit --audit-level=high
-        continue-on-error: true
       - name: Client npm audit
         working-directory: ./client
         run: npm audit --audit-level=high
-        continue-on-error: true
 
   status-check:
     name: All Checks
@@ -131,15 +129,17 @@ jobs:
     steps:
       - name: Verify all jobs passed
         run: |
-          # NOTE: security job is in `needs` for ordering but intentionally excluded
-          # from the failure condition while bootstrapping. Security scans run with
-          # continue-on-error to avoid blocking on pre-existing advisories.
-          # TODO: Make security blocking once baseline advisories are triaged.
-          if [[ "${{ needs.format.result }}" == "failure" ]] || \
-             [[ "${{ needs.frontend.result }}" == "failure" ]] || \
-             [[ "${{ needs.client.result }}" == "failure" ]] || \
-             [[ "${{ needs.backend.result }}" == "failure" ]]; then
-            echo "One or more required checks failed"
-            exit 1
-          fi
+          for job in format frontend client backend security; do
+            result="${{ needs.format.result }}"
+            case "$job" in
+              frontend) result="${{ needs.frontend.result }}" ;;
+              client) result="${{ needs.client.result }}" ;;
+              backend) result="${{ needs.backend.result }}" ;;
+              security) result="${{ needs.security.result }}" ;;
+            esac
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "$job: $result"
+              exit 1
+            fi
+          done
           echo "All required checks passed"

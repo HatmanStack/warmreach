@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import fsSync from 'fs';
+import { writeFile } from 'fs/promises';
 
 // Mock dependencies
 vi.mock('#utils/logger.js', () => ({
@@ -21,9 +21,8 @@ vi.mock('#utils/crypto.js', () => ({
   }),
 }));
 
-vi.mock('fs', () => ({
-  default: { writeFileSync: vi.fn() },
-  writeFileSync: vi.fn(),
+vi.mock('fs/promises', () => ({
+  writeFile: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('child_process', () => ({
@@ -91,7 +90,7 @@ describe('HealingManager', () => {
         healReason: 'timeout',
       });
 
-      const writeCall = fsSync.writeFileSync.mock.calls[0];
+      const writeCall = writeFile.mock.calls[0];
       const written = JSON.parse(writeCall[1]);
       expect(written.searchName).toBe('user');
       expect(written.recursionCount).toBe(2);
@@ -105,7 +104,7 @@ describe('HealingManager', () => {
     it('applies defaults for missing fields', async () => {
       await manager._createProfileInitStateFile({});
 
-      const writeCall = fsSync.writeFileSync.mock.calls[0];
+      const writeCall = writeFile.mock.calls[0];
       const written = JSON.parse(writeCall[1]);
       expect(written.recursionCount).toBe(0);
       expect(written.healPhase).toBe('profile-init');
@@ -118,7 +117,7 @@ describe('HealingManager', () => {
     it('includes timestamp in state data', async () => {
       await manager._createProfileInitStateFile({});
 
-      const writeCall = fsSync.writeFileSync.mock.calls[0];
+      const writeCall = writeFile.mock.calls[0];
       const written = JSON.parse(writeCall[1]);
       expect(written.timestamp).toBeDefined();
       expect(new Date(written.timestamp)).toBeInstanceOf(Date);
@@ -141,7 +140,7 @@ describe('HealingManager', () => {
       };
       await manager._createStateFile(stateData);
 
-      const writeCall = fsSync.writeFileSync.mock.calls[0];
+      const writeCall = writeFile.mock.calls[0];
       const written = JSON.parse(writeCall[1]);
       expect(written.companyName).toBe('Acme');
       expect(written.companyRole).toBe('Engineer');
@@ -158,7 +157,7 @@ describe('HealingManager', () => {
         jwtToken: plainToken,
       });
 
-      const writeCall = fsSync.writeFileSync.mock.calls[0];
+      const writeCall = writeFile.mock.calls[0];
       const written = JSON.parse(writeCall[1]);
       expect(written.searchPassword).not.toContain(plainPassword);
       expect(written.jwtToken).not.toContain(plainToken);

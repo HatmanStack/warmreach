@@ -202,7 +202,7 @@ const useProfile = process.env.FINGERPRINT_PROFILE === '1';
 let profile = null;
 if (useProfile) {
   const profileDir = './inspect-profile/';
-  profile = loadOrCreateProfile(profileDir);
+  profile = await loadOrCreateProfile(profileDir);
   console.log(`[FingerprintProfile] Using persistent profile from ${profileDir}`);
   console.log(`[FingerprintProfile] Seed: ${profile.seed.slice(0, 8)}...`);
   console.log(`[FingerprintProfile] UA: ${profile.userAgent}`);
