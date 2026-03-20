@@ -51,6 +51,7 @@ class FeatureFlagService:
                 'reply_probability': True,
                 'priority_inference': True,
                 'cluster_detection': True,
+                'warm_intro_paths': True,
             },
             'quotas': {},
             'rateLimits': {},

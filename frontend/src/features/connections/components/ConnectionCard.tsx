@@ -2,10 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { MessageSquare, ExternalLink, User, Building, MapPin, Tag } from 'lucide-react';
-import { FeatureGate } from '@/features/tier';
+import { MessageSquare, ExternalLink, User, Building, MapPin, Tag, Users } from 'lucide-react';
+import { FeatureGate, useTier } from '@/features/tier';
 import { RelationshipStrengthBadge } from './RelationshipStrengthBadge';
 import { ReplyProbabilityBadge } from './ReplyProbabilityBadge';
+import { WarmIntroPathsView } from '@/features/search/components/WarmIntroPathsView';
 import { buildLinkedInProfileUrl } from '@/shared/utils/linkedinUrl';
 import type { ConnectionCardProps } from '@/types';
 
@@ -53,6 +54,8 @@ const ConnectionCard = ({
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isTagsOpen, setIsTagsOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [showIntroPaths, setShowIntroPaths] = useState(false);
+  const { isFeatureEnabled } = useTier();
 
   useEffect(() => {
     setImgError(false);
@@ -328,6 +331,21 @@ const ConnectionCard = ({
                   {connection.messages === 0 ? 'No messages' : connection.messages}
                 </div>
               )}
+              {isFeatureEnabled('warm_intro_paths') && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowIntroPaths(!showIntroPaths);
+                  }}
+                  data-testid="find-intro-paths-button"
+                  className="text-slate-400 hover:text-blue-300 transition-colors"
+                  title="Find intro paths"
+                  aria-expanded={showIntroPaths}
+                  aria-label="Find intro paths"
+                >
+                  <Users className="w-4 h-4" />
+                </button>
+              )}
               {isNewConnection && connection.linkedin_url && (
                 <ExternalLink className="h-4 w-4 text-blue-400" />
               )}
@@ -482,6 +500,8 @@ const ConnectionCard = ({
           </div>
         </DialogContent>
       </Dialog>
+
+      {showIntroPaths && <WarmIntroPathsView targetProfileId={connection.id} />}
     </div>
   );
 };
