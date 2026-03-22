@@ -17,4 +17,16 @@ export const queryKeys = {
   notes: {
     byConnection: (connectionId: string) => ['notes', connectionId] as const,
   },
+  influenceScores: {
+    all: ['influenceScores'] as const,
+  },
+  gapAnalysis: {
+    byOpportunity: (opportunityId: string) => ['gapAnalysis', opportunityId] as const,
+  },
+  opportunities: {
+    all: ['opportunities'] as const,
+    byStatus: (status: string) => ['opportunities', 'status', status] as const,
+    connections: (opportunityId: string) =>
+      ['opportunities', 'connections', opportunityId] as const,
+  },
 } as const;

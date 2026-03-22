@@ -456,3 +456,64 @@ class TestImportCheckpoint:
         mock_table.delete_item.assert_called_once_with(
             Key={'PK': 'USER#user-123', 'SK': '#IMPORT_CHECKPOINT'}
         )
+
+
+# ---- v1.7 Settings Extensions ----
+
+
+class TestTimezoneAndDigestSettings:
+    """Tests for timezone and digest_opted_out settings fields."""
+
+    def test_update_with_timezone_field(self):
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.update_user_settings('user-123', {'timezone': 'America/New_York'})
+        assert result == {'success': True}
+        mock_table.update_item.assert_called_once()
+        call_kwargs = mock_table.update_item.call_args[1]
+        assert ':v_timezone' in call_kwargs['ExpressionAttributeValues']
+        assert call_kwargs['ExpressionAttributeValues'][':v_timezone'] == 'America/New_York'
+
+    def test_update_with_digest_opted_out_field(self):
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.update_user_settings('user-123', {'digest_opted_out': True})
+        assert result == {'success': True}
+        mock_table.update_item.assert_called_once()
+        call_kwargs = mock_table.update_item.call_args[1]
+        assert ':v_digest_opted_out' in call_kwargs['ExpressionAttributeValues']
+        assert call_kwargs['ExpressionAttributeValues'][':v_digest_opted_out'] is True
+
+    def test_timezone_validation_rejects_long_string(self):
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.update_user_settings('user-123', {'timezone': 'A' * 51})
+        assert 'error' in result
+
+    def test_timezone_validation_rejects_non_string(self):
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.update_user_settings('user-123', {'timezone': 12345})
+        assert 'error' in result
+
+    def test_digest_opted_out_validation_rejects_non_boolean(self):
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.update_user_settings('user-123', {'digest_opted_out': 'yes'})
+        assert 'error' in result
+
+    def test_both_fields_accepted_together(self):
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.update_user_settings('user-123', {
+            'timezone': 'Europe/London',
+            'digest_opted_out': False,
+        })
+        assert result == {'success': True}
+        mock_table.update_item.assert_called_once()

@@ -299,6 +299,12 @@ export interface UserProfile {
   /** AI-generated post reasoning */
   ai_generated_post_reasoning?: string;
 
+  /** Whether the user has opted out of digest emails */
+  digest_opted_out?: boolean;
+
+  /** User's preferred timezone (IANA, e.g. 'America/New_York') */
+  timezone?: string;
+
   /** Profile creation timestamp */
   created_at?: string;
 

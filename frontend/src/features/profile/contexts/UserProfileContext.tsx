@@ -52,6 +52,20 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
       if (response.success && response.data) {
         setUserProfile(response.data);
 
+        // Auto-detect timezone and save if not yet set or changed (ADR-8)
+        try {
+          const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          const storedTimezone = response.data.timezone;
+          if (detectedTimezone && detectedTimezone !== storedTimezone) {
+            // Fire-and-forget: do not block profile fetch flow
+            lambdaApiService
+              .updateUserProfile({ timezone: detectedTimezone })
+              .catch((err: unknown) => logger.warn('Failed to save timezone', { error: err }));
+          }
+        } catch {
+          // Ignore timezone detection errors
+        }
+
         // Also set LinkedIn credentials if available
         if (response.data.linkedin_credentials) {
           setCiphertextState(response.data.linkedin_credentials);

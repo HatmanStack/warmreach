@@ -10,7 +10,12 @@ from shared_services.base_service import BaseService
 
 # We'll import EdgeDataService after creating it
 # For now, the path is set up via conftest.py's sys.path
-from shared_services.edge_data_service import MAX_NOTES_PER_EDGE, EdgeDataService
+from shared_services.edge_data_service import (
+    MAX_NOTES_PER_EDGE,
+    OPPORTUNITY_OUTCOMES,
+    OPPORTUNITY_STAGES,
+    EdgeDataService,
+)
 
 from errors.exceptions import ExternalServiceError, ValidationError
 
@@ -566,3 +571,162 @@ class TestFormatConnectionObjectNotes:
         result = service._format_connection_object('profile-1', profile_data, edge_item)
 
         assert result['notes'] == []
+
+
+# ---- Opportunity Stage Management Tests ----
+
+
+class TestTagConnectionToOpportunity:
+    """Tests for tag_connection_to_opportunity method."""
+
+    def test_tag_creates_opportunity_entry(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {'PK': 'USER#user-1', 'SK': 'PROFILE#pid1', 'opportunities': []}
+        }
+        mock_table.update_item.return_value = {}
+
+        service = EdgeDataService(table=mock_table)
+        result = service.tag_connection_to_opportunity('user-1', 'pid1', 'opp-1')
+
+        assert result['success'] is True
+        assert result['stage'] == 'identified'
+        mock_table.update_item.assert_called_once()
+
+    def test_tag_with_custom_stage(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {'PK': 'USER#user-1', 'SK': 'PROFILE#pid1'}
+        }
+        mock_table.update_item.return_value = {}
+
+        service = EdgeDataService(table=mock_table)
+        result = service.tag_connection_to_opportunity('user-1', 'pid1', 'opp-1', stage='reached_out')
+
+        assert result['stage'] == 'reached_out'
+
+    def test_duplicate_tag_raises_error(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'PK': 'USER#user-1',
+                'SK': 'PROFILE#pid1',
+                'opportunities': [{'opportunityId': 'opp-1', 'stage': 'identified'}],
+            }
+        }
+
+        service = EdgeDataService(table=mock_table)
+        with pytest.raises(ValidationError, match='already tagged'):
+            service.tag_connection_to_opportunity('user-1', 'pid1', 'opp-1')
+
+
+class TestUntagConnectionFromOpportunity:
+    """Tests for untag_connection_from_opportunity method."""
+
+    def test_untag_removes_entry(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'PK': 'USER#user-1',
+                'SK': 'PROFILE#pid1',
+                'opportunities': [
+                    {'opportunityId': 'opp-1', 'stage': 'identified'},
+                    {'opportunityId': 'opp-2', 'stage': 'met'},
+                ],
+            }
+        }
+        mock_table.update_item.return_value = {}
+
+        service = EdgeDataService(table=mock_table)
+        result = service.untag_connection_from_opportunity('user-1', 'pid1', 'opp-1')
+
+        assert result['success'] is True
+        # Verify the update call has only opp-2 remaining
+        call_kwargs = mock_table.update_item.call_args[1]
+        opps = call_kwargs['ExpressionAttributeValues'][':opps']
+        assert len(opps) == 1
+        assert opps[0]['opportunityId'] == 'opp-2'
+
+
+class TestUpdateConnectionStage:
+    """Tests for update_connection_stage method."""
+
+    def test_stage_update_changes_matching_opportunity(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'PK': 'USER#user-1',
+                'SK': 'PROFILE#pid1',
+                'opportunities': [
+                    {'opportunityId': 'opp-1', 'stage': 'identified'},
+                    {'opportunityId': 'opp-2', 'stage': 'met'},
+                ],
+            }
+        }
+        mock_table.update_item.return_value = {}
+
+        service = EdgeDataService(table=mock_table)
+        result = service.update_connection_stage('user-1', 'pid1', 'opp-1', 'reached_out')
+
+        assert result['success'] is True
+        assert result['oldStage'] == 'identified'
+        assert result['newStage'] == 'reached_out'
+
+    def test_invalid_stage_raises_error(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ValidationError, match='Invalid stage'):
+            service.update_connection_stage('user-1', 'pid1', 'opp-1', 'invalid_stage')
+
+
+class TestGetOpportunityConnections:
+    """Tests for get_opportunity_connections method."""
+
+    def test_returns_connections_grouped_by_stage(self):
+        mock_table = MagicMock()
+        mock_table.query.return_value = {
+            'Items': [
+                {
+                    'PK': 'USER#user-1',
+                    'SK': 'PROFILE#pid1',
+                    'opportunities': [{'opportunityId': 'opp-1', 'stage': 'identified'}],
+                    'first_name': 'Alice',
+                    'last_name': 'Smith',
+                },
+                {
+                    'PK': 'USER#user-1',
+                    'SK': 'PROFILE#pid2',
+                    'opportunities': [{'opportunityId': 'opp-1', 'stage': 'reached_out'}],
+                    'first_name': 'Bob',
+                    'last_name': 'Jones',
+                },
+                {
+                    'PK': 'USER#user-1',
+                    'SK': 'PROFILE#pid3',
+                    'opportunities': [{'opportunityId': 'other', 'stage': 'met'}],
+                    'first_name': 'Carol',
+                    'last_name': 'White',
+                },
+            ],
+            'LastEvaluatedKey': None,
+        }
+
+        service = EdgeDataService(table=mock_table)
+        result = service.get_opportunity_connections('user-1', 'opp-1')
+
+        assert result['success'] is True
+        assert result['totalCount'] == 2
+        assert len(result['stages']['identified']) == 1
+        assert len(result['stages']['reached_out']) == 1
+        assert result['stages']['identified'][0]['profileId'] == 'pid1'
+
+
+class TestOpportunityConstants:
+    """Tests for opportunity-related constants."""
+
+    def test_stages_are_defined(self):
+        assert OPPORTUNITY_STAGES == ['identified', 'reached_out', 'replied', 'met', 'outcome']
+
+    def test_outcomes_are_defined(self):
+        assert OPPORTUNITY_OUTCOMES == ['won', 'lost', 'stalled']

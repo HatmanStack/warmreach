@@ -108,6 +108,8 @@ class DynamoDBApiService(BaseService):
             'ai_generated_research',
             'ai_generated_post_hook',
             'ai_generated_post_reasoning',
+            'timezone',
+            'digest_opted_out',
         ]
         for field in allowed_profile_fields:
             if field in body and body[field] is not None:
@@ -248,6 +250,8 @@ class DynamoDBApiService(BaseService):
             'ai_generated_research': lambda v: isinstance(v, (str, list, dict)),
             'ai_generated_post_hook': lambda v: isinstance(v, str) and len(v) <= 500,
             'ai_generated_post_reasoning': lambda v: isinstance(v, str) and len(v) <= 2000,
+            'timezone': lambda v: isinstance(v, str) and len(v) <= 50,
+            'digest_opted_out': lambda v: isinstance(v, bool),
         }
         validator = validators.get(field)
         if not validator:

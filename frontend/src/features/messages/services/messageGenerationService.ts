@@ -253,6 +253,48 @@ class MessageGenerationService {
   }
 
   /**
+   * Generate icebreaker messages for a first-contact connection
+   *
+   * @param connectionProfile - Profile of the connection
+   * @param connectionNotes - Optional notes about the connection
+   * @param connectionId - Optional connection ID
+   * @returns Promise resolving to array of icebreaker messages
+   */
+  async generateIcebreakers(
+    connectionProfile: MessageGenerationRequest['connectionProfile'],
+    connectionNotes?: string[],
+    connectionId?: string
+  ): Promise<{ icebreakers: string[] }> {
+    const result = await httpClient.makeRequest<{ icebreakers: string[] }>(
+      MESSAGE_GENERATION_CONFIG.ENDPOINT,
+      'generate_message',
+      {
+        mode: 'icebreaker',
+        connectionId: connectionId || 'unknown',
+        connectionProfile: {
+          firstName: connectionProfile.firstName,
+          lastName: connectionProfile.lastName,
+          position: connectionProfile.position,
+          company: connectionProfile.company,
+          headline: connectionProfile.headline,
+          tags: connectionProfile.tags || [],
+        },
+        connectionNotes: connectionNotes || [],
+      }
+    );
+
+    if (!result.success) {
+      throw new MessageGenerationError({
+        message: result.error?.message || 'Icebreaker generation failed',
+        status: result.error?.status,
+        code: result.error?.code,
+      });
+    }
+
+    return result.data;
+  }
+
+  /**
    * Format the request payload for the API
    */
   private formatRequestPayload(request: MessageGenerationRequest): Record<string, unknown> {

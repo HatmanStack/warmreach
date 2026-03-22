@@ -28,6 +28,12 @@ class ActivityEventType(StrEnum):
     USER_SETTINGS_UPDATED = 'user_settings_updated'
     NOTE_ADDED = 'note_added'
     PROFILE_INGESTED = 'profile_ingested'
+    LIFECYCLE_CHANGE = 'lifecycle_change'
+    OPPORTUNITY_CREATED = 'opportunity_created'
+    OPPORTUNITY_STAGE_CHANGED = 'opportunity_stage_changed'
+    OPPORTUNITY_ARCHIVED = 'opportunity_archived'
+    OPPORTUNITY_COMPLETED = 'opportunity_completed'
+    ICEBREAKER_GENERATED = 'icebreaker_generated'
 
 
 def write_activity(

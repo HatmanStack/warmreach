@@ -434,3 +434,148 @@ def test_analyze_tone_emits_activity(lambda_context, llm_module, mock_services):
     mock_wa.assert_called_once()
     args = mock_wa.call_args[0]
     assert args[2] == 'ai_tone_analysis'
+
+
+# ---- Icebreaker mode tests ----
+
+
+def test_icebreaker_mode_returns_icebreakers(lambda_context, llm_module, mock_services):
+    """Icebreaker mode returns icebreakers list."""
+    event = {
+        'body': json.dumps({
+            'operation': 'generate_message',
+            'mode': 'icebreaker',
+            'connectionProfile': {'firstName': 'Alice', 'lastName': 'Smith', 'position': 'CTO', 'company': 'Acme'},
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    mock_svc = MagicMock()
+    mock_svc.generate_message.return_value = {
+        'icebreakers': ['Hello Alice!', 'Hey there!'],
+        'confidence': 0.80,
+    }
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
+        with patch.object(llm_module, 'write_activity'):
+            response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert 'icebreakers' in body
+    # Verify mode was passed
+    mock_svc.generate_message.assert_called_once()
+    call_kwargs = mock_svc.generate_message.call_args[1]
+    assert call_kwargs['mode'] == 'icebreaker'
+
+
+def test_icebreaker_mode_does_not_require_topic(lambda_context, llm_module, mock_services):
+    """Icebreaker mode does not require conversationTopic."""
+    event = {
+        'body': json.dumps({
+            'operation': 'generate_message',
+            'mode': 'icebreaker',
+            'connectionProfile': {'firstName': 'A', 'lastName': 'B', 'position': 'X', 'company': 'Y'},
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    mock_svc = MagicMock()
+    mock_svc.generate_message.return_value = {'icebreakers': ['Hi!'], 'confidence': 0.80}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
+        with patch.object(llm_module, 'write_activity'):
+            response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
+    # Should NOT return 400 for missing topic
+    assert response['statusCode'] == 200
+
+
+def test_icebreaker_mode_with_connection_notes(lambda_context, llm_module, mock_services):
+    """Icebreaker mode passes connection notes through."""
+    notes = [{'content': 'Met at conference'}, {'content': 'Interested in AI'}]
+    event = {
+        'body': json.dumps({
+            'operation': 'generate_message',
+            'mode': 'icebreaker',
+            'connectionProfile': {'firstName': 'A', 'lastName': 'B', 'position': 'X', 'company': 'Y'},
+            'connectionNotes': notes,
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    mock_svc = MagicMock()
+    mock_svc.generate_message.return_value = {'icebreakers': ['Hi!'], 'confidence': 0.80}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
+        with patch.object(llm_module, 'write_activity'):
+            response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
+    assert response['statusCode'] == 200
+    call_kwargs = mock_svc.generate_message.call_args[1]
+    assert call_kwargs['connection_notes'] == notes
+
+
+def test_icebreaker_emits_icebreaker_activity_event(lambda_context, llm_module, mock_services):
+    """Icebreaker mode emits icebreaker_generated activity event."""
+    event = {
+        'body': json.dumps({
+            'operation': 'generate_message',
+            'mode': 'icebreaker',
+            'connectionProfile': {'firstName': 'A', 'lastName': 'B', 'position': 'X', 'company': 'Y'},
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    mock_svc = MagicMock()
+    mock_svc.generate_message.return_value = {'icebreakers': ['Hi!'], 'confidence': 0.80}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
+        with patch.object(llm_module, 'write_activity') as mock_wa:
+            response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
+    assert response['statusCode'] == 200
+    mock_wa.assert_called_once()
+    args = mock_wa.call_args[0]
+    assert args[2] == 'icebreaker_generated'
+
+
+def test_standard_mode_unchanged(lambda_context, llm_module, mock_services):
+    """Standard mode still works as before."""
+    event = {
+        'body': json.dumps({
+            'operation': 'generate_message',
+            'conversationTopic': 'AI trends',
+            'connectionProfile': {'firstName': 'A', 'lastName': 'B', 'position': 'X', 'company': 'Y'},
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    mock_svc = MagicMock()
+    mock_svc.generate_message.return_value = {'generatedMessage': 'Hello!', 'confidence': 0.85}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
+        with patch.object(llm_module, 'write_activity') as mock_wa:
+            response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert body['generatedMessage'] == 'Hello!'
+    mock_wa.assert_called_once()
+    args = mock_wa.call_args[0]
+    assert args[2] == 'ai_message_generated'

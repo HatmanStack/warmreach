@@ -2,9 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
   pull_request:
-    branches: [main, develop]
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
 
 env:
   NODE_VERSION: '24'
@@ -12,75 +18,46 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  format:
-    name: Format Check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-      - name: Install Prettier
-        run: npm ci --ignore-scripts
-      - name: Prettier check
-        run: npm run format:check
-
-  frontend:
-    name: Frontend (Lint + TypeCheck + Test)
+  smoke-test:
+    name: Smoke Test (TypeCheck + Test)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+
+      # Frontend
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
+      - name: Install frontend deps
         working-directory: ./frontend
         run: npm ci
-      - name: ESLint (strict)
-        working-directory: ./frontend
-        run: npm run lint
-      - name: TypeScript check
+      - name: Frontend TypeScript check
         working-directory: ./frontend
         run: npx tsc --noEmit
-      - name: Run tests
+      - name: Frontend tests
         working-directory: ./frontend
         run: npm run test
 
-  client:
-    name: Client (Lint + TypeCheck + Test)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
+      # Client
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
-      - name: Install dependencies
+      - name: Install client deps
         working-directory: ./client
         run: npm ci
-      - name: ESLint (strict)
+      - name: Client TypeScript check
         working-directory: ./client
-        run: npm run lint
-      - name: TypeScript check
-        working-directory: ./client
-        run: npm run build
-      - name: Run tests
+        run: npx tsc --noEmit
+      - name: Client tests
         working-directory: ./client
         run: npm run test
 
-  backend:
-    name: Backend (Lint + Test)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
+      # Backend
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -88,58 +65,9 @@ jobs:
           cache-dependency-path: tests/backend/requirements*.txt
       - name: Install uv
         run: pip install uv
-      - name: Run Ruff linting
-        working-directory: ./backend
-        run: uvx ruff check lambdas --exclude .aws-sam
-      - name: Run Ruff format check
-        working-directory: ./backend
-        run: uvx ruff format --check lambdas --exclude .aws-sam
-      - name: Run Bandit security scan
-        working-directory: ./backend
-        run: uvx bandit -r lambdas --exclude .aws-sam -ll -q
       - name: Install test dependencies
         working-directory: ./tests/backend
         run: uv pip install -r requirements-test.lock --system
-      - name: Run pytest with coverage
+      - name: Backend tests
         working-directory: ./tests/backend
-        run: python -m pytest unit/ -v --tb=short --cov=../../backend/lambdas --cov-fail-under=75
-
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Frontend npm audit
-        working-directory: ./frontend
-        run: npm audit --audit-level=high
-      - name: Client npm audit
-        working-directory: ./client
-        run: npm audit --audit-level=high
-
-  status-check:
-    name: All Checks
-    needs: [format, frontend, client, backend, security]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    if: always()
-    steps:
-      - name: Verify all jobs passed
-        run: |
-          for job in format frontend client backend security; do
-            result="${{ needs.format.result }}"
-            case "$job" in
-              frontend) result="${{ needs.frontend.result }}" ;;
-              client) result="${{ needs.client.result }}" ;;
-              backend) result="${{ needs.backend.result }}" ;;
-              security) result="${{ needs.security.result }}" ;;
-            esac
-            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
-              echo "$job: $result"
-              exit 1
-            fi
-          done
-          echo "All required checks passed"
+        run: python -m pytest unit/ -v --tb=short

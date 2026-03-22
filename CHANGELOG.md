@@ -5,6 +5,54 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-03-22
+
+### Added
+
+- **Influence Mapping** — Score connections by how many distinct clusters they bridge (company, industry, location, tag). Bridge nodes are surfaced in a new "Influencers" tab on the Network page sidebar. Clicking a node highlights it on the graph.
+- **Network Gap Analysis** — Define opportunity targets (companies, roles, industries) and cross-reference against the network graph to identify coverage gaps. New "Gap Analysis" tab on the Network page sidebar with per-opportunity coverage scores and dimension breakdowns.
+- **First Contact Icebreakers** — "Break the Ice" button on ConnectionCard for connections with zero message history. Generates contextual icebreaker options using `generate_message` with `mode: "icebreaker"`. Connection notes included as LLM context.
+- **Opportunity Tracker** — Goal-oriented relationship pipeline with Kanban board at `/opportunities`. Users create named objectives with structured target criteria and tag connections through 5 fixed stages (identified → reached_out → replied → met → outcome). 10 active opportunity cap with atomic enforcement. Denormalized `opportunities[]` array on edge items for fast renders.
+- **Weekly Digest** — AI-generated coaching email aggregating network activity, lifecycle events, and opportunity progress. Delivered via SES (sandbox mode) on Monday schedule using EventBridge fan-out Lambda pattern (coordinator → per-user async). Timezone-aware delivery with auto-detection from frontend.
+- **Lifecycle Event Detection** — Profile metadata diff during `profile-init` detects job changes, title updates, location moves. Full field delta stored as `ACTIVITY#` events with 90-day TTL. Integrated fire-and-forget into `_handle_upsert_status`.
+- **Backend:** `InfluenceMappingService` — pure computation, bridge score = count of distinct clusters bridged
+- **Backend:** `OpportunityService` — full CRUD with atomic 10-cap counter, `transact_write_items` for atomic deletes, paginated edge cleanup
+- **Backend:** `GapAnalysisService` — company (exact), role (substring), industry (cluster label) matching with coverage scoring
+- **Backend:** `LifecycleEventService` — user-scoped edge metadata diff with tracked field mapping
+- **Backend:** `DigestContentService` — weekly activity aggregation with timezone-aware window anchoring
+- **Backend:** Digest coordinator Lambda (EventBridge schedule, fan-out pattern) and per-user digest Lambda (SES send, HTML email template)
+- **Backend:** 14 new edge-processing handlers with feature gates for all 5 features
+- **Backend:** Icebreaker mode in LLM service with dedicated prompt template and multi-icebreaker parsing
+- **Backend:** `timezone` and `digest_opted_out` user settings fields with validators
+- **Backend:** HMAC-SHA256 unsubscribe token verification (replaces base64)
+- **Frontend:** `networkIntelligenceService` with `useInfluenceScores` and `useGapAnalysis` React Query hooks
+- **Frontend:** `InfluencersTab` and `GapAnalysisTab` components on `NetworkSidebar` (tabbed interface)
+- **Frontend:** Full `features/opportunities/` module — types, service (11 methods), 3 hooks, barrel export
+- **Frontend:** `OpportunitiesPage` with `OpportunityKanban`, `StageColumn`, `ConnectionStageCard` (HTML5 drag-and-drop), `CreateOpportunityDialog`
+- **Frontend:** `IcebreakerButton` and `IcebreakerDialog` with `useIcebreaker` hook, integrated into `ConnectionCard`
+- **Frontend:** `DigestSettings` component with Radix Switch toggle, timezone auto-detection in `UserProfileContext`
+- **Frontend:** `OpportunitySummaryCard` on Dashboard with pipeline navigation
+- **Frontend:** `/opportunities` route in `App.tsx` with lazy loading
+- **Infra:** SES `EmailIdentity` resource (conditional on `HasSESEmail` parameter)
+- **Infra:** `DigestCoordinatorFunction` and `DigestPerUserFunction` in SAM template with EventBridge Monday schedule
+- **Infra:** `UNSUBSCRIBE_SECRET` from SSM Parameter Store
+- **Sync:** 5 new feature flags in `monetization_stubs.py` (all `False` for community edition)
+- **Sync:** Feature flags provisioned across `tier_service.py` (free=False) and `billing_service.py` (paid=True)
+- **Sync:** 21 new exclude paths in `.sync/config.json` for pro-only files
+- **Sync:** New overlays for `ConnectionCard.tsx`, `Profile.tsx`, `Dashboard.tsx`; updated overlays for edge-processing, LLM, App.tsx, monetization.py
+
+### Fixed
+
+- **Frontend:** `updateOpportunity` request body contract — fields now nested under `updates` key matching backend handler expectation
+- **Frontend:** Unsafe type casts in `DigestSettings.tsx` replaced with proper `UserProfile` type extension
+- **Backend:** `_cleanup_edge_references` in `OpportunityService` now paginates through `LastEvaluatedKey`
+- **Backend:** `_query_recent_activities` in `DigestContentService` now paginates through `LastEvaluatedKey`
+- **Backend:** `UNSUBSCRIBE_SECRET` env var validated at cold start (raises `RuntimeError` if missing)
+- **Backend:** Edge stage methods (`tag_connection_to_opportunity`, `untag_connection_from_opportunity`, `update_connection_stage`) validate profile_id is pre-encoded
+- **Backend:** `GapAnalysisService` accepts `opportunityId` key as fallback (avoids DynamoDB SK leakage)
+- **Backend:** `_handle_update_opportunity` validates input types before passing to service
+- **Backend:** Opportunity delete uses `transact_write_items` for atomic delete + counter decrement
+
 ## [1.6.0] - 2026-03-22
 
 ### Added

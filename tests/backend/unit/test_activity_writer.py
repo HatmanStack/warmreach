@@ -25,6 +25,12 @@ class TestActivityEventType:
             'user_settings_updated',
             'note_added',
             'profile_ingested',
+            'lifecycle_change',
+            'opportunity_created',
+            'opportunity_stage_changed',
+            'opportunity_archived',
+            'opportunity_completed',
+            'icebreaker_generated',
         }
         actual = {e.value for e in ActivityEventType}
         assert actual == expected
