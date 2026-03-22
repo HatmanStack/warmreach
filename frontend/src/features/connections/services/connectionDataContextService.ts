@@ -1,4 +1,4 @@
-import type { Connection, Message } from '@/shared/types/index';
+import type { Connection, Message, Note } from '@/shared/types/index';
 import type { UserProfile } from '@/types';
 import type { MessageGenerationRequest } from '@/features/messages';
 
@@ -20,6 +20,8 @@ interface MessageGenerationContext {
   userProfile: UserProfile;
   /** Previously generated messages in this session */
   previousMessages: string[];
+  /** User-recorded notes about this connection */
+  connectionNotes: Note[];
 }
 
 /**
@@ -36,6 +38,10 @@ interface ContextPreparationOptions {
   includeTags?: boolean;
   /** Previously generated messages to include for context */
   previousMessages?: string[];
+  /** Include connection notes in context */
+  includeNotes?: boolean;
+  /** Maximum number of notes to include */
+  maxNotes?: number;
 }
 
 // =============================================================================
@@ -69,6 +75,8 @@ class ConnectionDataContextService {
       maxMessageHistory = 10,
       includeUserProfile = true,
       previousMessages = [],
+      includeNotes = true,
+      maxNotes = 20,
     } = options;
 
     return {
@@ -82,6 +90,7 @@ class ConnectionDataContextService {
           ? this.prepareUserProfileData(userProfile)
           : ({} as UserProfile),
       previousMessages: [...previousMessages],
+      connectionNotes: includeNotes ? this.prepareConnectionNotes(connection, maxNotes) : [],
     };
   }
 
@@ -201,6 +210,22 @@ class ConnectionDataContextService {
   }
 
   /**
+   * Prepare connection notes for LLM context
+   *
+   * @param connection - Connection with notes
+   * @param maxNotes - Maximum number of notes to include
+   * @returns Sorted, limited array of notes
+   */
+  prepareConnectionNotes(connection: Connection, maxNotes: number = 20): Note[] {
+    if (!connection.notes || connection.notes.length === 0) {
+      return [];
+    }
+    return [...connection.notes]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, maxNotes);
+  }
+
+  /**
    * Create a complete MessageGenerationRequest from context data
    *
    * @param context - Prepared message generation context
@@ -213,6 +238,7 @@ class ConnectionDataContextService {
       conversationTopic: context.topic,
       messageHistory: context.messageHistory,
       userProfile: context.userProfile,
+      connectionNotes: context.connectionNotes,
     };
   }
 
@@ -301,6 +327,11 @@ class ConnectionDataContextService {
       score += 0.1;
     }
     factors++;
+
+    // Notes availability (bonus context)
+    if (context.connectionNotes.length > 0) {
+      score += 0.05;
+    }
 
     return factors > 0 ? score : 0;
   }

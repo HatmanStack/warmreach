@@ -11,6 +11,7 @@ import time
 import uuid
 
 import boto3
+from shared_services.activity_writer import write_activity
 from shared_services.request_utils import api_response, extract_user_id
 
 logger = logging.getLogger()
@@ -209,6 +210,8 @@ def _create_command(event, user_sub):
                 'commandId': command_id,
             },
         )
+
+    write_activity(table, user_sub, 'command_dispatched', metadata={'commandType': command_type})
 
     return api_response(200, {'commandId': command_id, 'status': 'dispatched'}, event, allowed_methods=_ALLOWED_METHODS)
 

@@ -369,3 +369,68 @@ def test_analyze_message_patterns_metered(lambda_context, llm_module, mock_servi
         llm_module._llm_service = orig_svc
     assert response['statusCode'] == 200
     mock_services['quota'].report_usage.assert_called_once_with('test-user', 'analyze_message_patterns', count=1)
+
+
+# ---- Activity writer instrumentation tests ----
+
+
+def test_generate_message_emits_activity(lambda_context, llm_module, mock_services):
+    """generate_message emits ai_message_generated activity."""
+    event = {
+        'body': json.dumps({
+            'operation': 'generate_message',
+            'conversationTopic': 'AI trends',
+            'connectionProfile': {'firstName': 'A', 'lastName': 'B', 'position': 'X', 'company': 'Y'},
+            'connectionId': 'conn-123',
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    mock_svc = MagicMock()
+    mock_svc.generate_message.return_value = {'message': 'Hello'}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
+        with patch.object(llm_module, 'write_activity') as mock_wa:
+            response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
+    assert response['statusCode'] == 200
+    mock_wa.assert_called_once()
+    args = mock_wa.call_args[0]
+    kwargs = mock_wa.call_args[1]
+    assert args[2] == 'ai_message_generated'
+    assert kwargs['metadata']['connectionId'] == 'conn-123'
+
+
+def test_analyze_tone_emits_activity(lambda_context, llm_module, mock_services):
+    """analyze_tone emits ai_tone_analysis activity."""
+    mock_services['feature_flags'].get_feature_flags.return_value = {
+        'tier': 'paid',
+        'features': {'tone_analysis': True},
+        'quotas': {},
+        'rateLimits': {},
+    }
+    event = {
+        'body': json.dumps({
+            'operation': 'analyze_tone',
+            'draftText': 'This is a test message.',
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    mock_svc = MagicMock()
+    mock_svc.analyze_tone.return_value = {'tone': 'professional'}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
+        with patch.object(llm_module, 'write_activity') as mock_wa:
+            response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
+    assert response['statusCode'] == 200
+    mock_wa.assert_called_once()
+    args = mock_wa.call_args[0]
+    assert args[2] == 'ai_tone_analysis'

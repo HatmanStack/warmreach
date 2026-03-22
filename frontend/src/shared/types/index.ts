@@ -122,6 +122,9 @@ export interface Connection {
   /** Array of message history (optional) */
   message_history?: Message[];
 
+  /** User-recorded notes about this connection (optional) */
+  notes?: Note[];
+
   /** Relationship strength score 0-100 (optional, pro feature) */
   relationship_score?: number;
 
@@ -164,6 +167,44 @@ export interface Message {
   /** Who sent the message */
   sender: MessageSender;
 }
+
+/**
+ * Represents a user note on a connection
+ *
+ * @interface Note
+ * @description Individual note recorded by the user about a connection.
+ * Used for personalization context in AI message generation.
+ */
+export interface Note {
+  /** Unique identifier for the note */
+  id: string;
+  /** Note content text */
+  content: string;
+  /** When the note was created (ISO string) */
+  timestamp: string;
+  /** When the note was last updated (ISO string) */
+  updatedAt: string;
+}
+
+/**
+ * Represents a user activity event for the timeline
+ *
+ * @interface ActivityEvent
+ * @description Activity record from DynamoDB timeline entries.
+ */
+export interface ActivityEvent {
+  /** Event type identifier */
+  eventType: string;
+  /** When the event occurred (ISO string) */
+  timestamp: string;
+  /** Event-specific metadata */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Activity filter categories for the timeline UI
+ */
+export type ActivityCategory = 'Connections' | 'Messages' | 'AI' | 'Commands';
 
 /**
  * Filter criteria for connection queries
@@ -554,6 +595,12 @@ export interface ConnectionCardProps {
 
   /** Reply probability confidence level (optional, pro feature) */
   replyConfidence?: 'high' | 'medium' | 'low';
+
+  /** Callback when notes icon is clicked */
+  onNoteClick?: (connection: Connection) => void;
+
+  /** Callback when notes are added, updated, or deleted */
+  onNotesChanged?: (connection: Connection) => void;
 }
 
 /**

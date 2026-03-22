@@ -5,6 +5,22 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-03-22
+
+### Added
+
+- **Activity Timeline** — Chronological feed of all user actions on the Profile page with category filters (Connections, Messages, AI, Commands) and date range picker. New `ACTIVITY#` DynamoDB record type with 90-day TTL and UUID collision protection. All Lambdas (edge-processing, command-dispatch, dynamodb-api, llm) instrumented to emit activity records.
+- **CSV Export** — Client-side CSV export of all connections from the Profile page. Tier-aware: includes relationship scores, cluster memberships, and reply probability for Pro users. RFC 4180 compliant escaping and `\r\n` line endings.
+- **Connection Notes** — Private timestamped notes on connections via modal UI on the ConnectionCard. Full CRUD (add, edit, delete) with 1000-character limit per note and atomic 50-note cap via DynamoDB ConditionExpression. Notes fed to LLM during message generation for personalized outreach. UI disclaimer informs users that notes inform AI messages.
+- **Backend:** `ActivityService` with paginated queries, date range filtering, and `eventTypes` array support (`IN` filter) for multi-type category filtering
+- **Backend:** `write_activity()` fire-and-forget utility with `ActivityEventType` enum (10 event types)
+- **Backend:** Note CRUD operations (`add_note`, `update_note`, `delete_note`) on `EdgeDataService` with `notes` array on edge items
+- **Backend:** 4 ungated edge-processing handlers for notes and activity timeline
+- **Frontend:** `ConnectionNotesModal` with local optimistic state for instant UI updates after mutations
+- **Frontend:** `ActivityTimeline` component with `useInfiniteQuery` pagination and server-side category filtering
+- **Frontend:** `connectionDataContextService` extended with `prepareConnectionNotes()` for LLM context integration
+- **Frontend:** Dedicated `onNotesChanged` prop on `ConnectionCardProps` for clean callback semantics
+
 ## [1.5.0] - 2026-03-21
 
 ### Added

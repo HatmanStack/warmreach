@@ -3,6 +3,7 @@
 import base64
 import logging
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -20,6 +21,12 @@ INGESTION_TRIGGER_STATUSES = {'outgoing', 'ally', 'followed'}
 
 # Maximum messages stored per edge
 MAX_MESSAGES_PER_EDGE = 100
+
+# Maximum notes stored per edge
+MAX_NOTES_PER_EDGE = 50
+
+# Maximum note content length
+MAX_NOTE_LENGTH = 1000
 
 
 class EdgeDataService(BaseService):
@@ -333,6 +340,122 @@ class EdgeDataService(BaseService):
                 logger.warning(f'Batch profile metadata fetch failed for chunk: {e}')
         return results
 
+    def add_note(self, user_id: str, profile_id: str, content: str) -> dict[str, Any]:
+        """Add a note to an existing edge."""
+        if not content or not content.strip():
+            raise ValidationError('Note content is required', field='content')
+        if len(content) > MAX_NOTE_LENGTH:
+            raise ValidationError(f'Note content exceeds {MAX_NOTE_LENGTH} characters', field='content')
+
+        try:
+            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            current_time = datetime.now(UTC).isoformat()
+            key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'}
+
+            note_id = str(uuid.uuid4())
+
+            note = {
+                'id': note_id,
+                'content': content,
+                'timestamp': current_time,
+                'updatedAt': current_time,
+            }
+
+            self.table.update_item(
+                Key=key,
+                UpdateExpression='SET notes = list_append(if_not_exists(notes, :empty_list), :note), updatedAt = :updated_at',
+                ConditionExpression='attribute_not_exists(notes) OR size(notes) < :max_notes',
+                ExpressionAttributeValues={
+                    ':note': [note],
+                    ':empty_list': [],
+                    ':updated_at': current_time,
+                    ':max_notes': MAX_NOTES_PER_EDGE,
+                },
+            )
+
+            return {'success': True, 'noteId': note_id, 'profileId': profile_id_b64}
+
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                raise ValidationError(
+                    f'Maximum of {MAX_NOTES_PER_EDGE} notes per connection reached',
+                    field='notes',
+                ) from e
+            logger.error(f'DynamoDB error in add_note: {e}')
+            raise ExternalServiceError(message='Failed to add note', service='DynamoDB', original_error=str(e)) from e
+
+    def update_note(self, user_id: str, profile_id: str, note_id: str, content: str) -> dict[str, Any]:
+        """Update an existing note on an edge."""
+        if not content or not content.strip():
+            raise ValidationError('Note content is required', field='content')
+        if len(content) > MAX_NOTE_LENGTH:
+            raise ValidationError(f'Note content exceeds {MAX_NOTE_LENGTH} characters', field='content')
+
+        try:
+            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            current_time = datetime.now(UTC).isoformat()
+            key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'}
+
+            response = self.table.get_item(Key=key, ProjectionExpression='notes')
+            notes = response.get('Item', {}).get('notes', [])
+
+            found = False
+            for note in notes:
+                if note.get('id') == note_id:
+                    note['content'] = content
+                    note['updatedAt'] = current_time
+                    found = True
+                    break
+
+            if not found:
+                raise ValidationError('Note not found', field='noteId')
+
+            self.table.update_item(
+                Key=key,
+                UpdateExpression='SET notes = :notes, updatedAt = :updated',
+                ExpressionAttributeValues={':notes': notes, ':updated': current_time},
+            )
+
+            return {'success': True, 'noteId': note_id, 'profileId': profile_id_b64}
+
+        except ValidationError:
+            raise
+        except ClientError as e:
+            logger.error(f'DynamoDB error in update_note: {e}')
+            raise ExternalServiceError(
+                message='Failed to update note', service='DynamoDB', original_error=str(e)
+            ) from e
+
+    def delete_note(self, user_id: str, profile_id: str, note_id: str) -> dict[str, Any]:
+        """Delete a note from an edge."""
+        try:
+            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            current_time = datetime.now(UTC).isoformat()
+            key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'}
+
+            response = self.table.get_item(Key=key, ProjectionExpression='notes')
+            notes = response.get('Item', {}).get('notes', [])
+
+            filtered = [n for n in notes if n.get('id') != note_id]
+            if len(filtered) == len(notes):
+                raise ValidationError('Note not found', field='noteId')
+
+            self.table.update_item(
+                Key=key,
+                UpdateExpression='SET notes = :notes, updatedAt = :updated',
+                ExpressionAttributeValues={':notes': filtered, ':updated': current_time},
+            )
+
+            return {'success': True, 'noteId': note_id, 'profileId': profile_id_b64}
+
+        except ValidationError:
+            raise
+        except ClientError as e:
+            logger.error(f'DynamoDB error in delete_note: {e}')
+            raise ExternalServiceError(
+                message='Failed to delete note', service='DynamoDB', original_error=str(e)
+            ) from e
+
     # =========================================================================
     # Private helper methods
     # =========================================================================
@@ -429,6 +552,7 @@ class EdgeDataService(BaseService):
             'conversion_likelihood': conversion_likelihood,
             'profile_picture_url': profile_data.get('profilePictureUrl', ''),
             'message_history': messages if isinstance(messages, list) else [],
+            'notes': edge_item.get('notes', []),
             'relationship_score': edge_item.get('relationshipScore'),
             'score_breakdown': edge_item.get('scoreBreakdown'),
             'score_computed_at': edge_item.get('scoreComputedAt'),

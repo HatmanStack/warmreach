@@ -1,6 +1,6 @@
 import { API_CONFIG } from '@/config/appConfig';
 import { httpClient } from '@/shared/utils/httpClient';
-import type { Message, UserProfile } from '@/shared/types/index';
+import type { Message, Note, UserProfile } from '@/shared/types/index';
 
 // =============================================================================
 // INTERFACES
@@ -31,6 +31,9 @@ export interface MessageGenerationRequest {
 
   /** User's profile information for context */
   userProfile?: UserProfile;
+
+  /** User-recorded notes about this connection for personalization */
+  connectionNotes?: Note[];
 }
 
 /**

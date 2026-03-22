@@ -4,7 +4,7 @@ Tests CRUD operations, authentication, CORS, and error handling
 """
 import base64
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import boto3
 import pytest
@@ -276,3 +276,20 @@ def test_dynamodb_error_handling(dynamodb_table_with_data, api_gateway_event_get
         assert response['statusCode'] == 500
         body = json.loads(response['body'])
         assert body['error'] == 'Database error'
+
+
+def test_update_settings_emits_activity(dynamodb_table_with_data, api_gateway_event_post, lambda_context, dynamodb_api_module):
+    """update_user_settings calls write_activity after success."""
+    event = api_gateway_event_post.copy()
+    event['body'] = json.dumps({
+        'operation': 'update_user_settings',
+        'settings': {'theme': 'light'},
+    })
+
+    with patch.object(dynamodb_api_module, 'write_activity') as mock_wa:
+        response = dynamodb_api_module.lambda_handler(event, lambda_context)
+
+    assert response['statusCode'] == 200
+    mock_wa.assert_called_once()
+    args = mock_wa.call_args[0]
+    assert args[2] == 'user_settings_updated'

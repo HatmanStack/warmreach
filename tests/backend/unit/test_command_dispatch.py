@@ -2,7 +2,7 @@
 
 import json
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from moto import mock_aws
@@ -367,3 +367,35 @@ class TestCheckRateLimitFailClosed:
         assert result['statusCode'] == 503
         body = json.loads(result['body'])
         assert body['code'] == 'RATE_LIMIT_UNAVAILABLE'
+
+
+class TestActivityWriterInstrumentation:
+    def test_successful_dispatch_emits_activity(self, ws_table, lambda_context):
+        """Successful command dispatch calls write_activity."""
+        from conftest import load_lambda_module
+        module = load_lambda_module('command-dispatch')
+
+        ws_table.put_item(Item={
+            'PK': 'WSCONN#agent-conn-1',
+            'SK': '#METADATA',
+            'GSI1PK': 'USER#user-123#WSCONN',
+            'GSI1SK': 'TYPE#agent',
+            'connectionId': 'agent-conn-1',
+            'userSub': 'user-123',
+            'clientType': 'agent',
+            'connectedAt': 1000,
+        })
+
+        event = _make_http_event(body={'type': 'linkedin:search', 'payload': {'query': 'test'}})
+
+        with patch.object(module, 'table', ws_table), \
+             patch('shared_services.websocket_service.WebSocketService.send_to_connection', return_value=True), \
+             patch.object(module, 'write_activity') as mock_wa:
+            result = module.lambda_handler(event, lambda_context)
+
+        assert result['statusCode'] == 200
+        mock_wa.assert_called_once()
+        args = mock_wa.call_args[0]
+        kwargs = mock_wa.call_args[1]
+        assert args[2] == 'command_dispatched'
+        assert kwargs['metadata']['commandType'] == 'linkedin:search'

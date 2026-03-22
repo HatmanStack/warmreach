@@ -79,6 +79,97 @@ describe('ConnectionDataContextService', () => {
     });
   });
 
+  describe('prepareConnectionNotes', () => {
+    it('should return sorted notes by timestamp descending', () => {
+      const conn = buildConnection({
+        notes: [
+          {
+            id: 'n1',
+            content: 'First',
+            timestamp: '2024-01-01T10:00:00Z',
+            updatedAt: '2024-01-01T10:00:00Z',
+          },
+          {
+            id: 'n2',
+            content: 'Second',
+            timestamp: '2024-06-01T10:00:00Z',
+            updatedAt: '2024-06-01T10:00:00Z',
+          },
+          {
+            id: 'n3',
+            content: 'Third',
+            timestamp: '2024-03-01T10:00:00Z',
+            updatedAt: '2024-03-01T10:00:00Z',
+          },
+        ],
+      });
+      const notes = connectionDataContextService.prepareConnectionNotes(conn);
+      expect(notes[0].id).toBe('n2');
+      expect(notes[1].id).toBe('n3');
+      expect(notes[2].id).toBe('n1');
+    });
+
+    it('should return empty array when no notes', () => {
+      const conn = buildConnection({ notes: undefined });
+      expect(connectionDataContextService.prepareConnectionNotes(conn)).toEqual([]);
+    });
+
+    it('should return empty array when notes is empty', () => {
+      const conn = buildConnection({ notes: [] });
+      expect(connectionDataContextService.prepareConnectionNotes(conn)).toEqual([]);
+    });
+
+    it('should respect maxNotes limit', () => {
+      const conn = buildConnection({
+        notes: Array.from({ length: 30 }, (_, i) => ({
+          id: `n${i}`,
+          content: `Note ${i}`,
+          timestamp: `2024-01-${String(i + 1).padStart(2, '0')}T10:00:00Z`,
+          updatedAt: `2024-01-${String(i + 1).padStart(2, '0')}T10:00:00Z`,
+        })),
+      });
+      const notes = connectionDataContextService.prepareConnectionNotes(conn, 5);
+      expect(notes).toHaveLength(5);
+    });
+  });
+
+  describe('prepareMessageGenerationContext with notes', () => {
+    it('should include notes by default', () => {
+      const conn = buildConnection({
+        notes: [
+          {
+            id: 'n1',
+            content: 'A note',
+            timestamp: '2024-01-01T10:00:00Z',
+            updatedAt: '2024-01-01T10:00:00Z',
+          },
+        ],
+      });
+      const context = connectionDataContextService.prepareMessageGenerationContext(conn, 'Topic');
+      expect(context.connectionNotes).toHaveLength(1);
+    });
+
+    it('should exclude notes when includeNotes is false', () => {
+      const conn = buildConnection({
+        notes: [
+          {
+            id: 'n1',
+            content: 'A note',
+            timestamp: '2024-01-01T10:00:00Z',
+            updatedAt: '2024-01-01T10:00:00Z',
+          },
+        ],
+      });
+      const context = connectionDataContextService.prepareMessageGenerationContext(
+        conn,
+        'Topic',
+        undefined,
+        { includeNotes: false }
+      );
+      expect(context.connectionNotes).toHaveLength(0);
+    });
+  });
+
   describe('calculateContextRelevance', () => {
     it('should calculate a score based on available data', () => {
       const context = connectionDataContextService.prepareMessageGenerationContext(
@@ -88,6 +179,34 @@ describe('ConnectionDataContextService', () => {
       );
       const score = connectionDataContextService.calculateContextRelevance(context);
       expect(score).toBeGreaterThan(0.5);
+    });
+
+    it('should give bonus for notes', () => {
+      const connWithNotes = buildConnection({
+        ...mockConnection,
+        notes: [
+          {
+            id: 'n1',
+            content: 'A note',
+            timestamp: '2024-01-01T10:00:00Z',
+            updatedAt: '2024-01-01T10:00:00Z',
+          },
+        ],
+      });
+      const contextWithNotes = connectionDataContextService.prepareMessageGenerationContext(
+        connWithNotes,
+        'A very long topic string for better score',
+        mockProfile
+      );
+      const contextWithoutNotes = connectionDataContextService.prepareMessageGenerationContext(
+        mockConnection,
+        'A very long topic string for better score',
+        mockProfile
+      );
+      const scoreWith = connectionDataContextService.calculateContextRelevance(contextWithNotes);
+      const scoreWithout =
+        connectionDataContextService.calculateContextRelevance(contextWithoutNotes);
+      expect(scoreWith).toBeGreaterThan(scoreWithout);
     });
   });
 });

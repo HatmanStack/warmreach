@@ -19,11 +19,17 @@ import {
   Key,
   Eye,
   EyeOff,
+  Download,
 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
-import { useUserProfile } from '@/features/profile';
+import { useUserProfile, ActivityTimeline } from '@/features/profile';
+import { useTier } from '@/features/tier';
+import { exportConnectionsCsv } from '@/features/connections/utils/csvExport';
+import { queryKeys } from '@/shared/lib/queryKeys';
 import { encryptWithSealboxB64 } from '@/shared/utils/crypto';
 import { createLogger } from '@/shared/utils/logger';
+import type { Connection } from '@/shared/types';
 
 const logger = createLogger('Profile');
 
@@ -31,6 +37,8 @@ const Profile = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { ciphertext, setCiphertext, userProfile, updateUserProfile } = useUserProfile();
+  const queryClient = useQueryClient();
+  const { isFeatureEnabled } = useTier();
 
   const [profile, setProfile] = useState({
     name: 'Tom, Dick, And Harry',
@@ -206,6 +214,17 @@ const Profile = () => {
       setIsSaving(false);
     }
   };
+
+  const handleExportCsv = () => {
+    const cachedData = queryClient.getQueryData(queryKeys.connections.all);
+    const connections = (cachedData as Connection[]) || [];
+    const includeProFields = isFeatureEnabled('relationship_strength_scoring');
+    exportConnectionsCsv(connections, { includeProFields });
+  };
+
+  const cachedConnections = queryClient.getQueryData(queryKeys.connections.all) as
+    | Connection[]
+    | undefined;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
@@ -544,6 +563,50 @@ const Profile = () => {
             </Card>
           </div>
         </div>
+
+        <Separator className="bg-white/10 my-8" />
+
+        {/* Export Data */}
+        <Card className="bg-white/5 backdrop-blur-md border-white/10" data-testid="export-section">
+          <CardHeader>
+            <CardTitle className="text-white flex items-center">
+              <Download className="h-5 w-5 mr-2" />
+              Export Data
+            </CardTitle>
+            <CardDescription className="text-slate-300">
+              Download your connections as a CSV file.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              data-testid="export-csv-button"
+              onClick={handleExportCsv}
+              disabled={!cachedConnections || cachedConnections.length === 0}
+              variant="outline"
+              className="border-white/20 text-white hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export Connections
+            </Button>
+            {(!cachedConnections || cachedConnections.length === 0) && (
+              <p className="text-slate-400 text-sm mt-2">
+                Visit the Dashboard first to load your connections.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Separator className="bg-white/10 my-8" />
+
+        {/* Activity Timeline */}
+        <Card
+          className="bg-white/5 backdrop-blur-md border-white/10"
+          data-testid="activity-section"
+        >
+          <CardContent className="pt-6">
+            <ActivityTimeline />
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

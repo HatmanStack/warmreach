@@ -2,10 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { MessageSquare, ExternalLink, User, Building, MapPin, Tag, Users } from 'lucide-react';
+import {
+  MessageSquare,
+  ExternalLink,
+  User,
+  Building,
+  MapPin,
+  Tag,
+  Users,
+  StickyNote,
+} from 'lucide-react';
 import { FeatureGate, useTier } from '@/features/tier';
 import { RelationshipStrengthBadge } from './RelationshipStrengthBadge';
 import { ReplyProbabilityBadge } from './ReplyProbabilityBadge';
+import ConnectionNotesModal from './ConnectionNotesModal';
 import { WarmIntroPathsView } from '@/features/search/components/WarmIntroPathsView';
 import { buildLinkedInProfileUrl } from '@/shared/utils/linkedinUrl';
 import type { ConnectionCardProps } from '@/types';
@@ -50,8 +60,11 @@ const ConnectionCard = ({
   onCheckboxChange,
   replyProbability,
   replyConfidence,
+  onNoteClick,
+  onNotesChanged,
 }: ConnectionCardProps) => {
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+  const [isNotesOpen, setIsNotesOpen] = useState(false);
   const [isTagsOpen, setIsTagsOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [showIntroPaths, setShowIntroPaths] = useState(false);
@@ -346,6 +359,27 @@ const ConnectionCard = ({
                   <Users className="w-4 h-4" />
                 </button>
               )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsNotesOpen(true);
+                  onNoteClick?.(connection);
+                }}
+                data-testid="notes-button"
+                className="flex items-center text-slate-400 hover:text-blue-300 transition-colors"
+                title="Connection notes"
+                aria-label="Connection notes"
+              >
+                <StickyNote className="w-4 h-4" />
+                {(connection.notes?.length ?? 0) > 0 && (
+                  <span
+                    data-testid="notes-count-badge"
+                    className="ml-0.5 text-xs text-blue-300 font-medium"
+                  >
+                    {connection.notes!.length}
+                  </span>
+                )}
+              </button>
               {isNewConnection && connection.linkedin_url && (
                 <ExternalLink className="h-4 w-4 text-blue-400" />
               )}
@@ -502,6 +536,13 @@ const ConnectionCard = ({
       </Dialog>
 
       {showIntroPaths && <WarmIntroPathsView targetProfileId={connection.id} />}
+
+      <ConnectionNotesModal
+        isOpen={isNotesOpen}
+        onClose={() => setIsNotesOpen(false)}
+        connection={connection}
+        onNotesChanged={() => onNotesChanged?.(connection)}
+      />
     </div>
   );
 };

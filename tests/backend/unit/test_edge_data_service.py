@@ -10,7 +10,7 @@ from shared_services.base_service import BaseService
 
 # We'll import EdgeDataService after creating it
 # For now, the path is set up via conftest.py's sys.path
-from shared_services.edge_data_service import EdgeDataService
+from shared_services.edge_data_service import MAX_NOTES_PER_EDGE, EdgeDataService
 
 from errors.exceptions import ExternalServiceError, ValidationError
 
@@ -301,3 +301,268 @@ class TestBatchGetProfileMetadata:
         assert len(result) == 105
         assert result['p0']['name'] == 'Person 0'
         assert result['p104']['name'] == 'Person 104'
+
+
+# =============================================================================
+# Note CRUD Tests
+# =============================================================================
+
+
+class TestAddNote:
+    """Tests for add_note operation."""
+
+    def test_successful_note_addition(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        result = service.add_note('test-user', 'https://linkedin.com/in/john', 'Great conversation')
+
+        assert result['success'] is True
+        assert 'noteId' in result
+        assert result['profileId'] is not None
+        mock_table.update_item.assert_called_once()
+
+    def test_note_has_uuid_id(self):
+        import uuid
+
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        result = service.add_note('test-user', 'test-profile', 'A note')
+
+        # noteId should be a valid UUID
+        uuid.UUID(result['noteId'])  # Will raise ValueError if invalid
+
+    def test_note_uses_list_append(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        service.add_note('test-user', 'test-profile', 'A note')
+
+        call_kwargs = mock_table.update_item.call_args[1]
+        assert 'list_append' in call_kwargs['UpdateExpression']
+        assert 'if_not_exists' in call_kwargs['UpdateExpression']
+
+    def test_note_has_timestamp_and_updated_at(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        service.add_note('test-user', 'test-profile', 'A note')
+
+        call_kwargs = mock_table.update_item.call_args[1]
+        note_obj = call_kwargs['ExpressionAttributeValues'][':note'][0]
+        assert 'timestamp' in note_obj
+        assert 'updatedAt' in note_obj
+        assert note_obj['timestamp'] == note_obj['updatedAt']
+
+    def test_empty_content_raises_validation_error(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ValidationError):
+            service.add_note('test-user', 'test-profile', '')
+
+    def test_whitespace_content_raises_validation_error(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ValidationError):
+            service.add_note('test-user', 'test-profile', '   ')
+
+    def test_content_over_1000_chars_raises_validation_error(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ValidationError):
+            service.add_note('test-user', 'test-profile', 'x' * 1001)
+
+    def test_dynamo_error_raises_external_service_error(self):
+        mock_table = MagicMock()
+        mock_table.update_item.side_effect = ClientError(
+            {'Error': {'Code': 'InternalServerError', 'Message': 'fail'}},
+            'UpdateItem',
+        )
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ExternalServiceError):
+            service.add_note('test-user', 'test-profile', 'A note')
+
+    def test_base64_encodes_profile_id(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        result = service.add_note('test-user', 'https://linkedin.com/in/john', 'A note')
+
+        call_kwargs = mock_table.update_item.call_args[1]
+        expected_b64 = base64.urlsafe_b64encode(b'https://linkedin.com/in/john').decode()
+        assert call_kwargs['Key']['SK'] == f'PROFILE#{expected_b64}'
+        assert result['profileId'] == expected_b64
+
+    def test_note_cap_exceeded_raises_validation_error(self):
+        """When DynamoDB rejects due to ConditionExpression (notes at cap), raise ValidationError."""
+        mock_table = MagicMock()
+        mock_table.update_item.side_effect = ClientError(
+            {'Error': {'Code': 'ConditionalCheckFailedException', 'Message': 'Condition not met'}},
+            'UpdateItem',
+        )
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ValidationError, match='Maximum'):
+            service.add_note('test-user', 'test-profile', 'One too many')
+
+    def test_note_cap_condition_expression_present(self):
+        """add_note should include a ConditionExpression enforcing MAX_NOTES_PER_EDGE atomically."""
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        service.add_note('test-user', 'test-profile', 'A note')
+
+        call_kwargs = mock_table.update_item.call_args[1]
+        assert 'ConditionExpression' in call_kwargs
+        assert ':max_notes' in str(call_kwargs['ExpressionAttributeValues'])
+        assert call_kwargs['ExpressionAttributeValues'][':max_notes'] == MAX_NOTES_PER_EDGE
+
+
+class TestUpdateNote:
+    """Tests for update_note operation."""
+
+    def test_successful_update(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'notes': [
+                    {'id': 'note-1', 'content': 'Old content', 'timestamp': '2024-01-01T00:00:00+00:00', 'updatedAt': '2024-01-01T00:00:00+00:00'},
+                ]
+            }
+        }
+        service = EdgeDataService(table=mock_table)
+
+        result = service.update_note('test-user', 'test-profile', 'note-1', 'New content')
+
+        assert result['success'] is True
+        assert result['noteId'] == 'note-1'
+        mock_table.update_item.assert_called_once()
+
+    def test_updates_content_and_updated_at(self):
+        mock_table = MagicMock()
+        old_timestamp = '2024-01-01T00:00:00+00:00'
+        mock_table.get_item.return_value = {
+            'Item': {
+                'notes': [
+                    {'id': 'note-1', 'content': 'Old', 'timestamp': old_timestamp, 'updatedAt': old_timestamp},
+                ]
+            }
+        }
+        service = EdgeDataService(table=mock_table)
+
+        service.update_note('test-user', 'test-profile', 'note-1', 'New content')
+
+        call_kwargs = mock_table.update_item.call_args[1]
+        updated_notes = call_kwargs['ExpressionAttributeValues'][':notes']
+        assert updated_notes[0]['content'] == 'New content'
+        assert updated_notes[0]['timestamp'] == old_timestamp  # timestamp preserved
+        assert updated_notes[0]['updatedAt'] != old_timestamp  # updatedAt changed
+
+    def test_note_not_found_raises_validation_error(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'notes': [
+                    {'id': 'note-1', 'content': 'Content', 'timestamp': '2024-01-01', 'updatedAt': '2024-01-01'},
+                ]
+            }
+        }
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ValidationError, match='Note not found'):
+            service.update_note('test-user', 'test-profile', 'nonexistent-note', 'New content')
+
+    def test_empty_content_raises_validation_error(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ValidationError):
+            service.update_note('test-user', 'test-profile', 'note-1', '')
+
+    def test_content_over_1000_chars_raises_validation_error(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ValidationError):
+            service.update_note('test-user', 'test-profile', 'note-1', 'x' * 1001)
+
+
+class TestDeleteNote:
+    """Tests for delete_note operation."""
+
+    def test_successful_delete(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'notes': [
+                    {'id': 'note-1', 'content': 'Content', 'timestamp': '2024-01-01', 'updatedAt': '2024-01-01'},
+                    {'id': 'note-2', 'content': 'Other', 'timestamp': '2024-01-02', 'updatedAt': '2024-01-02'},
+                ]
+            }
+        }
+        service = EdgeDataService(table=mock_table)
+
+        result = service.delete_note('test-user', 'test-profile', 'note-1')
+
+        assert result['success'] is True
+        assert result['noteId'] == 'note-1'
+        # Verify the remaining notes list excludes note-1
+        call_kwargs = mock_table.update_item.call_args[1]
+        remaining = call_kwargs['ExpressionAttributeValues'][':notes']
+        assert len(remaining) == 1
+        assert remaining[0]['id'] == 'note-2'
+
+    def test_note_not_found_raises_validation_error(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'notes': [
+                    {'id': 'note-1', 'content': 'Content', 'timestamp': '2024-01-01', 'updatedAt': '2024-01-01'},
+                ]
+            }
+        }
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ValidationError, match='Note not found'):
+            service.delete_note('test-user', 'test-profile', 'nonexistent')
+
+    def test_dynamo_error_raises_external_service_error(self):
+        mock_table = MagicMock()
+        mock_table.get_item.side_effect = ClientError(
+            {'Error': {'Code': 'InternalServerError', 'Message': 'fail'}},
+            'GetItem',
+        )
+        service = EdgeDataService(table=mock_table)
+
+        with pytest.raises(ExternalServiceError):
+            service.delete_note('test-user', 'test-profile', 'note-1')
+
+
+class TestFormatConnectionObjectNotes:
+    """Tests for notes in _format_connection_object."""
+
+    def test_notes_included_in_connection(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+        notes = [{'id': 'n1', 'content': 'A note', 'timestamp': '2024-01-01', 'updatedAt': '2024-01-01'}]
+        edge_item = {'status': 'ally', 'messages': [], 'notes': notes}
+        profile_data = {'name': 'John Doe'}
+
+        result = service._format_connection_object('profile-1', profile_data, edge_item)
+
+        assert result['notes'] == notes
+
+    def test_empty_notes_when_not_present(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+        edge_item = {'status': 'ally', 'messages': []}
+        profile_data = {'name': 'John Doe'}
+
+        result = service._format_connection_object('profile-1', profile_data, edge_item)
+
+        assert result['notes'] == []

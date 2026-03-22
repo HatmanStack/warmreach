@@ -11,4 +11,10 @@ export const queryKeys = {
   messages: {
     history: (connectionId: string) => ['messages', 'history', connectionId] as const,
   },
+  activity: {
+    timeline: (userId: string) => ['activity', 'timeline', userId] as const,
+  },
+  notes: {
+    byConnection: (connectionId: string) => ['notes', connectionId] as const,
+  },
 } as const;
