@@ -6,6 +6,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import boto3
 from botocore.exceptions import ClientError
 from errors.exceptions import ExternalServiceError, ValidationError
 from models.enums import classify_conversion_likelihood
@@ -295,6 +296,42 @@ class EdgeDataService(BaseService):
     def get_profile_metadata(self, profile_id: str) -> ProfileMetadataItem:
         """Public accessor for profile metadata. Delegates to _get_profile_metadata."""
         return self._get_profile_metadata(profile_id)
+
+    def batch_get_profile_metadata(self, profile_ids: list[str]) -> dict[str, ProfileMetadataItem]:
+        """Fetch profile metadata for multiple profiles using BatchGetItem.
+
+        Returns a dict mapping profile_id -> metadata. Missing profiles are omitted.
+        DynamoDB BatchGetItem supports up to 100 keys per call.
+
+        Uses the DynamoDB service resource's batch_get_item (not the low-level
+        client) so responses are auto-deserialized to Python types.
+        """
+        results: dict[str, ProfileMetadataItem] = {}
+        if not profile_ids:
+            return results
+
+        table_name = self.table.table_name
+        dynamodb = boto3.resource('dynamodb')
+        # Process in chunks of 100 (BatchGetItem limit)
+        for i in range(0, len(profile_ids), 100):
+            chunk = profile_ids[i : i + 100]
+            keys = [{'PK': f'PROFILE#{pid}', 'SK': '#METADATA'} for pid in chunk]
+            try:
+                response = dynamodb.batch_get_item(RequestItems={table_name: {'Keys': keys}})
+                for item in response.get('Responses', {}).get(table_name, []):
+                    pid = item.get('PK', '').replace('PROFILE#', '')
+                    results[pid] = item
+                # Handle unprocessed keys with retry
+                unprocessed = response.get('UnprocessedKeys', {})
+                while unprocessed.get(table_name):
+                    response = dynamodb.batch_get_item(RequestItems=unprocessed)
+                    for item in response.get('Responses', {}).get(table_name, []):
+                        pid = item.get('PK', '').replace('PROFILE#', '')
+                        results[pid] = item
+                    unprocessed = response.get('UnprocessedKeys', {})
+            except Exception as e:
+                logger.warning(f'Batch profile metadata fetch failed for chunk: {e}')
+        return results
 
     # =========================================================================
     # Private helper methods

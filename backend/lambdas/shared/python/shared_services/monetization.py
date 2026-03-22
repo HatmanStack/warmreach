@@ -52,6 +52,7 @@ class FeatureFlagService:
                 'priority_inference': True,
                 'cluster_detection': True,
                 'warm_intro_paths': True,
+                'network_graph_visualization': True,
             },
             'quotas': {},
             'rateLimits': {},

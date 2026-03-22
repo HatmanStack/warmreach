@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Database,
   BarChart3,
+  Share2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
@@ -137,6 +138,16 @@ const Dashboard = () => {
             <div className="flex items-center space-x-4">
               <AgentStatusBadge />
               <span className="text-white">Welcome, {displayName}</span>
+              {isFeatureEnabled('network_graph_visualization') && (
+                <Button
+                  variant="ghost"
+                  className="text-white hover:bg-white/10"
+                  onClick={() => navigate('/network')}
+                >
+                  <Share2 className="h-4 w-4 mr-2" />
+                  Network
+                </Button>
+              )}
               {isFeatureEnabled('advanced_analytics') && (
                 <Button
                   variant="ghost"
