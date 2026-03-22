@@ -7,6 +7,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 from services.dynamodb_api_service import DynamoDBApiService
+from shared_services.activity_writer import write_activity
 from shared_services.request_utils import api_response, extract_user_id
 
 # Configure logging
@@ -52,6 +53,7 @@ def _handle_update_user_settings(body, user_id, event):
     result = service.update_user_settings(user_id, body)
     if 'error' in result:
         return _resp(400, result, event)
+    write_activity(table, user_id, 'user_settings_updated', metadata={'operation': 'update_user_settings'})
     return _resp(200, result, event)
 
 
@@ -59,6 +61,7 @@ def _handle_update_profile_picture(body, user_id, event):
     result = service.update_profile_picture(user_id, body)
     if 'error' in result:
         return _resp(400, result, event)
+    write_activity(table, user_id, 'profile_metadata_updated', metadata={'operation': 'update_profile_picture'})
     return _resp(200, result, event)
 
 
@@ -247,6 +250,7 @@ def _update_user_profile(event: dict[str, Any], user_id: str) -> dict[str, Any]:
         result = service.update_user_settings(user_id, body)
         if 'error' in result:
             return _resp(400, result, event)
+        write_activity(table, user_id, 'profile_metadata_updated', metadata={'operation': 'update_user_profile'})
         return _resp(200, result, event)
 
     except json.JSONDecodeError:

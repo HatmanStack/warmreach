@@ -14,6 +14,7 @@ from shared_services.monetization import (
     QuotaService,
     ensure_tier_exists,
 )
+from shared_services.activity_writer import write_activity
 from shared_services.request_utils import api_response, extract_user_id
 
 logger = logging.getLogger()
@@ -202,6 +203,17 @@ def lambda_handler(event, _context):
         # If the handler returned an api_response (e.g. 400 validation error), pass it through
         if isinstance(result, dict) and 'statusCode' in result:
             return result
+
+        # Emit activity events for successful operations
+        if table:
+            if op == 'generate_message':
+                write_activity(
+                    table, user_id, 'ai_message_generated', metadata={'connectionId': body.get('connectionId')}
+                )
+            elif op == 'analyze_tone':
+                write_activity(table, user_id, 'ai_tone_analysis')
+            elif op in DEEP_RESEARCH_OPS:
+                write_activity(table, user_id, 'ai_deep_research')
 
         # Report usage for metered operations after success.
         # Note: if report_usage raises QuotaExceededError the LLM op already ran.
