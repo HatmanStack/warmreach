@@ -34,6 +34,11 @@ class ActivityEventType(StrEnum):
     OPPORTUNITY_ARCHIVED = 'opportunity_archived'
     OPPORTUNITY_COMPLETED = 'opportunity_completed'
     ICEBREAKER_GENERATED = 'icebreaker_generated'
+    ONBOARDING_STEP_COMPLETED = 'onboarding_step_completed'
+    ONBOARDING_COMPLETED = 'onboarding_completed'
+    ONBOARDING_SKIPPED = 'onboarding_skipped'
+    SUBSCRIPTION_CANCELLED = 'subscription_cancelled'
+    SUBSCRIPTION_RESUBSCRIBED = 'subscription_resubscribed'
 
 
 def write_activity(

@@ -110,6 +110,8 @@ class DynamoDBApiService(BaseService):
             'ai_generated_post_reasoning',
             'timezone',
             'digest_opted_out',
+            'onboarding_completed',
+            'onboarding_step',
         ]
         for field in allowed_profile_fields:
             if field in body and body[field] is not None:

@@ -86,6 +86,25 @@ def _handle_clear_import_checkpoint(body, user_id, event):
     return _resp(200, result, event)
 
 
+def _handle_complete_onboarding_step(body, user_id, event):
+    """Record an onboarding step completion or skip as activity events."""
+    step = body.get('step')
+    if not step or not isinstance(step, str) or not step.strip():
+        return _resp(400, {'error': 'step is required and must be a non-empty string'}, event)
+
+    skipped = body.get('skipped', False)
+
+    if skipped:
+        write_activity(table, user_id, 'onboarding_skipped', metadata={'step': step})
+    else:
+        write_activity(table, user_id, 'onboarding_step_completed', metadata={'step': step})
+
+    if step == 'completed':
+        write_activity(table, user_id, 'onboarding_completed')
+
+    return _resp(200, {'success': True}, event)
+
+
 # ---------------------------------------------------------------------------
 # POST operation routing table
 # ---------------------------------------------------------------------------
@@ -97,6 +116,7 @@ POST_HANDLERS = {
     'increment_daily_scrape_count': _handle_increment_daily_scrape_count,
     'save_import_checkpoint': _handle_save_import_checkpoint,
     'clear_import_checkpoint': _handle_clear_import_checkpoint,
+    'complete_onboarding_step': _handle_complete_onboarding_step,
 }
 
 # ---------------------------------------------------------------------------
@@ -199,6 +219,7 @@ def lambda_handler(event: dict[str, Any], context) -> dict[str, Any]:
                     'increment_daily_scrape_count',
                     'save_import_checkpoint',
                     'clear_import_checkpoint',
+                    'complete_onboarding_step',
                 ],
             },
             event,

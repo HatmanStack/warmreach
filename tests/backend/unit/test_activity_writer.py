@@ -31,6 +31,11 @@ class TestActivityEventType:
             'opportunity_archived',
             'opportunity_completed',
             'icebreaker_generated',
+            'onboarding_step_completed',
+            'onboarding_completed',
+            'onboarding_skipped',
+            'subscription_cancelled',
+            'subscription_resubscribed',
         }
         actual = {e.value for e in ActivityEventType}
         assert actual == expected

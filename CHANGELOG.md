@@ -5,6 +5,36 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-03-22
+
+### Added
+
+- **Admin Dashboard** — Standalone Vite + React SPA (S3 + CloudFront) for cross-user business and operational metrics. Cognito JWT auth gated by `ADMIN_USER_SUB` env var. Desktop-first layout with Recharts visualizations, data tables, and date range picker. Designed as the foundation for a full admin console.
+- **Admin Metrics** — User growth (total/paid/free over time), feature adoption heatmap, DAU/WAU, onboarding funnel with per-step drop-off, opportunity pipeline stats, digest delivery and opt-out rates, connection counts per user. Operational metrics from CloudWatch: Lambda invocation counts, error rates, duration, and API Gateway request counts, 4xx/5xx rates, latency.
+- **Onboarding Flow** — Hybrid first-login experience with progressive disclosure. LinkedIn credential connection (required, embedded), connection import preview, network graph exploration, and free vs pro tier comparison (pro-only). Hardcoded demo data shows app value before setup. Per-step activity events (`ONBOARDING_STEP_COMPLETED`, `ONBOARDING_COMPLETED`, `ONBOARDING_SKIPPED`) for funnel analytics.
+- **Stripe Subscription Management** — End-to-end wiring of existing Stripe components (BillingPage, useCheckout, stripe-webhook, BillingService). New `/billing` subscription management: current plan display, usage statistics, cancel (end-of-billing-period with continued access), and resubscribe.
+- **Backend:** `AdminMetricsService` — DynamoDB cross-user aggregation with paginated full-table scan and CloudWatch `GetMetricData` for operational metrics. Cached in `ADMIN#metrics` item with 15-minute TTL.
+- **Backend:** `admin-metrics` Lambda with dedicated IAM role (DynamoDB CRUD + CloudWatch read)
+- **Backend:** `BillingService._get_customer_for_user()` GSI1 reverse lookup, `get_subscription_details()`, `cancel_subscription()`, `resubscribe()` methods
+- **Backend:** `complete_onboarding_step` operation in dynamodb-api with activity event emission
+- **Backend:** 5 new `ActivityEventType` members: `ONBOARDING_STEP_COMPLETED`, `ONBOARDING_COMPLETED`, `ONBOARDING_SKIPPED`, `SUBSCRIPTION_CANCELLED`, `SUBSCRIPTION_RESUBSCRIBED`
+- **Backend:** `onboarding_completed` and `onboarding_step` user settings fields
+- **Frontend:** Full `features/onboarding/` module — `OnboardingContext`, `useOnboarding` hook, `OnboardingOverlay`, 4 step components, static demo data, barrel exports
+- **Frontend:** `useSubscription` hook for subscription lifecycle management (React Query)
+- **Frontend:** Enhanced `BillingPage` with subscription details, cancel/resubscribe confirmation dialogs, usage stats
+- **Admin SPA:** Auth layer (Cognito service, API client, AuthContext, ProtectedRoute, LoginPage)
+- **Admin SPA:** Dashboard with 7 visualization components (UserGrowthChart, FeatureAdoptionTable, EngagementChart, OnboardingFunnelChart, ConnectionStatsCard, LambdaHealthTable, ApiGatewayChart)
+- **Admin SPA:** MetricCard, DateRangePicker, NavBar, AdminLayout, routing with auth guards
+- **Infra:** S3 bucket (public access blocked) + CloudFront distribution with OAC for admin SPA (conditional on `HasAdmin`)
+- **Infra:** `AdminMetricsFunction` with `/admin/metrics` API route (conditional on `HasAdmin`)
+- **Sync:** Onboarding included in community edition (3 steps, no tier comparison) with dedicated overlays for `OnboardingContext.tsx` and `OnboardingOverlay.tsx`
+- **Sync:** Admin dashboard and Stripe billing excluded from community edition (9 new exclude paths)
+- **Sync:** `dynamodb-api` overlay updated with `complete_onboarding_step` handler (billing operations excluded)
+
+### Fixed
+
+- **Sync:** Community onboarding overlay auto-completes onboarding when final step is reached (prevents infinite re-trigger on page refresh)
+
 ## [1.7.0] - 2026-03-22
 
 ### Added
