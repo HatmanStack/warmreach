@@ -5,6 +5,22 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-03-21
+
+### Added
+
+- **Network Graph Visualization** — Interactive WebGL network graph (`/network`) showing the user's full LinkedIn connection network with force-directed layout (Sigma.js + graphology)
+- **Cluster-grouped layout** — ForceAtlas2 layout respects cluster groupings; switching dimensions (company/industry/location/tags) animates node colors in-place without resetting positions
+- **Deep-link integration** — "View on graph" buttons on ClusterView and WarmIntroPathsView navigate to `/network?cluster=` or `/network?path=` with highlighted nodes/edges
+- **Collapsible sidebar** — Cluster dimension toggle, color legend, search-to-zoom, and ConnectionCard detail panel in a 360px collapsible sidebar
+- **Hover tooltips** — Name, position, company, and relationship strength badge on node hover with viewport-edge-aware positioning
+- **Path highlighting** — Warm intro paths rendered with gold accent color and dimmed surroundings
+- **Backend:** `get_network_graph` bulk endpoint on edge-processing Lambda returning denormalized nodes, edges, and clusters in a single response
+- **Backend:** `batch_get_profile_metadata` on EdgeDataService using DynamoDB BatchGetItem (100 keys per call) replacing N+1 GetItem calls
+- **Backend:** `network_graph_visualization` feature flag gated on paid tier
+- **Frontend:** New `features/network/` module (types, hooks, utils, components) with barrel export
+- **Sync:** Community edition excludes network graph feature via `.sync/config.json` and overlay updates
+
 ## [1.4.0] - 2026-03-20
 
 ### Refactored
