@@ -91,24 +91,6 @@ router.post('/create-post', async (req, res) => {
   }
 });
 
-// Generate personalized message endpoint
-router.post('/generate-personalized-message', async (req, res) => {
-  try {
-    await linkedInInteractionController.generatePersonalizedMessage(req, res);
-  } catch (error) {
-    logger.error('Generate personalized message route error:', error);
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'Internal server error during message generation',
-        details: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
-      },
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
 // Follow profile endpoint
 router.post('/follow-profile', async (req, res) => {
   try {

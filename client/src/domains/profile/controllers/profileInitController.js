@@ -522,35 +522,63 @@ export class ProfileInitController {
 
   /**
    * Transport-agnostic: initialize profile via WebSocket command.
-   * @param {object} payload - { jwtToken, linkedInEmail, linkedInPassword, ... }
+   * Calls the service layer directly instead of simulating an HTTP request.
+   * @param {object} payload - { jwtToken, linkedinCredentialsCiphertext, ... }
    * @param {function} onProgress - progress callback
    */
   async initializeDirect(payload, onProgress) {
-    const fakeReq = {
-      body: payload,
-      jwtToken: payload.jwtToken,
-      headers: { authorization: `Bearer ${payload.jwtToken || ''}` },
-      path: '/profile-init',
-      method: 'POST',
-    };
-    let resultData = null;
-    const fakeRes = {
-      status: (code) => ({
-        json: (data) => {
-          resultData = { statusCode: code, ...data };
-        },
-      }),
-      json: (data) => {
-        resultData = { statusCode: 200, ...data };
-      },
-    };
+    const requestId = this._generateRequestId();
+    const jwtToken = payload.jwtToken;
 
-    await this.performProfileInit(fakeReq, fakeRes, { progressCallback: onProgress });
-    if (resultData?.error) {
-      const err = new Error(resultData.error);
+    if (!jwtToken) {
+      const err = new Error('Missing or invalid Authorization header');
       err.code = 'PROFILE_INIT_ERROR';
       throw err;
     }
-    return resultData;
+
+    const validationResult = this._validateRequest(payload, jwtToken);
+    if (!validationResult.isValid) {
+      const err = new Error(validationResult.error || validationResult.message);
+      err.code = 'PROFILE_INIT_ERROR';
+      throw err;
+    }
+
+    const state = ProfileInitStateManager.buildInitialState({
+      searchName: null,
+      searchPassword: null,
+      credentialsCiphertext: payload.linkedinCredentialsCiphertext,
+      jwtToken,
+      requestId,
+      progressCallback: onProgress,
+    });
+
+    profileInitMonitor.startRequest(requestId, {
+      username: 'not provided',
+      recursionCount: 0,
+      healPhase: undefined,
+      isResuming: ProfileInitStateManager.isResumingState(state),
+    });
+
+    const result = await this.performProfileInitFromState(state);
+
+    if (result === undefined) {
+      profileInitMonitor.recordHealing(requestId, {
+        recursionCount: state.recursionCount,
+        healPhase: state.healPhase,
+        healReason: state.healReason,
+      });
+      return {
+        statusCode: 202,
+        status: 'healing',
+        message: 'Worker process started for healing/recovery.',
+        requestId,
+      };
+    }
+
+    profileInitMonitor.recordSuccess(requestId, result);
+    return {
+      statusCode: 200,
+      ...this._buildSuccessResponse(result, requestId),
+    };
   }
 }

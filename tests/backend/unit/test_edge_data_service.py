@@ -15,9 +15,31 @@ from shared_services.edge_data_service import (
     OPPORTUNITY_OUTCOMES,
     OPPORTUNITY_STAGES,
     EdgeDataService,
+    encode_profile_id,
 )
 
 from errors.exceptions import ExternalServiceError, ValidationError
+
+
+class TestEncodeProfileId:
+    """Tests for encode_profile_id helper."""
+
+    def test_encodes_profile_id(self):
+        result = encode_profile_id('john-doe-123')
+        expected = base64.urlsafe_b64encode(b'john-doe-123').decode()
+        assert result == expected
+
+    def test_round_trip(self):
+        original = 'https://linkedin.com/in/jane-smith'
+        encoded = encode_profile_id(original)
+        decoded = base64.urlsafe_b64decode(encoded).decode()
+        assert decoded == original
+
+    def test_handles_special_characters(self):
+        pid = 'profile/with+special=chars'
+        encoded = encode_profile_id(pid)
+        decoded = base64.urlsafe_b64decode(encoded).decode()
+        assert decoded == pid
 
 
 class TestEdgeDataServiceInit:
@@ -187,15 +209,53 @@ class TestGetConnectionsByStatus:
                 }
             ]
         }
-        mock_table.get_item.return_value = {
-            'Item': {'name': 'John Doe', 'headline': 'Engineer'}
-        }
         service = EdgeDataService(table=mock_table)
+        service.batch_get_profile_metadata = MagicMock(return_value={
+            'dGVzdA==': {'name': 'John Doe', 'headline': 'Engineer'}
+        })
 
         result = service.get_connections_by_status('test-user', 'ally')
 
         assert result['success'] is True
         assert len(result['connections']) == 1
+        service.batch_get_profile_metadata.assert_called_once_with(['dGVzdA=='])
+
+    def test_empty_edges_skips_batch_fetch(self):
+        mock_table = MagicMock()
+        mock_table.query.return_value = {'Items': []}
+        service = EdgeDataService(table=mock_table)
+        service.batch_get_profile_metadata = MagicMock(return_value={})
+
+        result = service.get_connections_by_status('test-user', 'ally')
+
+        assert result['success'] is True
+        assert result['connections'] == []
+        service.batch_get_profile_metadata.assert_not_called()
+
+    def test_missing_profile_metadata_uses_empty_dict(self):
+        mock_table = MagicMock()
+        mock_table.query.return_value = {
+            'Items': [
+                {
+                    'PK': 'USER#test-user',
+                    'SK': 'PROFILE#dGVzdA==',
+                    'status': 'ally',
+                    'addedAt': '2024-01-01',
+                    'messages': [],
+                }
+            ]
+        }
+        service = EdgeDataService(table=mock_table)
+        # Simulate missing profile in batch result
+        service.batch_get_profile_metadata = MagicMock(return_value={})
+
+        result = service.get_connections_by_status('test-user', 'ally')
+
+        assert result['success'] is True
+        assert len(result['connections']) == 1
+        conn = result['connections'][0]
+        assert conn['first_name'] == ''
+        assert conn['last_name'] == ''
 
 
 class TestQueryAllUserEdges:

@@ -4,8 +4,7 @@ import { afterEach, vi, beforeAll, afterAll } from 'vitest';
 import { server } from './test-utils/msw/server';
 
 // MSW Setup
-// TODO: Switch to 'error' once all test HTTP calls have MSW handlers
-beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }));
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterAll(() => server.close());
 
 // Cleanup after each test

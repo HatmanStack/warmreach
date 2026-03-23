@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 import React, { type ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { createWrapper } from './queryWrapper';
 import { AuthContext, type User, type AuthContextType } from '@/features/auth/contexts/AuthContext';
 import { UserProfileProvider } from '@/features/profile/contexts/UserProfileContext';
@@ -138,11 +139,13 @@ export function createAuthenticatedWrapper(authOverrides: Partial<AuthContextTyp
 
   return ({ children }: { children: ReactNode }) => (
     <QueryWrapper>
-      <AuthContext.Provider value={mockAuthValue}>
-        <TierProvider>
-          <UserProfileProvider>{children}</UserProfileProvider>
-        </TierProvider>
-      </AuthContext.Provider>
+      <MemoryRouter>
+        <AuthContext.Provider value={mockAuthValue}>
+          <TierProvider>
+            <UserProfileProvider>{children}</UserProfileProvider>
+          </TierProvider>
+        </AuthContext.Provider>
+      </MemoryRouter>
     </QueryWrapper>
   );
 }

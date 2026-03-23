@@ -1,14 +1,3 @@
-/**
- * @fileoverview Core TypeScript interfaces and types for the Connection Management System
- *
- * This file contains the essential types and interfaces used throughout
- * the connection management system. It provides type safety for components, services,
- * and API interactions while maintaining consistency across the application.
- *
- * @author Connection Management System
- * @version 2.0.0
- */
-
 // =============================================================================
 // BRANDED TYPES - Nominal typing for ID safety
 // =============================================================================

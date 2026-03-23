@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { z } from 'zod';
 import { httpClient } from './httpClient';
 import { server } from '@/test-utils';
 import { http, HttpResponse } from 'msw';
@@ -183,5 +184,69 @@ describe('HttpClient', () => {
     const result = await httpClient.makeRequest('edges', 'op');
     expect(result.success).toBe(true);
     expect(result.data).toBeUndefined();
+  });
+
+  describe('Zod schema validation', () => {
+    const testSchema = z.object({
+      name: z.string(),
+      count: z.number(),
+    });
+
+    it('should validate response with Zod schema when provided', async () => {
+      server.use(
+        http.get('*/schema-test', () => {
+          return HttpResponse.json({ name: 'test', count: 42 });
+        })
+      );
+
+      const result = await httpClient.get('schema-test', { schema: testSchema });
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ name: 'test', count: 42 });
+    });
+
+    it('should fail when response does not match Zod schema', async () => {
+      server.use(
+        http.get('*/schema-fail', () => {
+          return HttpResponse.json({ name: 'test', count: 'not-a-number' });
+        })
+      );
+
+      const result = await httpClient.get('schema-fail', { schema: testSchema });
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('Response validation failed');
+      expect(result.error?.code).toBe('SCHEMA_VALIDATION_ERROR');
+    });
+
+    it('should validate lambda-wrapped response with schema', async () => {
+      server.use(
+        http.post('*/schema-lambda', () => {
+          return HttpResponse.json({
+            statusCode: 200,
+            body: JSON.stringify({ name: 'lambda', count: 7 }),
+          });
+        })
+      );
+
+      const result = await httpClient.makeRequest(
+        'schema-lambda',
+        'op',
+        {},
+        { schema: testSchema }
+      );
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ name: 'lambda', count: 7 });
+    });
+
+    it('should work without schema (backward compatible)', async () => {
+      server.use(
+        http.get('*/no-schema', () => {
+          return HttpResponse.json({ arbitrary: 'data' });
+        })
+      );
+
+      const result = await httpClient.get<{ arbitrary: string }>('no-schema');
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ arbitrary: 'data' });
+    });
   });
 });

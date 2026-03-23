@@ -1,6 +1,5 @@
 """DynamoDBApiService - Business logic for user profile and settings operations."""
 
-import base64
 import ipaddress
 import logging
 import socket
@@ -11,6 +10,7 @@ from urllib.parse import urlparse
 
 from botocore.exceptions import ClientError
 from shared_services.base_service import BaseService
+from shared_services.edge_data_service import encode_profile_id
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,7 @@ class DynamoDBApiService(BaseService):
         profile_id = body.get('profileId')
         if not profile_id:
             return {'error': 'profileId is required'}
-        profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+        profile_id_b64 = encode_profile_id(profile_id)
 
         updates = body.get('updates', {})
         current_time = datetime.now(UTC).isoformat()
@@ -203,7 +203,7 @@ class DynamoDBApiService(BaseService):
         if picture_url and (len(picture_url) > 500 or not self._is_safe_url(picture_url)):
             return {'error': 'Invalid profilePictureUrl'}
 
-        profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+        profile_id_b64 = encode_profile_id(profile_id)
 
         self.table.update_item(
             Key={'PK': f'PROFILE#{profile_id_b64}', 'SK': '#METADATA'},

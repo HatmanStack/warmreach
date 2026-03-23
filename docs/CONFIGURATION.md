@@ -99,12 +99,28 @@ These variables are set by the SAM template at deploy time, not in `.env`.
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID. SAM template default: `us.meta.llama3-2-90b-instruct-v1:0`. Code fallback in `llm_service.py`: `anthropic.claude-3-sonnet-20240229-v1:0` (used when env var is unset). The SAM-deployed value takes precedence at runtime. | `us.meta.llama3-2-90b-instruct-v1:0` |
 | `DYNAMODB_TABLE_NAME` | DynamoDB table name (SAM-managed, set by `!Ref ProfilesTable`) | |
 | `COMMAND_RATE_LIMIT_MAX` | Max commands per minute per user | `10` |
-| `DEV_MODE` | When `true`, enables test user ID fallback in edge-processing (bypasses JWT user extraction). Do not enable in production. | `false` |
+| `DEV_MODE` | When `true`, enables test user ID fallback in edge-processing (bypasses JWT user extraction). Manually set if needed; not in template.yaml. Do not enable in production. | `false` |
 | `COGNITO_USER_POOL_ID` | Cognito user pool ID for JWT validation | |
 | `COGNITO_REGION` | AWS region for Cognito | `us-east-1` |
 | `WEBSOCKET_ENDPOINT` | WebSocket API endpoint URL | |
 | `ALLOWED_ORIGINS` | CORS allowed origins | |
 | `LOG_LEVEL` | Lambda log level | `INFO` |
+| `ADMIN_USER_SUB` | Cognito user sub for admin access gating (admin-metrics Lambda) | |
+| `HTTP_API_ID` | API Gateway HTTP API ID for CloudWatch metric scoping (admin-metrics Lambda) | |
+| `SES_SENDER_EMAIL` | SES verified sender email (digest-per-user Lambda) | `noreply@warmreach.app` |
+| `UNSUBSCRIBE_BASE_URL` | Base URL for email unsubscribe links (digest-per-user Lambda) | `https://warmreach.app/unsubscribe` |
+| `UNSUBSCRIBE_SECRET` | HMAC secret for unsubscribe link validation (digest-per-user Lambda). Required. | |
+| `DIGEST_PER_USER_FUNCTION_NAME` | Lambda function name for fan-out invocation (digest-coordinator Lambda) | |
+| `STRIPE_SECRET_KEY_ARN` | SSM ARN for Stripe secret key (stripe-webhook Lambda) | |
+| `STRIPE_WEBHOOK_SECRET_ARN` | SSM ARN for Stripe webhook secret (stripe-webhook Lambda) | |
+| `COGNITO_CLIENT_ID` | Cognito app client ID for JWT audience validation (websocket-connect Lambda) | |
+
+### Client Environment
+These variables are used by the client Express backend.
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `REDIS_URL` | Optional Redis URL for distributed rate limiting. Falls back to in-memory rate limiting when unset. | _(in-memory)_ |
+| `ALLOW_DEV_AUTH_BYPASS` | When `true` (and `NODE_ENV=development`), enables dev auth bypass for testing. Do not enable in production. | `false` |
 
 This guide covers the most important variables. See `.env.example` for the complete list, including all interaction timing, retry, debugging, and feature toggle variables.
 

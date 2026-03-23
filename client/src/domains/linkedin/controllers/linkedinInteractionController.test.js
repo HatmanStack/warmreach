@@ -215,4 +215,58 @@ describe('LinkedInInteractionController', () => {
       );
     });
   });
+
+  describe('_withAuthenticatedSession', () => {
+    it('should exist as a method on the controller', () => {
+      expect(typeof controller._withAuthenticatedSession).toBe('function');
+    });
+
+    it('should return an async function', () => {
+      const wrapped = controller._withAuthenticatedSession('testOp', vi.fn());
+      expect(typeof wrapped).toBe('function');
+    });
+
+    it('should return error response when JWT is invalid', async () => {
+      validateJwt.mockReturnValue({ valid: false, reason: 'expired' });
+      LinkedInErrorHandler.createErrorResponse.mockReturnValue({
+        response: { error: 'JWT invalid' },
+        httpStatus: 401,
+      });
+
+      const handler = vi.fn();
+      const wrapped = controller._withAuthenticatedSession('testOp', handler);
+      await wrapped(mockReq, mockRes);
+
+      expect(mockRes.status).toHaveBeenCalledWith(401);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('should call handler with context on valid JWT', async () => {
+      const handler = vi.fn();
+      const wrapped = controller._withAuthenticatedSession('testOp', handler);
+      await wrapped(mockReq, mockRes);
+
+      expect(handler).toHaveBeenCalledWith(
+        mockReq,
+        mockRes,
+        expect.objectContaining({
+          requestId: expect.any(String),
+          userId: 'user-123',
+        })
+      );
+    });
+
+    it('should catch handler errors and return error response', async () => {
+      LinkedInErrorHandler.createErrorResponse.mockReturnValue({
+        response: { error: 'Something broke' },
+        httpStatus: 500,
+      });
+
+      const handler = vi.fn().mockRejectedValue(new Error('boom'));
+      const wrapped = controller._withAuthenticatedSession('testOp', handler);
+      await wrapped(mockReq, mockRes);
+
+      expect(mockRes.status).toHaveBeenCalledWith(500);
+    });
+  });
 });

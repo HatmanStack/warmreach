@@ -21,6 +21,9 @@ const config: KnipConfig = {
         'src/credentials/settingsPreload.js',
       ],
     },
+    admin: {
+      project: ['src/**/*.{ts,tsx}'],
+    },
   },
   ignore: [
     '.sync/**',

@@ -12,6 +12,7 @@ import uuid
 
 import boto3
 from shared_services.activity_writer import write_activity
+from shared_services.observability import setup_correlation_context
 from shared_services.request_utils import api_response, extract_user_id
 
 logger = logging.getLogger()
@@ -38,8 +39,6 @@ class RateLimitUnavailableError(Exception):
 
 
 def lambda_handler(event, context):
-    from shared_services.observability import setup_correlation_context
-
     setup_correlation_context(event, context)
 
     http_method = (event.get('httpMethod') or event.get('requestContext', {}).get('http', {}).get('method', '')).upper()

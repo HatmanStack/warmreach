@@ -259,21 +259,21 @@ class IngestionService:
         """
         Poll for document indexing completion.
 
-        Synchronous polling in Lambda. Max block time: 15 seconds.
+        Synchronous polling in Lambda. Max block time bounded by timeout.
         WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
         Consider Step Functions for long-running operations.
 
         Args:
             document_id: Document ID to check
-            timeout: Maximum seconds to wait (default reduced from 60 to 15)
+            timeout: Maximum seconds to wait (default 15)
 
         Returns:
             Status dict with current state
         """
-        start_time = time.time()
+        start_time = time.monotonic()
         poll_interval = 2.0
 
-        while time.time() - start_time < timeout:
+        while time.monotonic() - start_time < timeout:
             try:
                 status = self.client.get_document_status(document_id)
 
@@ -291,7 +291,7 @@ class IngestionService:
                         'error': status.get('error', 'Indexing failed'),
                     }
 
-                # Still pending, continue polling
+                # Still pending/processing, continue polling
                 logger.debug(f'Document {document_id} status: {status["status"]}')
                 time.sleep(poll_interval)
 
@@ -299,10 +299,10 @@ class IngestionService:
                 logger.warning(f'Error checking document status: {e}')
                 time.sleep(poll_interval)
 
-        # Timeout reached, return pending status
-        logger.warning(f'Indexing timeout for document {document_id}')
+        # Timeout reached
+        logger.warning(f'Indexing timeout for {document_id} after {timeout}s')
         return {
-            'status': 'pending',
+            'status': 'timeout',
             'documentId': document_id,
             'error': None,
         }

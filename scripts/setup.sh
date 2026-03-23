@@ -19,6 +19,7 @@ check_command node
 check_command npm
 check_command docker
 check_command python3
+check_command uv
 
 echo ""
 echo "Installing root dependencies..."
@@ -41,7 +42,7 @@ echo "Setting up Python test environment..."
 if [ ! -d "tests/backend/.venv" ]; then
   python3 -m venv tests/backend/.venv
 fi
-(cd tests/backend && . .venv/bin/activate && pip install -r requirements-test.txt -q)
+(cd tests/backend && . .venv/bin/activate && uv pip install -r requirements-test.txt -q)
 
 echo ""
 echo "Setting up environment file..."

@@ -9,6 +9,7 @@ import { logger } from '#utils/logger.js';
  */
 export class BurstThrottleManager {
   constructor(options = {}) {
+    this._random = options.randomFn || Math.random;
     this.minBurstSize = options.minBurstSize ?? 10;
     this.maxBurstSize = options.maxBurstSize ?? 15;
     this.minDelayMs = options.minDelayMs ?? 3000;
@@ -85,7 +86,7 @@ export class BurstThrottleManager {
   }
 
   _randomInt(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
+    return Math.floor(this._random() * (max - min + 1)) + min;
   }
 
   _sleep(ms) {

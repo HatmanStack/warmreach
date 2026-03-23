@@ -144,4 +144,49 @@ describe('BurstThrottleManager', () => {
       }
     });
   });
+
+  describe('seedable PRNG', () => {
+    it('produces deterministic delays with fixed randomFn', async () => {
+      const manager = new BurstThrottleManager({
+        randomFn: () => 0.5,
+        minBurstSize: 100,
+        maxBurstSize: 100,
+        minDelayMs: 1000,
+        maxDelayMs: 5000,
+      });
+
+      const p1 = manager.waitForNext();
+      vi.advanceTimersByTime(5000);
+      const r1 = await p1;
+
+      const p2 = manager.waitForNext();
+      vi.advanceTimersByTime(5000);
+      const r2 = await p2;
+
+      // With randomFn returning 0.5, delay = floor(0.5 * (5000 - 1000 + 1)) + 1000 = 3000
+      expect(r1.delayMs).toBe(3000);
+      expect(r2.delayMs).toBe(3000);
+    });
+
+    it('produces deterministic burst sizes with fixed randomFn', () => {
+      const manager = new BurstThrottleManager({
+        randomFn: () => 0.0,
+        minBurstSize: 10,
+        maxBurstSize: 20,
+      });
+      // With randomFn returning 0.0, burst size = floor(0.0 * 11) + 10 = 10
+      expect(manager.getStatus().currentBurstSize).toBe(10);
+    });
+
+    it('defaults to Math.random when randomFn is not provided', () => {
+      const manager = new BurstThrottleManager({
+        minBurstSize: 5,
+        maxBurstSize: 100,
+      });
+      // Without fixed randomFn, burst size should still be within range
+      const size = manager.getStatus().currentBurstSize;
+      expect(size).toBeGreaterThanOrEqual(5);
+      expect(size).toBeLessThanOrEqual(100);
+    });
+  });
 });

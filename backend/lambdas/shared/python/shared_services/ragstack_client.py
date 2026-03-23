@@ -33,25 +33,17 @@ def _get_cb_table():
 class RAGStackError(Exception):
     """Base exception for RAGStack client errors"""
 
-    pass
-
 
 class RAGStackAuthError(RAGStackError):
     """Authentication error (invalid API key)"""
-
-    pass
 
 
 class RAGStackNetworkError(RAGStackError):
     """Network/connection error"""
 
-    pass
-
 
 class RAGStackGraphQLError(RAGStackError):
     """GraphQL query/mutation error"""
-
-    pass
 
 
 class RAGStackClient:

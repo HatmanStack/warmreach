@@ -1,6 +1,7 @@
 """Unit tests for LLMService class (TDD)."""
 from unittest.mock import MagicMock
 
+import openai
 import pytest
 
 
@@ -92,19 +93,50 @@ class TestGenerateIdeas:
         call_args = mock_openai_client.responses.create.call_args
         assert 'input' in call_args[1]
 
-    def test_generate_ideas_handles_api_error(self, service, mock_openai_client):
-        """Should handle OpenAI API errors gracefully."""
-        mock_openai_client.responses.create.side_effect = Exception('API error')
-
-        result = service.generate_ideas(
-            user_profile={},
-            prompt='test',
-            job_id='job-123',
-            user_id='user-456'
+    def test_generate_ideas_raises_external_service_error_on_api_error(self, service, mock_openai_client):
+        """Should raise ExternalServiceError on OpenAI API failure."""
+        from errors.exceptions import ExternalServiceError
+        mock_openai_client.responses.create.side_effect = openai.APIError(
+            message='API error', request=MagicMock(), body=None
         )
 
-        assert result['success'] is False
-        assert 'error' in result
+        with pytest.raises(ExternalServiceError) as exc_info:
+            service.generate_ideas(
+                user_profile={},
+                prompt='test',
+                job_id='job-123',
+                user_id='user-456'
+            )
+
+        assert exc_info.value.details['service'] == 'OpenAI'
+
+    def test_generate_ideas_raises_service_error_on_unexpected_error(self, service, mock_openai_client):
+        """Should raise ServiceError on unexpected failures."""
+        from errors.exceptions import ServiceError
+        mock_openai_client.responses.create.side_effect = RuntimeError('Unexpected')
+
+        with pytest.raises(ServiceError):
+            service.generate_ideas(
+                user_profile={},
+                prompt='test',
+                job_id='job-123',
+                user_id='user-456'
+            )
+
+    def test_generate_ideas_raises_external_service_error_on_timeout(self, service, mock_openai_client):
+        """Should raise ExternalServiceError on OpenAI timeout."""
+        from errors.exceptions import ExternalServiceError
+        mock_openai_client.responses.create.side_effect = openai.APITimeoutError(request=MagicMock())
+
+        with pytest.raises(ExternalServiceError) as exc_info:
+            service.generate_ideas(
+                user_profile={},
+                prompt='test',
+                job_id='job-123',
+                user_id='user-456'
+            )
+
+        assert exc_info.value.details['service'] == 'OpenAI'
 
 
 class TestResearchSelectedIdeas:
@@ -122,16 +154,16 @@ class TestResearchSelectedIdeas:
         assert 'job_id' in result
         assert len(result['job_id']) > 0
 
-    def test_research_ideas_empty_list_fails(self, service):
-        """Should fail with empty ideas list."""
-        result = service.research_selected_ideas(
-            user_data={},
-            selected_ideas=[],
-            user_id='user-123'
-        )
+    def test_research_ideas_empty_list_raises_validation_error(self, service):
+        """Should raise ValidationError with empty ideas list."""
+        from errors.exceptions import ValidationError
 
-        assert result['success'] is False
-        assert 'error' in result
+        with pytest.raises(ValidationError):
+            service.research_selected_ideas(
+                user_data={},
+                selected_ideas=[],
+                user_id='user-123'
+            )
 
     def test_research_ideas_calls_openai_with_web_search(self, service, mock_openai_client):
         """Should use OpenAI with web search tool."""
@@ -199,18 +231,18 @@ class TestSynthesizeResearch:
         assert result['content'] == 'Synthesized post content'
 
     def test_synthesize_requires_job_id(self, service):
-        """Should require job_id."""
-        result = service.synthesize_research(
-            research_content='test',
-            post_content='test',
-            ideas_content=[],
-            user_profile={},
-            job_id=None,
-            user_id='user-123'
-        )
+        """Should raise ValidationError when job_id is missing."""
+        from errors.exceptions import ValidationError
 
-        assert result['success'] is False
-        assert 'job_id' in result.get('error', '').lower()
+        with pytest.raises(ValidationError, match='job_id'):
+            service.synthesize_research(
+                research_content='test',
+                post_content='test',
+                ideas_content=[],
+                user_profile={},
+                job_id=None,
+                user_id='user-123'
+            )
 
 
 class TestSanitizePrompt:
@@ -303,17 +335,31 @@ class TestGenerateMessage:
         assert result['confidence'] > 0
         mock_openai_client.responses.create.assert_called_once()
 
-    def test_generate_message_handles_api_error(self, service, mock_openai_client):
-        """Should handle OpenAI API errors gracefully."""
-        mock_openai_client.responses.create.side_effect = Exception('API error')
-
-        result = service.generate_message(
-            connection_profile={'firstName': 'John', 'lastName': 'Doe', 'position': 'Eng', 'company': 'Co'},
-            conversation_topic='test topic',
+    def test_generate_message_raises_external_service_error_on_api_error(self, service, mock_openai_client):
+        """Should raise ExternalServiceError on OpenAI API failure."""
+        from errors.exceptions import ExternalServiceError
+        mock_openai_client.responses.create.side_effect = openai.APIError(
+            message='API error', request=MagicMock(), body=None
         )
 
-        assert result['generatedMessage'] == ''
-        assert 'error' in result
+        with pytest.raises(ExternalServiceError) as exc_info:
+            service.generate_message(
+                connection_profile={'firstName': 'John', 'lastName': 'Doe', 'position': 'Eng', 'company': 'Co'},
+                conversation_topic='test topic',
+            )
+
+        assert exc_info.value.details['service'] == 'OpenAI'
+
+    def test_generate_message_raises_service_error_on_unexpected(self, service, mock_openai_client):
+        """Should raise ServiceError on unexpected errors."""
+        from errors.exceptions import ServiceError
+        mock_openai_client.responses.create.side_effect = RuntimeError('Unexpected')
+
+        with pytest.raises(ServiceError):
+            service.generate_message(
+                connection_profile={'firstName': 'John', 'lastName': 'Doe', 'position': 'Eng', 'company': 'Co'},
+                conversation_topic='test topic',
+            )
 
     def test_generate_message_handles_empty_response(self, service, mock_openai_client):
         """Should handle empty OpenAI response."""
@@ -515,3 +561,76 @@ class TestResearchPolling:
 
         # Should not crash from format injection
         assert 'success' in result
+
+
+class TestAnalyzeToneErrorHandling:
+    """Tests for analyze_tone OpenAI exception handling."""
+
+    def test_analyze_tone_raises_external_service_error_on_api_error(self, service, mock_openai_client):
+        """Should raise ExternalServiceError on OpenAI API failure."""
+        from errors.exceptions import ExternalServiceError
+
+        mock_openai_client.responses.create.side_effect = openai.APIError(
+            message='API error', request=MagicMock(), body=None
+        )
+
+        with pytest.raises(ExternalServiceError) as exc_info:
+            service.analyze_tone(
+                draft_text='Hello, I would love to connect!',
+                recipient_name='Jane Doe',
+                recipient_position='Engineer',
+                relationship_status='ally',
+            )
+
+        assert exc_info.value.details['service'] == 'OpenAI'
+
+    def test_analyze_tone_raises_external_service_error_on_timeout(self, service, mock_openai_client):
+        """Should raise ExternalServiceError on OpenAI timeout."""
+        from errors.exceptions import ExternalServiceError
+
+        mock_openai_client.responses.create.side_effect = openai.APITimeoutError(request=MagicMock())
+
+        with pytest.raises(ExternalServiceError) as exc_info:
+            service.analyze_tone(
+                draft_text='Test message',
+                recipient_name='Test',
+                recipient_position='Test',
+                relationship_status='ally',
+            )
+
+        assert exc_info.value.details['service'] == 'OpenAI'
+
+    def test_analyze_tone_raises_external_service_error_on_rate_limit(self, service, mock_openai_client):
+        """Should raise ExternalServiceError on OpenAI rate limit."""
+        from errors.exceptions import ExternalServiceError
+
+        mock_openai_client.responses.create.side_effect = openai.RateLimitError(
+            message='Rate limited', response=MagicMock(), body=None
+        )
+
+        with pytest.raises(ExternalServiceError) as exc_info:
+            service.analyze_tone(
+                draft_text='Test message',
+                recipient_name='Test',
+                recipient_position='Test',
+                relationship_status='ally',
+            )
+
+        assert exc_info.value.details['service'] == 'OpenAI'
+
+    def test_analyze_tone_raises_service_error_on_unexpected_error(self, service, mock_openai_client):
+        """Should raise ServiceError (not ExternalServiceError) on non-OpenAI errors."""
+        from errors.exceptions import ExternalServiceError, ServiceError
+
+        mock_openai_client.responses.create.side_effect = RuntimeError('Unexpected')
+
+        with pytest.raises(ServiceError) as exc_info:
+            service.analyze_tone(
+                draft_text='Test message',
+                recipient_name='Test',
+                recipient_position='Test',
+                relationship_status='ally',
+            )
+
+        # Should be a generic ServiceError, NOT ExternalServiceError
+        assert not isinstance(exc_info.value, ExternalServiceError)

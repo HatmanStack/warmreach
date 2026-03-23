@@ -16,6 +16,12 @@ from shared_services.dynamodb_types import ProfileMetadataItem
 
 logger = logging.getLogger(__name__)
 
+
+def encode_profile_id(profile_id: str) -> str:
+    """URL-safe base64 encode a profile ID for use as a DynamoDB key component."""
+    return base64.urlsafe_b64encode(profile_id.encode()).decode()
+
+
 # Statuses that trigger RAGStack ingestion
 INGESTION_TRIGGER_STATUSES = {'outgoing', 'ally', 'followed'}
 
@@ -48,6 +54,7 @@ class EdgeDataService(BaseService):
     ):
         super().__init__()
         self.table = table
+        self._dynamodb_resource = boto3.resource('dynamodb')
         self.ragstack_endpoint = ragstack_endpoint
         self.ragstack_api_key = ragstack_api_key
         self.ragstack_client = ragstack_client
@@ -58,7 +65,7 @@ class EdgeDataService(BaseService):
     ) -> dict[str, Any]:
         """Create or update edge status (idempotent upsert)."""
         try:
-            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            profile_id_b64 = encode_profile_id(profile_id)
             current_time = datetime.now(UTC).isoformat()
 
             user_profile_edge = {
@@ -139,7 +146,7 @@ class EdgeDataService(BaseService):
             raise ValidationError('Message is required', field='message')
 
         try:
-            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            profile_id_b64 = encode_profile_id(profile_id)
             current_time = datetime.now(UTC).isoformat()
             key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'}
 
@@ -175,7 +182,7 @@ class EdgeDataService(BaseService):
     def update_messages(self, user_id: str, profile_id: str, messages: list) -> dict[str, Any]:
         """Replace the full messages list on an edge."""
         try:
-            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            profile_id_b64 = encode_profile_id(profile_id)
             current_time = datetime.now(UTC).isoformat()
             trimmed = messages[-MAX_MESSAGES_PER_EDGE:] if messages else []
 
@@ -201,13 +208,22 @@ class EdgeDataService(BaseService):
         try:
             edges = self._query_all_gsi1_edges(user_id, status) if status else self._query_all_user_edges(user_id)
 
+            # Collect all profile IDs and batch-fetch metadata in one call
+            profile_ids = []
+            for edge_item in edges:
+                profile_id = edge_item['SK'].replace('PROFILE#', '')
+                if profile_id:
+                    profile_ids.append(profile_id)
+
+            profile_metadata = self.batch_get_profile_metadata(profile_ids) if profile_ids else {}
+
             connections = []
             for edge_item in edges:
                 profile_id = edge_item['SK'].replace('PROFILE#', '')
                 if not profile_id:
                     continue
 
-                profile_data = self._get_profile_metadata(profile_id)
+                profile_data = profile_metadata.get(profile_id, {})
                 connection = self._format_connection_object(profile_id, profile_data, edge_item)
                 connections.append(connection)
 
@@ -222,7 +238,7 @@ class EdgeDataService(BaseService):
     def get_messages(self, user_id: str, profile_id: str) -> dict[str, Any]:
         """Get message history for an edge."""
         try:
-            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            profile_id_b64 = encode_profile_id(profile_id)
             response = self.table.get_item(Key={'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'})
 
             if 'Item' not in response:
@@ -243,7 +259,7 @@ class EdgeDataService(BaseService):
     def check_exists(self, user_id: str, profile_id: str) -> dict[str, Any]:
         """Check if an edge exists between user and profile."""
         try:
-            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            profile_id_b64 = encode_profile_id(profile_id)
             response = self.table.get_item(Key={'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'})
 
             edge_exists = 'Item' in response
@@ -324,7 +340,7 @@ class EdgeDataService(BaseService):
             return results
 
         table_name = self.table.table_name
-        dynamodb = boto3.resource('dynamodb')
+        dynamodb = self._dynamodb_resource
         # Process in chunks of 100 (BatchGetItem limit)
         for i in range(0, len(profile_ids), 100):
             chunk = profile_ids[i : i + 100]
@@ -354,7 +370,7 @@ class EdgeDataService(BaseService):
             raise ValidationError(f'Note content exceeds {MAX_NOTE_LENGTH} characters', field='content')
 
         try:
-            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            profile_id_b64 = encode_profile_id(profile_id)
             current_time = datetime.now(UTC).isoformat()
             key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'}
 
@@ -398,7 +414,7 @@ class EdgeDataService(BaseService):
             raise ValidationError(f'Note content exceeds {MAX_NOTE_LENGTH} characters', field='content')
 
         try:
-            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            profile_id_b64 = encode_profile_id(profile_id)
             current_time = datetime.now(UTC).isoformat()
             key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'}
 
@@ -435,7 +451,7 @@ class EdgeDataService(BaseService):
     def delete_note(self, user_id: str, profile_id: str, note_id: str) -> dict[str, Any]:
         """Delete a note from an edge."""
         try:
-            profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+            profile_id_b64 = encode_profile_id(profile_id)
             current_time = datetime.now(UTC).isoformat()
             key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'}
 

@@ -44,8 +44,6 @@ Server runs at `http://localhost:3001`
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/search/` | Execute LinkedIn search with company/role filters |
-| GET | `/search/results` | Retrieve stored search results |
-| GET | `/search/health` | Search service health check |
 
 ### Profile Initialization
 
@@ -62,7 +60,6 @@ Server runs at `http://localhost:3001`
 | POST | `/linkedin-interactions/add-connection` | Send connection request |
 | POST | `/linkedin-interactions/create-post` | Create LinkedIn post |
 | POST | `/linkedin-interactions/follow-profile` | Follow a profile |
-| POST | `/linkedin-interactions/generate-personalized-message` | Generate AI message |
 | GET | `/linkedin-interactions/session-status` | Browser session status |
 
 ### Heal & Restore

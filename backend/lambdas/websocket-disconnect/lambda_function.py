@@ -7,6 +7,7 @@ import logging
 import os
 
 import boto3
+from shared_services.observability import setup_correlation_context
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
@@ -18,8 +19,6 @@ table = dynamodb.Table(TABLE_NAME)
 
 
 def lambda_handler(event, context):
-    from shared_services.observability import setup_correlation_context
-
     setup_correlation_context(event, context)
 
     connection_id = event['requestContext']['connectionId']

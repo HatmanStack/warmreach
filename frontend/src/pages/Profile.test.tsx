@@ -1,6 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
 import Profile from './Profile';
 import { createAuthenticatedWrapper } from '@/test-utils';
 import * as csvExport from '@/features/connections/utils/csvExport';
@@ -29,11 +28,9 @@ describe('Profile page', () => {
 
   const renderProfile = () =>
     render(
-      <MemoryRouter>
-        <AuthenticatedWrapper>
-          <Profile />
-        </AuthenticatedWrapper>
-      </MemoryRouter>
+      <AuthenticatedWrapper>
+        <Profile />
+      </AuthenticatedWrapper>
     );
 
   it('should render the export section', () => {

@@ -362,3 +362,86 @@ class TestValidateJwt:
             claims = module._validate_jwt(token)
 
         assert claims is None
+
+    def test_valid_token_with_matching_client_id(self):
+        """Valid JWT with matching client_id should succeed."""
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'client_id': 'test-client-id',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm='RS256',
+            headers={'kid': kid}
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks), \
+             patch.dict(os.environ, {'COGNITO_CLIENT_ID': 'test-client-id'}):
+            claims = module._validate_jwt(token)
+
+        assert claims is not None
+        assert claims['sub'] == 'user-123'
+
+    def test_valid_token_with_wrong_client_id_returns_none(self):
+        """Valid JWT with wrong client_id should return None."""
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'client_id': 'wrong-client-id',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm='RS256',
+            headers={'kid': kid}
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks), \
+             patch.dict(os.environ, {'COGNITO_CLIENT_ID': 'expected-client-id'}):
+            claims = module._validate_jwt(token)
+
+        assert claims is None
+
+    def test_valid_token_without_client_id_check_succeeds(self):
+        """Valid JWT should succeed when COGNITO_CLIENT_ID env var is not set (backward compat)."""
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'client_id': 'any-client-id',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm='RS256',
+            headers={'kid': kid}
+        )
+
+        env_copy = os.environ.copy()
+        env_copy.pop('COGNITO_CLIENT_ID', None)
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks), \
+             patch.dict(os.environ, env_copy, clear=True):
+            claims = module._validate_jwt(token)
+
+        assert claims is not None
+        assert claims['sub'] == 'user-123'

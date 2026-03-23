@@ -1,4 +1,5 @@
 import axios, { type AxiosInstance, type AxiosResponse, type AxiosError } from 'axios';
+import { type ZodType } from 'zod';
 import { CognitoAuthService } from '@/features/auth';
 import { createLogger } from '@/shared/utils/logger';
 import { ApiError } from '@/shared/utils/apiError';
@@ -95,7 +96,9 @@ class HttpClient {
     }
   }
 
-  private unwrapLambdaResponse<T>(responseData: unknown): T {
+  private unwrapLambdaResponse<T>(responseData: unknown, schema?: ZodType<T>): T {
+    let result: unknown;
+
     if (responseData && typeof responseData === 'object' && 'statusCode' in responseData) {
       const lambdaResponse = responseData as { statusCode: number; body: unknown };
 
@@ -115,14 +118,26 @@ class HttpClient {
         });
       }
 
-      const parsedBody =
+      result =
         typeof lambdaResponse.body === 'string'
           ? JSON.parse(lambdaResponse.body as string)
           : lambdaResponse.body;
-
-      return parsedBody as T;
+    } else {
+      result = responseData;
     }
-    return responseData as unknown as T;
+
+    if (schema) {
+      try {
+        return schema.parse(result);
+      } catch (e) {
+        throw new ApiError({
+          message: `Response validation failed: ${e instanceof Error ? e.message : 'Unknown validation error'}`,
+          status: 502,
+          code: 'SCHEMA_VALIDATION_ERROR',
+        });
+      }
+    }
+    return result as unknown as T;
   }
 
   private sleep(ms: number): Promise<void> {
@@ -136,7 +151,8 @@ class HttpClient {
   private async executeWithRetry<T>(
     requestFn: () => Promise<AxiosResponse<ApiResponse<T>>>,
     logDetails: { endpoint: string; operation?: string; params?: unknown },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    schema?: ZodType<T>
   ): Promise<ApiResult<T>> {
     let lastApiError: ApiError | null = null;
 
@@ -150,7 +166,7 @@ class HttpClient {
 
       try {
         const response = await requestFn();
-        const data = this.unwrapLambdaResponse<T>(response.data);
+        const data = this.unwrapLambdaResponse<T>(response.data, schema);
         return { success: true, data };
       } catch (error) {
         if (error instanceof Error && error.name === 'CanceledError') {
@@ -207,7 +223,7 @@ class HttpClient {
     endpoint: string,
     operation: string,
     params: Record<string, unknown> = {},
-    options: { signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal; schema?: ZodType<T> } = {}
   ): Promise<ApiResult<T>> {
     return this.executeWithRetry<T>(
       () =>
@@ -217,30 +233,33 @@ class HttpClient {
           { signal: options.signal }
         ),
       { endpoint, operation, params: Object.keys(params) },
-      options.signal
+      options.signal,
+      options.schema
     );
   }
 
   public async get<T>(
     endpoint: string,
-    options: { signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal; schema?: ZodType<T> } = {}
   ): Promise<ApiResult<T>> {
     return this.executeWithRetry<T>(
       () => this.apiClient.get<ApiResponse<T>>(endpoint, { signal: options.signal }),
       { endpoint, operation: 'GET' },
-      options.signal
+      options.signal,
+      options.schema
     );
   }
 
   public async post<T>(
     endpoint: string,
     data: unknown,
-    options: { signal?: AbortSignal } = {}
+    options: { signal?: AbortSignal; schema?: ZodType<T> } = {}
   ): Promise<ApiResult<T>> {
     return this.executeWithRetry<T>(
       () => this.apiClient.post<ApiResponse<T>>(endpoint, data, { signal: options.signal }),
       { endpoint, operation: 'POST' },
-      options.signal
+      options.signal,
+      options.schema
     );
   }
 }

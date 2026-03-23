@@ -6,6 +6,24 @@ export const handlers = [
     return HttpResponse.json({ settings: { theme: 'light' } });
   }),
 
+  // POST /dynamodb — tier info and other dynamodb operations
+  http.post('*/dynamodb', () => {
+    return HttpResponse.json({
+      tier: 'free',
+      features: { deep_research: false },
+      quotas: {},
+      rateLimits: {},
+    });
+  }),
+
+  // POST /edges — edge operations (connections, messages, etc.)
+  http.post('*/edges', () => {
+    return HttpResponse.json({
+      statusCode: 200,
+      body: JSON.stringify({ results: [] }),
+    });
+  }),
+
   // POST /ragstack — search
   http.post('*/ragstack', async ({ request }) => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -38,5 +56,10 @@ export const handlers = [
         linkedin_credentials: 'sealbox_x25519:b64:mock-credentials',
       },
     });
+  }),
+
+  // POST /profiles — update user settings
+  http.post('*/profiles', () => {
+    return HttpResponse.json({ success: true });
   }),
 ];

@@ -310,10 +310,10 @@ class TestWaitForIndexing:
         assert "Invalid document format" in result["error"]
 
     @patch('shared_services.ingestion_service.requests.put')
-    @patch('shared_services.ingestion_service.time.time')
+    @patch('shared_services.ingestion_service.time.monotonic')
     @patch('shared_services.ingestion_service.time.sleep')
-    def test_wait_timeout_returns_pending(self, mock_sleep, mock_time, mock_put, ingestion_service, mock_ragstack_client):
-        """Test timeout returns pending status"""
+    def test_wait_timeout_returns_timeout(self, mock_sleep, mock_monotonic, mock_put, ingestion_service, mock_ragstack_client):
+        """Test timeout returns timeout status with warning"""
         mock_put.return_value = Mock(status_code=200)
         mock_ragstack_client.get_document_status.return_value = {
             "status": "pending",
@@ -321,7 +321,7 @@ class TestWaitForIndexing:
             "error": None,
         }
         # Simulate time passing beyond timeout
-        mock_time.side_effect = [0, 0, 30, 61]
+        mock_monotonic.side_effect = [0, 0, 30, 61]
 
         result = ingestion_service.ingest_profile(
             profile_id="profile_abc",
@@ -330,7 +330,30 @@ class TestWaitForIndexing:
             indexing_timeout=60,
         )
 
-        assert result["status"] == "pending"
+        assert result["status"] == "timeout"
+
+    @patch('shared_services.ingestion_service.requests.put')
+    @patch('shared_services.ingestion_service.time.monotonic')
+    @patch('shared_services.ingestion_service.time.sleep')
+    def test_wait_always_processing_returns_timeout(self, mock_sleep, mock_monotonic, mock_put, ingestion_service, mock_ragstack_client):
+        """Test that always-processing status returns timeout after max_wait_seconds"""
+        mock_put.return_value = Mock(status_code=200)
+        mock_ragstack_client.get_document_status.return_value = {
+            "status": "processing",
+            "documentId": "doc123",
+            "error": None,
+        }
+        # Simulate exceeding the default 15s timeout
+        mock_monotonic.side_effect = [0, 0, 20]
+
+        result = ingestion_service.ingest_profile(
+            profile_id="profile_abc",
+            markdown_content="# Test",
+            wait_for_indexing=True,
+        )
+
+        assert result["status"] == "timeout"
+        assert result["documentId"] == "doc123"
 
 
 class TestMetadataPreparation:

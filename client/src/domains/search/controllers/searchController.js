@@ -334,38 +334,66 @@ export class SearchController {
 
   /**
    * Transport-agnostic search method for WebSocket command dispatch.
-   * @param {object} payload - { searchUrl, jwtToken, ... }
+   * Calls the service layer directly instead of simulating an HTTP request.
+   * @param {object} payload - { companyName, companyRole, companyLocation, jwtToken, ... }
    * @param {function} onProgress - (step, total, message) callback
    * @returns {Promise<object>} - { results, count }
    */
   async performSearchDirect(payload, onProgress) {
-    // Build a minimal req-like object for the existing performSearch internals
-    const fakeReq = {
-      body: payload,
-      headers: { authorization: `Bearer ${payload.jwtToken || ''}` },
-      jwtToken: payload.jwtToken,
-      path: '/search',
-      method: 'POST',
-    };
-    let resultData = null;
-    const fakeRes = {
-      status: (code) => ({
-        json: (data) => {
-          resultData = { statusCode: code, ...data };
-        },
-      }),
-      json: (data) => {
-        resultData = { statusCode: 200, ...data };
-      },
-    };
+    let jwtToken = payload.jwtToken;
 
-    await this.performSearch(fakeReq, fakeRes, { progressCallback: onProgress });
+    if (
+      !jwtToken &&
+      config.nodeEnv === 'development' &&
+      process.env.ALLOW_DEV_AUTH_BYPASS === 'true'
+    ) {
+      jwtToken = 'development-test-token';
+    }
 
-    if (resultData?.error) {
-      const err = new Error(resultData.error);
+    if (!jwtToken) {
+      const err = new Error('Missing or invalid Authorization header');
       err.code = 'SEARCH_ERROR';
       throw err;
     }
-    return resultData;
+
+    const validationResult = SearchRequestValidator.validateRequest(payload, jwtToken);
+    if (!validationResult.isValid) {
+      const err = new Error(validationResult.error || validationResult.message);
+      err.code = 'SEARCH_ERROR';
+      throw err;
+    }
+
+    const { companyName, companyRole, companyLocation, linkedinCredentialsCiphertext } = payload;
+
+    const state = SearchStateManager.buildInitialState({
+      companyName,
+      companyRole,
+      companyLocation,
+      searchName: null,
+      searchPassword: null,
+      credentialsCiphertext: linkedinCredentialsCiphertext,
+      jwtToken,
+      progressCallback: onProgress,
+    });
+
+    if (!state.healPhase) {
+      await FileHelpers.writeJSON(config.paths.linksFile, []);
+      await FileHelpers.writeJSON(config.paths.goodConnectionsFile, []);
+    }
+
+    const result = await this.performSearchFromState(state);
+
+    if (result === undefined) {
+      return {
+        statusCode: 202,
+        status: 'healing',
+        message: 'Worker process started for healing/recovery.',
+      };
+    }
+
+    return {
+      statusCode: 200,
+      ...this._buildSuccessResponse(result, { companyName, companyRole, companyLocation }),
+    };
   }
 }

@@ -191,5 +191,3 @@ export const ActivityTimeline: React.FC = () => {
     </div>
   );
 };
-
-export default ActivityTimeline;

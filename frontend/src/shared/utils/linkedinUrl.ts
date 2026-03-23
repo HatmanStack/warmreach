@@ -13,7 +13,7 @@ export interface LinkedInProfileInput {
   company?: string;
 }
 
-export function isHttpUrl(value: string): boolean {
+function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
 
@@ -21,11 +21,11 @@ export function isHttpUrl(value: string): boolean {
 // the linkedin_url field is expected to contain URLs or vanity slugs, not base64.
 // Base64-encoded IDs are only stored in the `id` field, which is handled
 // separately via decodeBase64UrlSafe.
-export function isVanitySlug(value: string): boolean {
+function isVanitySlug(value: string): boolean {
   return /^[a-zA-Z0-9-]+$/.test(value);
 }
 
-export function decodeBase64UrlSafe(value: string): string | null {
+function decodeBase64UrlSafe(value: string): string | null {
   try {
     // Normalize URL-safe base64 to standard base64 and add padding
     let normalized = value.replace(/-/g, '+').replace(/_/g, '/');

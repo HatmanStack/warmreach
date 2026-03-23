@@ -9,6 +9,7 @@ import logging
 import os
 
 import boto3
+from shared_services.observability import setup_correlation_context
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
@@ -79,6 +80,15 @@ def _validate_jwt(token: str) -> dict | None:
             issuer=_cognito_issuer,
             options={'verify_aud': False},
         )
+
+        # Validate client_id claim to prevent cross-application JWT reuse
+        expected_client_id = os.environ.get('COGNITO_CLIENT_ID', '')
+        if expected_client_id:
+            token_client_id = claims.get('client_id', '')
+            if token_client_id != expected_client_id:
+                logger.warning(f'JWT client_id mismatch: expected={expected_client_id}, got={token_client_id}')
+                return None
+
         return claims
     except jwt.InvalidTokenError as e:
         logger.warning(f'JWT validation failed: {e}')
@@ -89,8 +99,6 @@ def _validate_jwt(token: str) -> dict | None:
 
 
 def lambda_handler(event, context):
-    from shared_services.observability import setup_correlation_context
-
     setup_correlation_context(event, context)
 
     connection_id = event['requestContext']['connectionId']

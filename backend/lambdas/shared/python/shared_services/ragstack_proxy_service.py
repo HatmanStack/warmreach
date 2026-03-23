@@ -1,12 +1,11 @@
 """RAGStackProxyService - RAGStack search, ingest, and status operations."""
 
-import base64
 import logging
 from typing import Any
 
 from errors.exceptions import ExternalServiceError
 from shared_services.base_service import BaseService
-from shared_services.edge_data_service import EdgeDataService
+from shared_services.edge_data_service import EdgeDataService, encode_profile_id
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +54,7 @@ class RAGStackProxyService(BaseService):
                 service='RAGStack',
             )
 
-        profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
+        profile_id_b64 = encode_profile_id(profile_id)
         if self._edge_data_service and self._is_recently_ingested(profile_id_b64):
             logger.info(f'Skipping ingestion for {profile_id}: recently ingested by another user')
             return {'status': 'skipped', 'reason': 'recently_ingested', 'profileId': profile_id}

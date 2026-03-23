@@ -340,9 +340,6 @@ async function startServer() {
         `  POST http://localhost:${config.port}/linkedin-interactions/create-post - Create LinkedIn post`
       );
       logger.info(
-        `  POST http://localhost:${config.port}/linkedin-interactions/generate-personalized-message - Generate personalized message`
-      );
-      logger.info(
         `  GET  http://localhost:${config.port}/linkedin-interactions/session-status - Get session status`
       );
     });
