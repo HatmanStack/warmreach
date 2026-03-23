@@ -25,6 +25,7 @@ vi.mock('../../session/services/browserSessionManager.js', () => ({
     isSessionHealthy: vi.fn(),
     getHealthStatus: vi.fn(),
     getSessionMetrics: vi.fn().mockReturnValue({ recordOperation: vi.fn() }),
+    recordError: vi.fn(),
   },
 }));
 
@@ -73,12 +74,13 @@ const { mockResolver } = vi.hoisted(() => ({
 
 vi.mock('../selectors/index.js', () => ({
   linkedinResolver: mockResolver,
+  linkedinSelectors: {},
 }));
 
 vi.mock('#shared-config/configManager.js', () => ({
   default: {
     getErrorHandlingConfig: vi.fn().mockReturnValue({ retryAttempts: 3, retryBaseDelay: 1000 }),
-    get: vi.fn((key, def) => def),
+    get: vi.fn((_key, def) => def),
   },
 }));
 
@@ -155,10 +157,15 @@ describe('LinkedInInteractionService', () => {
   });
 
   describe('sendMessage', () => {
-    it('should execute full messaging flow', async () => {
-      vi.spyOn(service, 'navigateToProfile').mockResolvedValue(true);
-      vi.spyOn(service, 'navigateToMessaging').mockResolvedValue(undefined);
-      vi.spyOn(service, 'composeAndSendMessage').mockResolvedValue({ messageId: 'm1' });
+    it('should delegate to messaging sub-service', async () => {
+      // Spy on internal sub-service methods
+      vi.spyOn(service._interactionMessagingService, '_navigateToProfile').mockResolvedValue(true);
+      vi.spyOn(service._interactionMessagingService, 'navigateToMessaging').mockResolvedValue(
+        undefined
+      );
+      vi.spyOn(service._interactionMessagingService, 'composeAndSendMessage').mockResolvedValue({
+        messageId: 'm1',
+      });
 
       const result = await service.sendMessage('p1', 'hello', 'u1');
 
@@ -168,11 +175,13 @@ describe('LinkedInInteractionService', () => {
   });
 
   describe('executeConnectionWorkflow', () => {
-    it('should execute full connection flow', async () => {
-      vi.spyOn(service, 'navigateToProfile').mockResolvedValue(true);
-      vi.spyOn(service, 'getEarlyConnectionStatus').mockResolvedValue(null);
-      vi.spyOn(service, 'isProfileContainer').mockResolvedValue(true); // found connect
-      vi.spyOn(service, 'sendConnectionRequest').mockResolvedValue({
+    it('should delegate to connection sub-service', async () => {
+      vi.spyOn(service._interactionConnectionService, '_navigateToProfile').mockResolvedValue(true);
+      vi.spyOn(service._interactionConnectionService, 'getEarlyConnectionStatus').mockResolvedValue(
+        null
+      );
+      vi.spyOn(service._interactionConnectionService, 'isProfileContainer').mockResolvedValue(true);
+      vi.spyOn(service._interactionConnectionService, 'sendConnectionRequest').mockResolvedValue({
         requestId: 'r1',
         status: 'sent',
         confirmationFound: true,
@@ -182,6 +191,28 @@ describe('LinkedInInteractionService', () => {
 
       expect(result.requestId).toBe('r1');
       expect(result.status).toBe('sent');
+    });
+  });
+
+  describe('facade delegation', () => {
+    it('should have all public methods available', () => {
+      // Verify all domain methods exist on the facade
+      expect(typeof service.navigateToProfile).toBe('function');
+      expect(typeof service.verifyProfilePage).toBe('function');
+      expect(typeof service.sendMessage).toBe('function');
+      expect(typeof service.navigateToMessaging).toBe('function');
+      expect(typeof service.composeAndSendMessage).toBe('function');
+      expect(typeof service.executeMessagingWorkflow).toBe('function');
+      expect(typeof service.sendConnectionRequest).toBe('function');
+      expect(typeof service.checkConnectionStatus).toBe('function');
+      expect(typeof service.executeConnectionWorkflow).toBe('function');
+      expect(typeof service.createPost).toBe('function');
+      expect(typeof service.publishPost).toBe('function');
+      expect(typeof service.executePostCreationWorkflow).toBe('function');
+      expect(typeof service.followProfile).toBe('function');
+      expect(typeof service.checkFollowStatus).toBe('function');
+      expect(typeof service.clickFollowButton).toBe('function');
+      expect(typeof service.validateWorkflowParameters).toBe('function');
     });
   });
 });

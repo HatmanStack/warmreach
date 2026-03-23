@@ -61,7 +61,7 @@ const MAX_ARRAY_LENGTH = {
 // BATCH VALIDATION RESULT
 // =============================================================================
 
-export interface BatchValidationResult {
+interface BatchValidationResult {
   validConnections: Connection[];
   errors: Array<{ index: number; errors: string[] }>;
   warnings: string[];

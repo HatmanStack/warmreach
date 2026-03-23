@@ -1,4 +1,4 @@
-"""LinkedIn Edge Management Lambda - Routes edge and RAGStack operations."""
+"""Edge Insights Lambda - Routes insights, analytics, and stateless compute operations."""
 
 import json
 import logging
@@ -11,8 +11,8 @@ from shared_services.cluster_detection_service import ClusterDetectionService
 from shared_services.edge_data_service import EdgeDataService
 from shared_services.insight_cache_service import InsightCacheService
 from shared_services.monetization import FeatureFlagService, QuotaService, ensure_tier_exists
+from shared_services.observability import setup_correlation_context
 from shared_services.priority_inference_service import PriorityInferenceService
-from shared_services.ragstack_proxy_service import RAGStackProxyService
 from shared_services.relationship_scoring_service import RelationshipScoringService
 from shared_services.reply_probability_service import ReplyProbabilityService
 from shared_services.request_utils import api_response, extract_user_id
@@ -23,15 +23,12 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Configuration and clients
-table = boto3.resource('dynamodb').Table(os.environ['DYNAMODB_TABLE_NAME'])
-RAGSTACK_GRAPHQL_ENDPOINT = os.environ.get(
-    'RAGSTACK_GRAPHQL_ENDPOINT', ''
-)  # Optional: RAGStack integration disabled when empty
-RAGSTACK_API_KEY = os.environ.get('RAGSTACK_API_KEY', '')  # Optional: RAGStack integration disabled when empty
+_table_name = os.environ.get('DYNAMODB_TABLE_NAME')
+if not _table_name:
+    raise RuntimeError('FATAL: DYNAMODB_TABLE_NAME environment variable is required')
+table = boto3.resource('dynamodb').Table(_table_name)
 
 # Module-level clients for warm container reuse
-_ragstack_client = None
-_ingestion_service = None
 _quota_service = QuotaService(table) if table else None
 _feature_flag_service = FeatureFlagService(table) if table else None
 _analytics_service = AnalyticsService(table) if table else None
@@ -41,50 +38,8 @@ _cluster_detection_service = ClusterDetectionService()
 _send_time_service = SendTimeService()
 _scoring_service = RelationshipScoringService()
 _warm_intro_paths_service = WarmIntroPathsService(table)
-
-if RAGSTACK_GRAPHQL_ENDPOINT and RAGSTACK_API_KEY:
-    from shared_services.ingestion_service import IngestionService
-    from shared_services.ragstack_client import RAGStackClient
-
-    _ragstack_client = RAGStackClient(RAGSTACK_GRAPHQL_ENDPOINT, RAGSTACK_API_KEY)
-    _ingestion_service = IngestionService(_ragstack_client)
-
-# Three decomposed services replace the monolithic EdgeService
-_edge_data_service = EdgeDataService(
-    table=table,
-    ragstack_endpoint=RAGSTACK_GRAPHQL_ENDPOINT,
-    ragstack_api_key=RAGSTACK_API_KEY,
-    ragstack_client=_ragstack_client,
-    ingestion_service=_ingestion_service,
-)
+_edge_data_service = EdgeDataService(table=table)
 _insight_cache_service = InsightCacheService(table=table)
-_ragstack_proxy_service = RAGStackProxyService(
-    ragstack_client=_ragstack_client,
-    ingestion_service=_ingestion_service,
-    table=table,
-    edge_data_service=_edge_data_service,
-)
-
-
-def _sanitize_request_context(request_context):
-    """Remove sensitive fields from requestContext before logging."""
-    if not request_context:
-        return {}
-    sanitized = {}
-    sensitive_keys = {'authorizer', 'authorization'}
-    for key, value in request_context.items():
-        if key.lower() in sensitive_keys:
-            sanitized[key] = '[REDACTED]'
-        elif isinstance(value, dict):
-            sanitized[key] = {
-                k: '[REDACTED]'
-                if any(s in k.lower() for s in ('token', 'authorization', 'claim', 'secret', 'credential'))
-                else v
-                for k, v in value.items()
-            }
-        else:
-            sanitized[key] = value
-    return sanitized
 
 
 def _get_user_id(event):
@@ -105,7 +60,7 @@ def _report_telemetry(user_id: str, operation: str, count: int = 1):
         ensure_tier_exists(table, user_id)
         _quota_service.report_usage(user_id, operation, count=count)
     except Exception as e:
-        logger.debug(f'Telemetry report failed for {operation}: {e}')
+        logger.warning(f'Telemetry report failed for {operation}: {e}')
 
 
 def _check_feature_gate(user_id: str, feature_key: str, event) -> dict | None:
@@ -124,7 +79,7 @@ def _check_feature_gate(user_id: str, feature_key: str, event) -> dict | None:
 
 
 def _gated_handler(feature_key, handler_fn):
-    """Wrap a handler with feature gate check. Returns a handler that checks the gate first."""
+    """Wrap a handler with feature gate check."""
 
     def wrapper(body, user_id, event, edge_cache):
         gate = _check_feature_gate(user_id, feature_key, event)
@@ -136,7 +91,6 @@ def _gated_handler(feature_key, handler_fn):
 
 
 def _get_user_edges_cached(user_id, cache):
-    # Per-invocation cache only — not shared across warm container reuses
     """Return cached edges or query and cache them. Cache is per-invocation."""
     if user_id not in cache:
         cache[user_id] = _edge_data_service.query_all_edges(user_id)
@@ -146,69 +100,6 @@ def _get_user_edges_cached(user_id, cache):
 # ---------------------------------------------------------------------------
 # Operation handlers
 # ---------------------------------------------------------------------------
-
-
-def _handle_get_connections_by_status(body, user_id, event, edge_cache):
-    updates = body.get('updates', {})
-    r = _edge_data_service.get_connections_by_status(user_id, updates.get('status'))
-    return api_response(200, {'connections': r.get('connections', []), 'count': r.get('count', 0)}, event)
-
-
-def _handle_upsert_status(body, user_id, event, edge_cache):
-    pid = body.get('profileId')
-    if not pid:
-        return api_response(400, {'error': 'profileId required'}, event)
-    updates = body.get('updates', {})
-    return api_response(
-        200,
-        {
-            'result': _edge_data_service.upsert_status(
-                user_id, pid, updates.get('status', 'pending'), updates.get('addedAt'), updates.get('messages')
-            )
-        },
-        event,
-    )
-
-
-def _handle_add_message(body, user_id, event, edge_cache):
-    pid = body.get('profileId')
-    if not pid:
-        return api_response(400, {'error': 'profileId required'}, event)
-    updates = body.get('updates', {})
-    return api_response(
-        200,
-        {
-            'result': _edge_data_service.add_message(
-                user_id, pid, updates.get('message', ''), updates.get('messageType', 'outbound')
-            )
-        },
-        event,
-    )
-
-
-def _handle_update_messages(body, user_id, event, edge_cache):
-    pid = body.get('profileId')
-    if not pid:
-        return api_response(400, {'error': 'profileId required'}, event)
-    updates = body.get('updates', {})
-    msgs = updates.get('messages', [])
-    r = _edge_data_service.update_messages(user_id, pid, msgs)
-    return api_response(200, {'result': r}, event)
-
-
-def _handle_get_messages(body, user_id, event, edge_cache):
-    pid = body.get('profileId')
-    if not pid:
-        return api_response(400, {'error': 'profileId required'}, event)
-    r = _edge_data_service.get_messages(user_id, pid)
-    return api_response(200, {'messages': r.get('messages', []), 'count': r.get('count', 0)}, event)
-
-
-def _handle_check_exists(body, user_id, event, edge_cache):
-    pid = body.get('profileId')
-    if not pid:
-        return api_response(400, {'error': 'profileId required'}, event)
-    return api_response(200, _edge_data_service.check_exists(user_id, pid), event)
 
 
 def _handle_get_messaging_insights(body, user_id, event, edge_cache):
@@ -343,95 +234,86 @@ def _handle_get_warm_intro_paths(body, user_id, event, edge_cache):
     return api_response(200, result, event)
 
 
+def _handle_get_network_graph(body, user_id, event, edge_cache):
+    edges = _get_user_edges_cached(user_id, edge_cache)
+    profile_ids = [edge_item.get('SK', '').replace('PROFILE#', '') for edge_item in edges]
+    metadata_map = _edge_data_service.batch_get_profile_metadata(profile_ids)
+
+    nodes = []
+    for edge_item in edges:
+        profile_id = edge_item.get('SK', '').replace('PROFILE#', '')
+        profile_data = metadata_map.get(profile_id, {})
+        name = profile_data.get('name', '')
+        name_parts = name.split(' ', 1)
+        first_name = name_parts[0] if name_parts else ''
+        last_name = name_parts[1] if len(name_parts) > 1 else ''
+
+        nodes.append(
+            {
+                'id': profile_id,
+                'firstName': first_name,
+                'lastName': last_name,
+                'position': profile_data.get('currentTitle', ''),
+                'company': profile_data.get('currentCompany', ''),
+                'location': profile_data.get('currentLocation', ''),
+                'headline': profile_data.get('headline', ''),
+                'profilePictureUrl': profile_data.get('profilePictureUrl', ''),
+                'relationshipScore': edge_item.get('relationshipScore'),
+                'status': edge_item.get('status', ''),
+            }
+        )
+
+    edge_list = [
+        {
+            'source': 'user',
+            'target': edge_item.get('SK', '').replace('PROFILE#', ''),
+            'relationshipScore': edge_item.get('relationshipScore'),
+            'status': edge_item.get('status', ''),
+        }
+        for edge_item in edges
+    ]
+
+    clusters_result = _cluster_detection_service.detect_clusters(edges)
+    _report_telemetry(user_id, 'network_graph_query')
+
+    return api_response(
+        200,
+        {
+            'nodes': nodes,
+            'edges': edge_list,
+            'clusters': clusters_result.get('clusters', []),
+            'totalConnections': len(edges),
+        },
+        event,
+    )
+
+
 # ---------------------------------------------------------------------------
-# Routing table: operation name -> handler function
-# Gated operations are wrapped with _gated_handler.
+# Routing table: 14 operations
 # ---------------------------------------------------------------------------
 
 HANDLERS = {
-    # Edge CRUD
-    'get_connections_by_status': _handle_get_connections_by_status,
-    'upsert_status': _handle_upsert_status,
-    'add_message': _handle_add_message,
-    'update_messages': _handle_update_messages,
-    'get_messages': _handle_get_messages,
-    'check_exists': _handle_check_exists,
-    # Insight operations (some gated)
     'get_messaging_insights': _gated_handler('message_intelligence', _handle_get_messaging_insights),
-    'store_message_insights': _handle_store_message_insights,  # Intentionally ungated: passive write allowed for all tiers
+    'store_message_insights': _handle_store_message_insights,
     'compute_relationship_scores': _gated_handler('relationship_strength_scoring', _handle_compute_relationship_scores),
     'get_priority_recommendations': _gated_handler('priority_inference', _handle_get_priority_recommendations),
-    # Analytics (all gated)
     'get_analytics_dashboard': _gated_handler('advanced_analytics', _handle_get_analytics_dashboard),
     'get_connection_funnel': _gated_handler('advanced_analytics', _handle_get_connection_funnel),
     'get_growth_timeline': _gated_handler('advanced_analytics', _handle_get_growth_timeline),
     'get_engagement_metrics': _gated_handler('advanced_analytics', _handle_get_engagement_metrics),
     'get_usage_summary': _gated_handler('advanced_analytics', _handle_get_usage_summary),
-    # Stateless compute (all gated)
     'get_send_time_recommendations': _gated_handler('best_time_to_send', _handle_get_send_time_recommendations),
     'get_reply_probabilities': _gated_handler('reply_probability', _handle_get_reply_probabilities),
     'get_connection_clusters': _gated_handler('cluster_detection', _handle_get_connection_clusters),
     'get_warm_intro_paths': _gated_handler('warm_intro_paths', _handle_get_warm_intro_paths),
+    'get_network_graph': _gated_handler('network_graph_visualization', _handle_get_network_graph),
 }
 
 
-def _handle_ragstack(body, user_id, event=None):
-    """Handle /ragstack route - dispatches to RAGStackProxyService."""
-    if not _ragstack_proxy_service.is_configured():
-        return api_response(503, {'error': 'RAGStack not configured'}, event)
-
-    operation = body.get('operation')
-
-    if operation == 'search':
-        query = body.get('query', '')
-        if not query:
-            return api_response(400, {'error': 'query is required'}, event)
-        try:
-            max_results = min(int(body.get('maxResults', 100)), 200)
-        except (TypeError, ValueError):
-            return api_response(400, {'error': 'maxResults must be a number'}, event)
-        result = _ragstack_proxy_service.ragstack_search(query, max_results)
-        _report_telemetry(user_id, 'ragstack_search')
-        return api_response(200, result, event)
-
-    elif operation == 'ingest':
-        profile_id = body.get('profileId')
-        markdown_content = body.get('markdownContent')
-        metadata = body.get('metadata') or {}
-        if not isinstance(metadata, dict):
-            return api_response(400, {'error': 'metadata must be an object'}, event)
-        if not profile_id:
-            return api_response(400, {'error': 'profileId is required'}, event)
-        if not markdown_content:
-            return api_response(400, {'error': 'markdownContent is required'}, event)
-        result = _ragstack_proxy_service.ragstack_ingest(profile_id, markdown_content, metadata, user_id)
-        _report_telemetry(user_id, 'ragstack_ingest')
-        return api_response(200, result, event)
-
-    elif operation == 'status':
-        document_id = body.get('documentId')
-        if not document_id:
-            return api_response(400, {'error': 'documentId is required'}, event)
-        result = _ragstack_proxy_service.ragstack_status(document_id)
-        return api_response(200, result, event)
-
-    else:
-        return api_response(400, {'error': f'Unsupported ragstack operation: {operation}'}, event)
-
-
 def lambda_handler(event, context):
-    """Route edge operations to decomposed services."""
-    from shared_services.observability import setup_correlation_context
-
+    """Route edge insights operations."""
     setup_correlation_context(event, context)
 
-    # Debug logging
-    logger.info(f'Event keys: {list(event.keys())}')
-    logger.info(
-        f'Request context: {json.dumps(_sanitize_request_context(event.get("requestContext", {})), default=str)}'
-    )
-
-    # Handle CORS preflight
     if event.get('requestContext', {}).get('http', {}).get('method') == 'OPTIONS':
         return api_response(204, '', event)
 
@@ -443,18 +325,10 @@ def lambda_handler(event, context):
             else event.get('body') or event or {}
         )
         user_id = _get_user_id(event)
-        logger.info(f'Extracted user_id: {user_id}')
         if not user_id:
             return api_response(401, {'error': 'Unauthorized'}, event)
 
-        # Determine route
-        raw_path = event.get('rawPath', '') or event.get('path', '')
         op = body.get('operation')
-
-        if '/ragstack' in raw_path:
-            return _handle_ragstack(body, user_id, event)
-
-        # Dispatch via routing table
         handler = HANDLERS.get(op)
         if handler:
             return handler(body, user_id, event, edge_cache)

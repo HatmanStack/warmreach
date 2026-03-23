@@ -634,3 +634,96 @@ class TestAnalyzeToneErrorHandling:
 
         # Should be a generic ServiceError, NOT ExternalServiceError
         assert not isinstance(exc_info.value, ExternalServiceError)
+
+
+class TestPerCallTimeout:
+    """Tests for per-call OpenAI timeout (ADR-5)."""
+
+    def test_default_call_timeout_is_45(self, service):
+        """Service should have DEFAULT_CALL_TIMEOUT = 45."""
+        assert service.DEFAULT_CALL_TIMEOUT == 45
+        assert service.call_timeout == 45
+
+    def test_custom_call_timeout(self, mock_openai_client, mock_bedrock_client, mock_dynamodb_table):
+        """Should accept custom call_timeout via constructor."""
+        from conftest import load_service_class
+        module = load_service_class('llm', 'llm_service')
+        svc = module.LLMService(
+            openai_client=mock_openai_client,
+            bedrock_client=mock_bedrock_client,
+            table=mock_dynamodb_table,
+            call_timeout=30,
+        )
+        assert svc.call_timeout == 30
+
+    def test_generate_ideas_passes_timeout(self, service, mock_openai_client):
+        """generate_ideas should pass timeout to responses.create()."""
+        service.generate_ideas(
+            user_profile={'name': 'Test'},
+            prompt='topics',
+            job_id='j1',
+            user_id='u1',
+        )
+        call_kwargs = mock_openai_client.responses.create.call_args[1]
+        assert call_kwargs['timeout'] == 45
+
+    def test_research_selected_ideas_passes_timeout(self, service, mock_openai_client):
+        """research_selected_ideas should pass timeout to responses.create()."""
+        service.research_selected_ideas(
+            user_data={},
+            selected_ideas=['topic'],
+            user_id='u1',
+        )
+        call_kwargs = mock_openai_client.responses.create.call_args[1]
+        assert call_kwargs['timeout'] == 45
+
+    def test_synthesize_research_passes_timeout(self, service, mock_openai_client):
+        """synthesize_research should pass timeout to responses.create()."""
+        mock_openai_client.responses.create.return_value.output_text = 'content'
+        service.synthesize_research(
+            research_content='r',
+            post_content='p',
+            ideas_content=[],
+            user_profile={'name': 'T'},
+            job_id='j1',
+            user_id='u1',
+        )
+        call_kwargs = mock_openai_client.responses.create.call_args[1]
+        assert call_kwargs['timeout'] == 45
+
+    def test_generate_message_passes_timeout(self, service, mock_openai_client):
+        """generate_message should pass timeout to responses.create()."""
+        mock_openai_client.responses.create.return_value.output_text = 'msg'
+        service.generate_message(
+            connection_profile={'firstName': 'A', 'lastName': 'B', 'position': 'X', 'company': 'Y'},
+            conversation_topic='AI',
+        )
+        call_kwargs = mock_openai_client.responses.create.call_args[1]
+        assert call_kwargs['timeout'] == 45
+
+    def test_analyze_message_patterns_passes_timeout(self, service, mock_openai_client):
+        """analyze_message_patterns should pass timeout to responses.create()."""
+        mock_openai_client.responses.create.return_value.output_text = '1. Insight'
+        service.analyze_message_patterns(
+            stats={'totalOutbound': 5},
+            sample_messages=[],
+        )
+        call_kwargs = mock_openai_client.responses.create.call_args[1]
+        assert call_kwargs['timeout'] == 45
+
+    def test_analyze_tone_passes_timeout(self, service, mock_openai_client):
+        """analyze_tone should pass timeout to responses.create()."""
+        mock_openai_client.responses.create.return_value.output_text = 'PROFESSIONALISM: 8'
+        service.analyze_tone(draft_text='hello')
+        call_kwargs = mock_openai_client.responses.create.call_args[1]
+        assert call_kwargs['timeout'] == 45
+
+    def test_retrieve_passes_timeout(self, service, mock_openai_client, mock_dynamodb_table):
+        """_check_openai_response should pass timeout to responses.retrieve()."""
+        mock_resp = MagicMock()
+        mock_resp.status = 'completed'
+        mock_resp.output_text = 'result'
+        mock_openai_client.responses.retrieve.return_value = mock_resp
+        service._check_openai_response('u1', 'j1', 'resp_123', 'RESEARCH')
+        call_kwargs = mock_openai_client.responses.retrieve.call_args[1]
+        assert call_kwargs['timeout'] == 45

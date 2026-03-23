@@ -63,22 +63,21 @@ class IngestionService:
         profile_id: str,
         markdown_content: str,
         metadata: dict[str, Any] | None = None,
-        wait_for_indexing: bool = False,
-        indexing_timeout: int = 15,
     ) -> dict[str, Any]:
         """
         Ingest a profile document into RAGStack.
+
+        Returns immediately after S3 upload with status 'uploaded'.
+        Callers that need completion status should poll the /ragstack status endpoint.
 
         Args:
             profile_id: Unique profile identifier (base64 encoded LinkedIn URL)
             markdown_content: Profile content in markdown format
             metadata: Optional metadata to attach (user_id, source, etc.)
-            wait_for_indexing: If True, poll for indexing completion
-            indexing_timeout: Max seconds to wait for indexing
 
         Returns:
             Dict containing:
-            - status: "uploaded", "indexed", "pending", or "failed"
+            - status: "uploaded" or "failed"
             - documentId: The RAGStack document ID
             - error: Error message if status is "failed"
         """
@@ -112,11 +111,6 @@ class IngestionService:
                 'profileId': profile_id,
                 'error': None,
             }
-
-            # Optionally wait for indexing
-            if wait_for_indexing:
-                result = self._wait_for_indexing(document_id, indexing_timeout)
-                result['profileId'] = profile_id
 
             logger.info(f'Profile {profile_id} ingestion complete: {result["status"]}')
             return result
@@ -250,59 +244,3 @@ class IngestionService:
 
         # All retries exhausted
         raise last_error or UploadError('Upload failed after all retries')
-
-    def _wait_for_indexing(
-        self,
-        document_id: str,
-        timeout: int = 15,
-    ) -> dict[str, Any]:
-        """
-        Poll for document indexing completion.
-
-        Synchronous polling in Lambda. Max block time bounded by timeout.
-        WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
-        Consider Step Functions for long-running operations.
-
-        Args:
-            document_id: Document ID to check
-            timeout: Maximum seconds to wait (default 15)
-
-        Returns:
-            Status dict with current state
-        """
-        start_time = time.monotonic()
-        poll_interval = 2.0
-
-        while time.monotonic() - start_time < timeout:
-            try:
-                status = self.client.get_document_status(document_id)
-
-                if status['status'] == 'indexed':
-                    return {
-                        'status': 'indexed',
-                        'documentId': document_id,
-                        'error': None,
-                    }
-
-                if status['status'] == 'failed':
-                    return {
-                        'status': 'failed',
-                        'documentId': document_id,
-                        'error': status.get('error', 'Indexing failed'),
-                    }
-
-                # Still pending/processing, continue polling
-                logger.debug(f'Document {document_id} status: {status["status"]}')
-                time.sleep(poll_interval)
-
-            except RAGStackError as e:
-                logger.warning(f'Error checking document status: {e}')
-                time.sleep(poll_interval)
-
-        # Timeout reached
-        logger.warning(f'Indexing timeout for {document_id} after {timeout}s')
-        return {
-            'status': 'timeout',
-            'documentId': document_id,
-            'error': None,
-        }

@@ -59,7 +59,7 @@ class ConnectionsApiService {
 
   async computeRelationshipScores(): Promise<{ scoresComputed: number }> {
     const result = await httpClient.makeRequest<{ scoresComputed: number }>(
-      'edges',
+      'edges/insights',
       'compute_relationship_scores'
     );
 

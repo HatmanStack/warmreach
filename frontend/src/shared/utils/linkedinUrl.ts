@@ -5,7 +5,7 @@
  * explicit URLs, vanity slugs, base64-encoded IDs, or falls back to people search.
  */
 
-export interface LinkedInProfileInput {
+interface LinkedInProfileInput {
   linkedin_url?: string;
   id?: string;
   first_name?: string;

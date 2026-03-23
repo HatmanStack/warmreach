@@ -54,16 +54,28 @@ class EdgeDataService(BaseService):
     ):
         super().__init__()
         self.table = table
+        # Eager construction is intentional: boto3 clients are cheap and benefit
+        # from Lambda warm-container reuse. Lazy init would add complexity for
+        # negligible savings.
         self._dynamodb_resource = boto3.resource('dynamodb')
+        self._dynamodb_client = boto3.client('dynamodb')
         self.ragstack_endpoint = ragstack_endpoint
         self.ragstack_api_key = ragstack_api_key
         self.ragstack_client = ragstack_client
         self.ingestion_service = ingestion_service
 
+    @staticmethod
+    def _to_dynamodb_item(item: dict) -> dict:
+        """Convert a high-level Python dict to DynamoDB JSON format."""
+        from boto3.dynamodb.types import TypeSerializer
+
+        serializer = TypeSerializer()
+        return {k: serializer.serialize(v) for k, v in item.items()}
+
     def upsert_status(
         self, user_id: str, profile_id: str, status: str, added_at: str | None = None, messages: list | None = None
     ) -> dict[str, Any]:
-        """Create or update edge status (idempotent upsert)."""
+        """Create or update edge status (atomic dual-edge write via TransactWriteItems)."""
         try:
             profile_id_b64 = encode_profile_id(profile_id)
             current_time = datetime.now(UTC).isoformat()
@@ -81,31 +93,41 @@ class EdgeDataService(BaseService):
             if status == 'processed':
                 user_profile_edge['processedAt'] = current_time
 
-            self.table.put_item(Item=user_profile_edge)
-            try:
-                self.table.update_item(
-                    Key={
-                        'PK': f'PROFILE#{profile_id_b64}',
-                        'SK': f'USER#{user_id}',
+            table_name = self.table.table_name
+
+            self._dynamodb_client.transact_write_items(
+                TransactItems=[
+                    {
+                        'Put': {
+                            'TableName': table_name,
+                            'Item': self._to_dynamodb_item(user_profile_edge),
+                        }
                     },
-                    UpdateExpression='SET addedAt = if_not_exists(addedAt, :added), #status = :status, lastAttempt = :lastAttempt, updatedAt = :updated, attempts = if_not_exists(attempts, :zero) + :inc',
-                    ExpressionAttributeNames={'#status': 'status'},
-                    ExpressionAttributeValues={
-                        ':added': added_at or current_time,
-                        ':status': status,
-                        ':lastAttempt': current_time,
-                        ':updated': current_time,
-                        ':zero': 0,
-                        ':inc': 1,
+                    {
+                        'Update': {
+                            'TableName': table_name,
+                            'Key': self._to_dynamodb_item(
+                                {
+                                    'PK': f'PROFILE#{profile_id_b64}',
+                                    'SK': f'USER#{user_id}',
+                                }
+                            ),
+                            'UpdateExpression': 'SET addedAt = if_not_exists(addedAt, :added), #status = :status, lastAttempt = :lastAttempt, updatedAt = :updated, attempts = if_not_exists(attempts, :zero) + :inc',
+                            'ExpressionAttributeNames': {'#status': 'status'},
+                            'ExpressionAttributeValues': self._to_dynamodb_item(
+                                {
+                                    ':added': added_at or current_time,
+                                    ':status': status,
+                                    ':lastAttempt': current_time,
+                                    ':updated': current_time,
+                                    ':zero': 0,
+                                    ':inc': 1,
+                                }
+                            ),
+                        }
                     },
-                )
-            except Exception:
-                logger.error(
-                    'Reverse edge write failed, rolling back forward edge',
-                    extra={'user_id': user_id, 'profile_id': profile_id_b64},
-                )
-                self.table.delete_item(Key={'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'})
-                raise
+                ]
+            )
 
             ragstack_ingested = False
             ragstack_error = None
@@ -133,7 +155,14 @@ class EdgeDataService(BaseService):
             }
 
         except ClientError as e:
-            logger.error(f'DynamoDB error in upsert_status: {e}')
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code == 'TransactionCanceledException':
+                logger.error(
+                    'Atomic edge transaction cancelled',
+                    extra={'user_id': user_id, 'profile_id': profile_id, 'reasons': str(e)},
+                )
+            else:
+                logger.error(f'DynamoDB error in upsert_status: {e}')
             raise ExternalServiceError(
                 message='Failed to upsert edge', service='DynamoDB', original_error=str(e)
             ) from e

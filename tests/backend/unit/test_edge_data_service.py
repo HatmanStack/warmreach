@@ -3,8 +3,10 @@ import base64
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import boto3
 import pytest
 from botocore.exceptions import ClientError
+from moto import mock_aws
 
 from shared_services.base_service import BaseService
 
@@ -69,11 +71,24 @@ class TestEdgeDataServiceInit:
 
 
 class TestUpsertStatus:
-    """Tests for upsert_status operation."""
+    """Tests for upsert_status operation (TransactWriteItems)."""
 
+    @mock_aws
     def test_creates_forward_and_reverse_edges(self):
-        mock_table = MagicMock()
-        service = EdgeDataService(table=mock_table)
+        dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+        table = dynamodb.create_table(
+            TableName='test-table',
+            KeySchema=[
+                {'AttributeName': 'PK', 'KeyType': 'HASH'},
+                {'AttributeName': 'SK', 'KeyType': 'RANGE'},
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'PK', 'AttributeType': 'S'},
+                {'AttributeName': 'SK', 'AttributeType': 'S'},
+            ],
+            BillingMode='PAY_PER_REQUEST',
+        )
+        service = EdgeDataService(table=table)
 
         result = service.upsert_status(
             user_id='test-user',
@@ -82,12 +97,32 @@ class TestUpsertStatus:
         )
 
         assert result['success'] is True
-        mock_table.put_item.assert_called_once()
-        mock_table.update_item.assert_called_once()
+        # Verify forward edge was written
+        profile_id_b64 = encode_profile_id('https://linkedin.com/in/john')
+        fwd = table.get_item(Key={'PK': 'USER#test-user', 'SK': f'PROFILE#{profile_id_b64}'})
+        assert 'Item' in fwd
+        assert fwd['Item']['status'] == 'possible'
+        # Verify reverse edge was written
+        rev = table.get_item(Key={'PK': f'PROFILE#{profile_id_b64}', 'SK': 'USER#test-user'})
+        assert 'Item' in rev
+        assert rev['Item']['status'] == 'possible'
 
+    @mock_aws
     def test_returns_b64_profile_id(self):
-        mock_table = MagicMock()
-        service = EdgeDataService(table=mock_table)
+        dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+        table = dynamodb.create_table(
+            TableName='test-table',
+            KeySchema=[
+                {'AttributeName': 'PK', 'KeyType': 'HASH'},
+                {'AttributeName': 'SK', 'KeyType': 'RANGE'},
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'PK', 'AttributeType': 'S'},
+                {'AttributeName': 'SK', 'AttributeType': 'S'},
+            ],
+            BillingMode='PAY_PER_REQUEST',
+        )
+        service = EdgeDataService(table=table)
 
         result = service.upsert_status(
             user_id='test-user',
@@ -98,9 +133,22 @@ class TestUpsertStatus:
         decoded = base64.urlsafe_b64decode(result['profileId']).decode()
         assert decoded == 'https://linkedin.com/in/john'
 
+    @mock_aws
     def test_updates_existing_edge(self):
-        mock_table = MagicMock()
-        service = EdgeDataService(table=mock_table)
+        dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+        table = dynamodb.create_table(
+            TableName='test-table',
+            KeySchema=[
+                {'AttributeName': 'PK', 'KeyType': 'HASH'},
+                {'AttributeName': 'SK', 'KeyType': 'RANGE'},
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'PK', 'AttributeType': 'S'},
+                {'AttributeName': 'SK', 'AttributeType': 'S'},
+            ],
+            BillingMode='PAY_PER_REQUEST',
+        )
+        service = EdgeDataService(table=table)
 
         result = service.upsert_status(
             user_id='test-user',
@@ -111,21 +159,35 @@ class TestUpsertStatus:
         assert result['success'] is True
         assert result['status'] == 'ally'
 
-    def test_dynamo_error_raises_external_service_error(self):
+    def test_transaction_cancelled_raises_external_service_error(self):
         mock_table = MagicMock()
-        mock_table.put_item.side_effect = ClientError(
-            {'Error': {'Code': 'InternalServerError', 'Message': 'fail'}},
-            'PutItem',
-        )
+        mock_table.table_name = 'test-table'
         service = EdgeDataService(table=mock_table)
+        service._dynamodb_client = MagicMock()
+        service._dynamodb_client.transact_write_items.side_effect = ClientError(
+            {'Error': {'Code': 'TransactionCanceledException', 'Message': 'Transaction cancelled'}},
+            'TransactWriteItems',
+        )
 
         with pytest.raises(ExternalServiceError):
             service.upsert_status('test-user', 'profile', 'ally')
 
+    @mock_aws
     def test_triggers_ingestion_for_ally_status(self):
-        mock_table = MagicMock()
-        mock_table.get_item.return_value = {'Item': {'name': 'John'}}
-        service = EdgeDataService(table=mock_table)
+        dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+        table = dynamodb.create_table(
+            TableName='test-table',
+            KeySchema=[
+                {'AttributeName': 'PK', 'KeyType': 'HASH'},
+                {'AttributeName': 'SK', 'KeyType': 'RANGE'},
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'PK', 'AttributeType': 'S'},
+                {'AttributeName': 'SK', 'AttributeType': 'S'},
+            ],
+            BillingMode='PAY_PER_REQUEST',
+        )
+        service = EdgeDataService(table=table)
 
         with patch.object(service, '_trigger_ragstack_ingestion') as mock_ingest:
             mock_ingest.return_value = {'success': True, 'status': 'uploaded'}
@@ -290,31 +352,6 @@ class TestQueryAllUserEdges:
 
         assert len(edges) == 2
         assert mock_table.query.call_count == 2
-
-
-class TestUpsertStatusRollback:
-    """Tests for rollback path in upsert_status when reverse edge write fails."""
-
-    def test_forward_edge_deleted_on_reverse_edge_failure(self):
-        """When the reverse edge put_item raises, the forward edge should be rolled back."""
-        mock_table = MagicMock()
-        mock_table.update_item.side_effect = ClientError(
-            {'Error': {'Code': 'InternalServerError', 'Message': 'Reverse edge failed'}},
-            'UpdateItem',
-        )
-        service = EdgeDataService(table=mock_table)
-
-        profile_id = 'https://linkedin.com/in/rollback-test'
-        profile_id_b64 = base64.urlsafe_b64encode(profile_id.encode()).decode()
-
-        with pytest.raises(ExternalServiceError):
-            service.upsert_status('test-user', profile_id, 'ally')
-
-        # Forward edge should have been written then deleted
-        mock_table.put_item.assert_called_once()
-        mock_table.delete_item.assert_called_once_with(
-            Key={'PK': 'USER#test-user', 'SK': f'PROFILE#{profile_id_b64}'}
-        )
 
 
 class TestBatchGetProfileMetadata:

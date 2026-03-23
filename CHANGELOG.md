@@ -5,6 +5,37 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-03-23
+
+### Changed
+
+- **Security:** OPENAI_API_KEY migrated from plaintext env var to SSM SecureString runtime fetch with 300s TTL cache — matches existing Stripe SSM pattern
+- **Architecture:** Monolithic edge-processing Lambda (817 lines, 44 operations) split into 4 focused Lambdas — `edge-crud` (10 ops), `edge-insights` (14 ops), `edge-pro` (14 ops), `ragstack` (3 ops)
+- **Architecture:** Ingestion service converted to fire-and-forget — removed `_wait_for_indexing()` polling loop and `time.sleep()` blocking; client polls `/ragstack` status endpoint instead
+- **Architecture:** Edge writes use DynamoDB `TransactWriteItems` for atomic dual-edge creation — replaces manual rollback logic that could leave orphaned edges
+- **Performance:** Per-call OpenAI timeout (45s) prevents two sequential calls from exhausting the full Lambda timeout
+- **Client:** LinkedIn interaction service (2,420 lines, 53 methods) decomposed into `BaseLinkedInService` + 5 domain sub-services (messaging, connections, posts, follow, navigation) with shared injectable collaborators
+- **Client:** `profileInitService.ts` (1,351 lines) decomposed into thin orchestrator + `BatchProcessor` + `IngestionPipeline`
+- **Frontend:** `Profile.tsx` (622 lines) decomposed into 5 sub-components + 2 custom hooks
+- **Frontend:** `Auth.tsx` (514 lines) decomposed into 4 sub-components + `useAuthFlow` hook
+- **Backend:** Shared Lambda utilities (`get_user_id`, `report_telemetry`, `check_feature_gate`, `make_gated_handler`) extracted to `shared_services/lambda_utils.py` — eliminates duplication across 4 handlers
+
+### Added
+
+- **Docs:** `CONTRIBUTING.md` at project root — PR process, commit conventions, testing commands, architecture overview
+
+### Fixed
+
+- **Backend:** Unsafe key access in `_handle_analyze_gaps` — guarded with `.get()` and explicit 404
+- **Frontend:** Unsafe type cast in `useAuthFlow.ts` — extended `AuthFlowDeps.signUp` return type to include `needsVerification`
+- **Client:** Per-instance `RateLimiter` in sub-services — now shared via constructor injection from facade
+- **Client:** Internal underscore-prefixed methods removed from facade public surface
+- **Frontend:** `ProfileForm.tsx` `onInputChange` field parameter typed as `keyof ProfileData` instead of loose `string`
+- **Backend:** Removed deprecated `OpenAIApiKey` template parameter (no longer wired to any resource)
+- **Backend:** Lazy `_dynamodb_client` construction in `EdgeDataService` — avoids unnecessary cold-start overhead
+- **Cleanup:** Removed ~19 knip-flagged unused exports
+- **Docs:** Client README route listings aligned with `API_REFERENCE.md`
+
 ## [1.8.1] - 2026-03-23
 
 ### Fixed

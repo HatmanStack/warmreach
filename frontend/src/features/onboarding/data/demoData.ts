@@ -123,19 +123,19 @@ export const DEMO_CONNECTIONS: Connection[] = [
 // Demo Network Graph
 // ---------------------------------------------------------------------------
 
-export interface NetworkNode {
+interface NetworkNode {
   id: string;
   label: string;
   size: number;
   color: string;
 }
 
-export interface NetworkEdge {
+interface NetworkEdge {
   source: string;
   target: string;
 }
 
-export interface DemoNetworkGraph {
+interface DemoNetworkGraph {
   nodes: NetworkNode[];
   edges: NetworkEdge[];
 }

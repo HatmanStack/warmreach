@@ -5,13 +5,13 @@
  * for knowledge base operations.
  */
 
-export interface RagstackRetryConfig {
+interface RagstackRetryConfig {
   maxAttempts: number;
   baseDelay: number;
   maxDelay: number;
 }
 
-export interface RagstackConfig {
+interface RagstackConfig {
   endpoint: string;
   apiKey: string;
   retry: RagstackRetryConfig;

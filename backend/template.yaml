@@ -445,13 +445,13 @@ Resources:
             Auth:
               Authorizer: NONE
 
-  EdgeProcessingFunction:
+  EdgeCrudFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'warmreach-edge-processing-${Environment}'
-      CodeUri: lambdas/edge-processing/
+      FunctionName: !Sub 'warmreach-edge-crud-${Environment}'
+      CodeUri: lambdas/edge-crud/
       Handler: lambda_function.lambda_handler
-      Timeout: 60
+      Timeout: 30
       Environment:
         Variables:
           RAGSTACK_GRAPHQL_ENDPOINT: !If
@@ -480,6 +480,54 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+
+  EdgeInsightsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'warmreach-edge-insights-${Environment}'
+      CodeUri: lambdas/edge-insights/
+      Handler: lambda_function.lambda_handler
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProfilesTable
+      Events:
+        EdgeInsightsApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /edges/insights
+            Method: POST
+        EdgeInsightsOptionsApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /edges/insights
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
+  RagstackFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'warmreach-ragstack-${Environment}'
+      CodeUri: lambdas/ragstack/
+      Handler: lambda_function.lambda_handler
+      Timeout: 30
+      Environment:
+        Variables:
+          RAGSTACK_GRAPHQL_ENDPOINT: !If
+            - DeployRAGStackCondition
+            - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiUrl
+            - !Ref RagstackGraphqlEndpoint
+          RAGSTACK_API_KEY: !If
+            - DeployRAGStackCondition
+            - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiKey
+            - !Ref RagstackApiKey
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProfilesTable
+      Events:
         RagstackApi:
           Type: HttpApi
           Properties:

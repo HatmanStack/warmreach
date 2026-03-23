@@ -95,18 +95,19 @@ class TestIngestProfile:
         assert "source: linkedin_profile" in uploaded_data
 
     @patch('shared_services.ingestion_service.requests.put')
-    def test_ingest_profile_wait_for_indexing(self, mock_put, ingestion_service, mock_ragstack_client):
-        """Test ingestion with wait_for_indexing"""
+    def test_ingest_profile_returns_immediately_after_upload(self, mock_put, ingestion_service, mock_ragstack_client):
+        """ingest_profile returns immediately with status 'uploaded' after S3 upload."""
         mock_put.return_value = Mock(status_code=200)
 
         result = ingestion_service.ingest_profile(
             profile_id="profile_abc",
             markdown_content="# Test Profile",
-            wait_for_indexing=True,
         )
 
-        assert result["status"] == "indexed"
-        mock_ragstack_client.get_document_status.assert_called()
+        assert result["status"] == "uploaded"
+        assert result["documentId"] == "doc123"
+        # Should NOT call get_document_status (no polling)
+        mock_ragstack_client.get_document_status.assert_not_called()
 
     def test_ingest_profile_without_profile_id(self, ingestion_service):
         """Test ingestion without profile_id raises error"""
@@ -247,113 +248,6 @@ class TestS3Upload:
         )
 
         assert result["status"] == "uploaded"
-
-
-class TestWaitForIndexing:
-    """Tests for indexing status polling"""
-
-    @patch('shared_services.ingestion_service.requests.put')
-    def test_wait_returns_indexed_status(self, mock_put, ingestion_service, mock_ragstack_client):
-        """Test waiting returns when indexed"""
-        mock_put.return_value = Mock(status_code=200)
-        mock_ragstack_client.get_document_status.return_value = {
-            "status": "indexed",
-            "documentId": "doc123",
-            "error": None,
-        }
-
-        result = ingestion_service.ingest_profile(
-            profile_id="profile_abc",
-            markdown_content="# Test",
-            wait_for_indexing=True,
-        )
-
-        assert result["status"] == "indexed"
-
-    @patch('shared_services.ingestion_service.requests.put')
-    @patch('shared_services.ingestion_service.time.sleep')
-    def test_wait_polls_until_indexed(self, mock_sleep, mock_put, ingestion_service, mock_ragstack_client):
-        """Test polling until indexed"""
-        mock_put.return_value = Mock(status_code=200)
-        mock_ragstack_client.get_document_status.side_effect = [
-            {"status": "pending", "documentId": "doc123", "error": None},
-            {"status": "pending", "documentId": "doc123", "error": None},
-            {"status": "indexed", "documentId": "doc123", "error": None},
-        ]
-
-        result = ingestion_service.ingest_profile(
-            profile_id="profile_abc",
-            markdown_content="# Test",
-            wait_for_indexing=True,
-        )
-
-        assert result["status"] == "indexed"
-        assert mock_ragstack_client.get_document_status.call_count == 3
-
-    @patch('shared_services.ingestion_service.requests.put')
-    def test_wait_returns_failed_status(self, mock_put, ingestion_service, mock_ragstack_client):
-        """Test waiting returns when failed"""
-        mock_put.return_value = Mock(status_code=200)
-        mock_ragstack_client.get_document_status.return_value = {
-            "status": "failed",
-            "documentId": "doc123",
-            "error": "Invalid document format",
-        }
-
-        result = ingestion_service.ingest_profile(
-            profile_id="profile_abc",
-            markdown_content="# Test",
-            wait_for_indexing=True,
-        )
-
-        assert result["status"] == "failed"
-        assert "Invalid document format" in result["error"]
-
-    @patch('shared_services.ingestion_service.requests.put')
-    @patch('shared_services.ingestion_service.time.monotonic')
-    @patch('shared_services.ingestion_service.time.sleep')
-    def test_wait_timeout_returns_timeout(self, mock_sleep, mock_monotonic, mock_put, ingestion_service, mock_ragstack_client):
-        """Test timeout returns timeout status with warning"""
-        mock_put.return_value = Mock(status_code=200)
-        mock_ragstack_client.get_document_status.return_value = {
-            "status": "pending",
-            "documentId": "doc123",
-            "error": None,
-        }
-        # Simulate time passing beyond timeout
-        mock_monotonic.side_effect = [0, 0, 30, 61]
-
-        result = ingestion_service.ingest_profile(
-            profile_id="profile_abc",
-            markdown_content="# Test",
-            wait_for_indexing=True,
-            indexing_timeout=60,
-        )
-
-        assert result["status"] == "timeout"
-
-    @patch('shared_services.ingestion_service.requests.put')
-    @patch('shared_services.ingestion_service.time.monotonic')
-    @patch('shared_services.ingestion_service.time.sleep')
-    def test_wait_always_processing_returns_timeout(self, mock_sleep, mock_monotonic, mock_put, ingestion_service, mock_ragstack_client):
-        """Test that always-processing status returns timeout after max_wait_seconds"""
-        mock_put.return_value = Mock(status_code=200)
-        mock_ragstack_client.get_document_status.return_value = {
-            "status": "processing",
-            "documentId": "doc123",
-            "error": None,
-        }
-        # Simulate exceeding the default 15s timeout
-        mock_monotonic.side_effect = [0, 0, 20]
-
-        result = ingestion_service.ingest_profile(
-            profile_id="profile_abc",
-            markdown_content="# Test",
-            wait_for_indexing=True,
-        )
-
-        assert result["status"] == "timeout"
-        assert result["documentId"] == "doc123"
 
 
 class TestMetadataPreparation:

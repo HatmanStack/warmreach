@@ -39,43 +39,38 @@ Server runs at `http://localhost:3001`
 
 ## API Endpoints
 
-### Search
+### Search & Discovery
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/search/` | Execute LinkedIn search with company/role filters |
-
-### Profile Initialization
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/profile-init/` | Initialize user profile and extract connections |
-| GET | `/profile-init/health` | Profile init service health |
+| POST | `/search` | Execute a LinkedIn search with company/role filters |
 
 ### LinkedIn Interactions
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/linkedin-interactions/send-message` | Send message to connection |
-| POST | `/linkedin-interactions/add-connection` | Send connection request |
-| POST | `/linkedin-interactions/create-post` | Create LinkedIn post |
-| POST | `/linkedin-interactions/follow-profile` | Follow a profile |
-| GET | `/linkedin-interactions/session-status` | Browser session status |
+| POST | `/linkedin-interactions/send-message` | Send a direct message to a connection |
+| POST | `/linkedin-interactions/add-connection` | Send a connection request |
+| POST | `/linkedin-interactions/create-post` | Create and publish a LinkedIn post |
+| POST | `/linkedin-interactions/follow-profile` | Follow a LinkedIn profile |
+| GET | `/linkedin-interactions/session-status` | Get browser session state |
 
-### Heal & Restore
+### Profile Initialization
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/heal-restore/status` | Check pending recovery sessions |
+| POST | `/profile-init` | Initialize profile database and extract connections |
+| GET | `/profile-init/health` | Profile initialization service health check |
+
+### System & Recovery
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/heal-restore/status` | Check recovery system status |
 | POST | `/heal-restore/authorize` | Authorize session recovery |
 | POST | `/heal-restore/cancel` | Cancel pending recovery |
-
-### System
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | System health and queue status |
-| GET | `/config/status` | Configuration report |
+| GET | `/health` | System health, queue status, and configuration |
+| GET | `/config/status` | Environment and feature configuration |
 
 ## Authentication
 
