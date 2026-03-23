@@ -5,6 +5,33 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] - 2026-03-23
+
+### Fixed
+
+- **Security:** WebSocket JWT hardening — explicit `algorithms=['RS256']` (CVE-2025-61152), `client_id` claim validation to prevent cross-application JWT reuse
+- **Security:** Module-level env var guard in edge-processing Lambda — `raise RuntimeError` instead of unstructured `KeyError` on missing `DYNAMODB_TABLE_NAME`
+- **Performance:** N+1 query in `get_connections_by_status()` replaced with batch fetch — reduces DynamoDB reads from N+1 to 2 calls for connection listings
+- **Performance:** BFS path queries use `ProjectionExpression` (7 attrs vs full items) and `max_queue_size=1000` cap to bound traversal
+- **Performance:** DynamoDB resource reuse in `batch_get_profile_metadata()` — `boto3.resource` stored in `__init__` instead of recreated per call
+- **Performance:** Base64 encoding consolidated into `encode_profile_id()` helper — replaced 13 inline occurrences across 5 files
+- **Backend:** Structured exception hierarchy in LLM service — all OpenAI-calling methods now raise `ExternalServiceError(service='OpenAI')` instead of generic `{'success': False}` dicts
+- **Backend:** `setup_correlation_context` moved to module-level import in all 9 Lambda handlers (was deferred import in 8 of 9)
+- **Backend:** Telemetry failure logging upgraded from `logger.debug` to `logger.warning` in edge-processing
+- **Backend:** Ingestion service `_wait_for_indexing` uses `time.monotonic()` for reliable timeout tracking
+- **Client:** Extracted `_withAuthenticatedSession` wrapper — eliminates duplicated auth/session/error boilerplate in controller methods
+- **Client:** Removed all `fakeReq`/`fakeRes` adapter patterns from 3 controllers (4 instances) — direct service calls instead
+- **Client:** Removed stub `generatePersonalizedMessage` endpoint
+- **Client:** Seedable PRNG in `BurstThrottleManager` via `randomFn` constructor option
+- **Frontend:** Optional Zod schema validation in `httpClient` with `SCHEMA_VALIDATION_ERROR` code
+- **Frontend:** MSW `onUnhandledRequest` set to `'error'` — catches unmocked HTTP calls in tests
+- **CI:** Admin dashboard added to CI pipeline (lint, typecheck, test)
+- **CI:** `pip-audit` added for Python dependency vulnerability scanning
+- **CI:** `scripts/setup.sh` uses `uv pip install` instead of bare `pip`
+- **Deps:** `werkzeug` 3.1.5 → 3.1.6 (CVE-2026-27199)
+- **Cleanup:** Removed debug artifact, unused devDependencies, stale metadata, inline imports, duplicate exports, dead demo data (~900 lines removed)
+- **Docs:** Updated all core docs (CLAUDE.md, ARCHITECTURE.md, API_REFERENCE.md, CONFIGURATION.md, README.md) to reflect v1.7–v1.8 additions — 14 drift fixes, 12 gap fills, 7 config drift corrections
+
 ## [1.8.0] - 2026-03-22
 
 ### Added
