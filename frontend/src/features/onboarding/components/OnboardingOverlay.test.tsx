@@ -86,10 +86,10 @@ describe('OnboardingOverlay', () => {
     expect(screen.getByText('Explore Your Network')).toBeInTheDocument();
   });
 
-  it('renders TierComparisonStep when currentStep is 3', () => {
+  it('renders nothing for out-of-bounds step', () => {
     mockOnboardingValue = { ...defaultOnboarding, currentStep: 3 };
-    renderOverlay();
-    expect(screen.getByText('Unlock Premium Features')).toBeInTheDocument();
+    const { container } = renderOverlay();
+    expect(container.firstChild).toBeNull();
   });
 
   it('skip button on ImportConnectionsStep calls skipStep', async () => {
@@ -101,19 +101,6 @@ describe('OnboardingOverlay', () => {
 
     await waitFor(() => {
       expect(mockSkipStep).toHaveBeenCalledWith('import_connections');
-    });
-  });
-
-  it('skip button on TierComparisonStep calls completeOnboarding', async () => {
-    mockOnboardingValue = { ...defaultOnboarding, currentStep: 3 };
-    renderOverlay();
-
-    const skipButton = screen.getByTestId('onboarding-skip');
-    fireEvent.click(skipButton);
-
-    await waitFor(() => {
-      expect(mockSkipStep).toHaveBeenCalledWith('tier_comparison');
-      expect(mockCompleteOnboarding).toHaveBeenCalled();
     });
   });
 
