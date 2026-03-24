@@ -9,8 +9,6 @@ from errors.exceptions import AuthorizationError, ExternalServiceError, NotFound
 from shared_services.activity_service import ActivityService
 from shared_services.activity_writer import write_activity
 from shared_services.edge_data_service import EdgeDataService
-from shared_services.insight_cache_service import InsightCacheService
-from shared_services.lifecycle_event_service import LifecycleEventService
 from shared_services.observability import setup_correlation_context
 from shared_services.request_utils import api_response, extract_user_id
 
@@ -29,7 +27,6 @@ RAGSTACK_API_KEY = os.environ.get('RAGSTACK_API_KEY', '')
 _ragstack_client = None
 _ingestion_service = None
 _activity_service = ActivityService(table=table)
-_lifecycle_event_service = LifecycleEventService(table)
 
 if RAGSTACK_GRAPHQL_ENDPOINT and RAGSTACK_API_KEY:
     from shared_services.ingestion_service import IngestionService
@@ -45,7 +42,6 @@ _edge_data_service = EdgeDataService(
     ragstack_client=_ragstack_client,
     ingestion_service=_ingestion_service,
 )
-_insight_cache_service = InsightCacheService(table=table)
 
 
 def _sanitize_request_context(request_context):
@@ -109,14 +105,6 @@ def _handle_upsert_status(body, user_id, event, edge_cache):
         'connection_status_change',
         metadata={'profileId': pid, 'status': updates.get('status', 'pending')},
     )
-    # Fire-and-forget lifecycle detection on metadata fields
-    _lifecycle_metadata_fields = {'name', 'currentTitle', 'currentCompany', 'currentLocation', 'headline'}
-    metadata_updates = {k: v for k, v in updates.items() if k in _lifecycle_metadata_fields and v}
-    if metadata_updates and result.get('profileId'):
-        try:
-            _lifecycle_event_service.detect_and_record_changes(user_id, result['profileId'], metadata_updates)
-        except Exception as e:
-            logger.warning(f'Lifecycle detection failed (non-blocking): {e}')
     return api_response(200, {'result': result}, event)
 
 
