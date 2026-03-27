@@ -24,16 +24,8 @@ export const handlers = [
     });
   }),
 
-  // POST /edges/insights — edge insights and analytics operations
-  http.post('*/edges/insights', () => {
-    return HttpResponse.json({
-      statusCode: 200,
-      body: JSON.stringify({ results: [] }),
-    });
-  }),
-
-  // POST /edges/pro — edge pro feature operations
-  http.post('*/edges/pro', () => {
+  // POST /analytics — analytics, insights, scoring, opportunities
+  http.post('*/analytics', () => {
     return HttpResponse.json({
       statusCode: 200,
       body: JSON.stringify({ results: [] }),

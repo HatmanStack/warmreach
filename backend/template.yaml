@@ -481,37 +481,48 @@ Resources:
             Auth:
               Authorizer: NONE
 
-  EdgeInsightsFunction:
+  AnalyticsInsightsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'warmreach-edge-insights-${Environment}'
-      CodeUri: lambdas/edge-insights/
+      FunctionName: !Sub 'warmreach-analytics-insights-${Environment}'
+      CodeUri: lambdas/analytics-insights/
       Handler: lambda_function.lambda_handler
-      Timeout: 60
+      Timeout: 45
+      MemorySize: 512
+      Environment:
+        Variables:
+          RAGSTACK_GRAPHQL_ENDPOINT: !If
+            - DeployRAGStackCondition
+            - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiUrl
+            - !Ref RagstackGraphqlEndpoint
+          RAGSTACK_API_KEY: !If
+            - DeployRAGStackCondition
+            - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiKey
+            - !Ref RagstackApiKey
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ProfilesTable
       Events:
-        EdgeInsightsApi:
+        AnalyticsApi:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
-            Path: /edges/insights
+            Path: /analytics
             Method: POST
-        EdgeInsightsOptionsApi:
+        AnalyticsOptionsApi:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
-            Path: /edges/insights
+            Path: /analytics
             Method: OPTIONS
             Auth:
               Authorizer: NONE
 
-  RagstackFunction:
+  RagstackOpsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'warmreach-ragstack-${Environment}'
-      CodeUri: lambdas/ragstack/
+      FunctionName: !Sub 'warmreach-ragstack-ops-${Environment}'
+      CodeUri: lambdas/ragstack-ops/
       Handler: lambda_function.lambda_handler
       Timeout: 30
       Environment:

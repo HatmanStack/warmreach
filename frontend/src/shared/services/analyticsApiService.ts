@@ -14,7 +14,7 @@ class AnalyticsApiService {
       stats: Record<string, unknown>;
       insights: string[] | null;
       computedAt: string;
-    }>('edges/insights', 'get_messaging_insights', { forceRecompute });
+    }>('analytics', 'get_messaging_insights', { forceRecompute });
 
     if (!result.success) {
       throw new ApiError(result.error);
@@ -45,7 +45,7 @@ class AnalyticsApiService {
 
   async getAnalyticsDashboard(days = 30): Promise<Record<string, unknown>> {
     const result = await httpClient.makeRequest<Record<string, unknown>>(
-      'edges/insights',
+      'analytics',
       'get_analytics_dashboard',
       { days }
     );
@@ -61,7 +61,7 @@ class AnalyticsApiService {
     insights: string[]
   ): Promise<{ success: boolean; insightsUpdatedAt: string }> {
     const result = await httpClient.makeRequest<{ success: boolean; insightsUpdatedAt: string }>(
-      'edges/insights',
+      'analytics',
       'store_message_insights',
       { insights }
     );

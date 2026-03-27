@@ -90,7 +90,7 @@ describe('ConnectionsApiService', () => {
       const result = await connectionsApiService.computeRelationshipScores();
 
       expect(httpClient.makeRequest).toHaveBeenCalledWith(
-        'edges/insights',
+        'analytics',
         'compute_relationship_scores'
       );
       expect(result.scoresComputed).toBe(10);

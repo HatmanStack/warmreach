@@ -24,13 +24,9 @@ describe('AnalyticsApiService', () => {
 
       const result = await analyticsApiService.getMessagingInsights();
 
-      expect(httpClient.makeRequest).toHaveBeenCalledWith(
-        'edges/insights',
-        'get_messaging_insights',
-        {
-          forceRecompute: false,
-        }
-      );
+      expect(httpClient.makeRequest).toHaveBeenCalledWith('analytics', 'get_messaging_insights', {
+        forceRecompute: false,
+      });
       expect(result).toEqual(mockData);
     });
 
@@ -72,13 +68,9 @@ describe('AnalyticsApiService', () => {
 
       const result = await analyticsApiService.getAnalyticsDashboard(7);
 
-      expect(httpClient.makeRequest).toHaveBeenCalledWith(
-        'edges/insights',
-        'get_analytics_dashboard',
-        {
-          days: 7,
-        }
-      );
+      expect(httpClient.makeRequest).toHaveBeenCalledWith('analytics', 'get_analytics_dashboard', {
+        days: 7,
+      });
       expect(result).toEqual({ summary: 'ok' });
     });
   });
@@ -93,13 +85,9 @@ describe('AnalyticsApiService', () => {
 
       const result = await analyticsApiService.storeMessageInsights(['new insight']);
 
-      expect(httpClient.makeRequest).toHaveBeenCalledWith(
-        'edges/insights',
-        'store_message_insights',
-        {
-          insights: ['new insight'],
-        }
-      );
+      expect(httpClient.makeRequest).toHaveBeenCalledWith('analytics', 'store_message_insights', {
+        insights: ['new insight'],
+      });
       expect(result).toEqual(mockData);
     });
 
