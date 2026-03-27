@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import boto3
+from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
 from errors.exceptions import ExternalServiceError, ValidationError
 from models.enums import classify_conversion_likelihood
@@ -51,31 +52,21 @@ class EdgeDataService(BaseService):
         ragstack_api_key: str = '',
         ragstack_client=None,
         ingestion_service=None,
+        dynamodb_client=None,
     ):
         super().__init__()
         self.table = table
-        # Eager construction is intentional: boto3 clients are cheap and benefit
-        # from Lambda warm-container reuse. Lazy init would add complexity for
-        # negligible savings.
         self._dynamodb_resource = boto3.resource('dynamodb')
-        self._dynamodb_client = boto3.client('dynamodb')
+        self._dynamodb_client = dynamodb_client or boto3.client('dynamodb')
         self.ragstack_endpoint = ragstack_endpoint
         self.ragstack_api_key = ragstack_api_key
         self.ragstack_client = ragstack_client
         self.ingestion_service = ingestion_service
 
-    @staticmethod
-    def _to_dynamodb_item(item: dict) -> dict:
-        """Convert a high-level Python dict to DynamoDB JSON format."""
-        from boto3.dynamodb.types import TypeSerializer
-
-        serializer = TypeSerializer()
-        return {k: serializer.serialize(v) for k, v in item.items()}
-
     def upsert_status(
         self, user_id: str, profile_id: str, status: str, added_at: str | None = None, messages: list | None = None
     ) -> dict[str, Any]:
-        """Create or update edge status (atomic dual-edge write via TransactWriteItems)."""
+        """Create or update edge status (idempotent upsert)."""
         try:
             profile_id_b64 = encode_profile_id(profile_id)
             current_time = datetime.now(UTC).isoformat()
@@ -93,41 +84,53 @@ class EdgeDataService(BaseService):
             if status == 'processed':
                 user_profile_edge['processedAt'] = current_time
 
+            # Atomic two-item transaction: forward edge Put + reverse edge Update
+            serializer = TypeSerializer()
+            serialized_item = {k: serializer.serialize(v) for k, v in user_profile_edge.items()}
             table_name = self.table.table_name
 
-            self._dynamodb_client.transact_write_items(
-                TransactItems=[
-                    {
-                        'Put': {
-                            'TableName': table_name,
-                            'Item': self._to_dynamodb_item(user_profile_edge),
-                        }
-                    },
-                    {
-                        'Update': {
-                            'TableName': table_name,
-                            'Key': self._to_dynamodb_item(
-                                {
-                                    'PK': f'PROFILE#{profile_id_b64}',
-                                    'SK': f'USER#{user_id}',
-                                }
-                            ),
-                            'UpdateExpression': 'SET addedAt = if_not_exists(addedAt, :added), #status = :status, lastAttempt = :lastAttempt, updatedAt = :updated, attempts = if_not_exists(attempts, :zero) + :inc',
-                            'ExpressionAttributeNames': {'#status': 'status'},
-                            'ExpressionAttributeValues': self._to_dynamodb_item(
-                                {
-                                    ':added': added_at or current_time,
-                                    ':status': status,
-                                    ':lastAttempt': current_time,
-                                    ':updated': current_time,
-                                    ':zero': 0,
-                                    ':inc': 1,
-                                }
-                            ),
-                        }
-                    },
-                ]
-            )
+            try:
+                self._dynamodb_client.transact_write_items(
+                    TransactItems=[
+                        {
+                            'Put': {
+                                'TableName': table_name,
+                                'Item': serialized_item,
+                            },
+                        },
+                        {
+                            'Update': {
+                                'TableName': table_name,
+                                'Key': {
+                                    'PK': {'S': f'PROFILE#{profile_id_b64}'},
+                                    'SK': {'S': f'USER#{user_id}'},
+                                },
+                                'UpdateExpression': 'SET addedAt = if_not_exists(addedAt, :added), #status = :status, lastAttempt = :lastAttempt, updatedAt = :updated, attempts = if_not_exists(attempts, :zero) + :inc',
+                                'ExpressionAttributeNames': {'#status': 'status'},
+                                'ExpressionAttributeValues': {
+                                    ':added': {'S': added_at or current_time},
+                                    ':status': {'S': status},
+                                    ':lastAttempt': {'S': current_time},
+                                    ':updated': {'S': current_time},
+                                    ':zero': {'N': '0'},
+                                    ':inc': {'N': '1'},
+                                },
+                            },
+                        },
+                    ]
+                )
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'TransactionCanceledException':
+                    reasons = e.response.get('CancellationReasons', [])
+                    logger.error(
+                        'Edge transaction cancelled',
+                        extra={
+                            'user_id': user_id,
+                            'profile_id': profile_id_b64,
+                            'cancellation_reasons': reasons,
+                        },
+                    )
+                raise
 
             ragstack_ingested = False
             ragstack_error = None
@@ -155,13 +158,7 @@ class EdgeDataService(BaseService):
             }
 
         except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', '')
-            if error_code == 'TransactionCanceledException':
-                logger.error(
-                    'Atomic edge transaction cancelled',
-                    extra={'user_id': user_id, 'profile_id': profile_id, 'reasons': str(e)},
-                )
-            else:
+            if e.response.get('Error', {}).get('Code') != 'TransactionCanceledException':
                 logger.error(f'DynamoDB error in upsert_status: {e}')
             raise ExternalServiceError(
                 message='Failed to upsert edge', service='DynamoDB', original_error=str(e)
@@ -894,7 +891,7 @@ class EdgeDataService(BaseService):
                 metadata={'user_id': user_id, 'source': 'edge_processing'},
             )
 
-            if result.get('status') in ('uploaded', 'indexed'):
+            if result.get('status') in ('uploaded', 'indexed', 'submitted'):
                 self._update_ingest_state(profile_id_b64, result.get('documentId'))
                 return {'success': True, 'status': result['status'], 'documentId': result.get('documentId')}
             else:

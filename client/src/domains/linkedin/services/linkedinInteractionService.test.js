@@ -157,14 +157,11 @@ describe('LinkedInInteractionService', () => {
   });
 
   describe('sendMessage', () => {
-    it('should delegate to messaging sub-service', async () => {
-      // Spy on internal sub-service methods
-      vi.spyOn(service._interactionMessagingService, '_navigateToProfile').mockResolvedValue(true);
-      vi.spyOn(service._interactionMessagingService, 'navigateToMessaging').mockResolvedValue(
-        undefined
-      );
-      vi.spyOn(service._interactionMessagingService, 'composeAndSendMessage').mockResolvedValue({
+    it('should delegate to messaging ops module', async () => {
+      const messagingOps = await import('./linkedinMessagingOps.js');
+      vi.spyOn(messagingOps, 'sendMessage').mockResolvedValue({
         messageId: 'm1',
+        deliveryStatus: 'sent',
       });
 
       const result = await service.sendMessage('p1', 'hello', 'u1');
@@ -175,13 +172,9 @@ describe('LinkedInInteractionService', () => {
   });
 
   describe('executeConnectionWorkflow', () => {
-    it('should delegate to connection sub-service', async () => {
-      vi.spyOn(service._interactionConnectionService, '_navigateToProfile').mockResolvedValue(true);
-      vi.spyOn(service._interactionConnectionService, 'getEarlyConnectionStatus').mockResolvedValue(
-        null
-      );
-      vi.spyOn(service._interactionConnectionService, 'isProfileContainer').mockResolvedValue(true);
-      vi.spyOn(service._interactionConnectionService, 'sendConnectionRequest').mockResolvedValue({
+    it('should delegate to connection ops module', async () => {
+      const connectionOps = await import('./linkedinConnectionOps.js');
+      vi.spyOn(connectionOps, 'executeConnectionWorkflow').mockResolvedValue({
         requestId: 'r1',
         status: 'sent',
         confirmationFound: true,

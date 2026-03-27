@@ -22,6 +22,7 @@ const config: KnipConfig = {
       ],
     },
     admin: {
+      entry: ['src/main.tsx'],
       project: ['src/**/*.{ts,tsx}'],
     },
   },

@@ -5,36 +5,27 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.9.0] - 2026-03-23
+## [1.9.0] - 2026-03-27
 
 ### Changed
 
-- **Security:** OPENAI_API_KEY migrated from plaintext env var to SSM SecureString runtime fetch with 300s TTL cache — matches existing Stripe SSM pattern
-- **Architecture:** Monolithic edge-processing Lambda (817 lines, 44 operations) split into 4 focused Lambdas — `edge-crud` (10 ops), `edge-insights` (14 ops), `edge-pro` (14 ops), `ragstack` (3 ops)
-- **Architecture:** Ingestion service converted to fire-and-forget — removed `_wait_for_indexing()` polling loop and `time.sleep()` blocking; client polls `/ragstack` status endpoint instead
-- **Architecture:** Edge writes use DynamoDB `TransactWriteItems` for atomic dual-edge creation — replaces manual rollback logic that could leave orphaned edges
-- **Performance:** Per-call OpenAI timeout (45s) prevents two sequential calls from exhausting the full Lambda timeout
-- **Client:** LinkedIn interaction service (2,420 lines, 53 methods) decomposed into `BaseLinkedInService` + 5 domain sub-services (messaging, connections, posts, follow, navigation) with shared injectable collaborators
-- **Client:** `profileInitService.ts` (1,351 lines) decomposed into thin orchestrator + `BatchProcessor` + `IngestionPipeline`
-- **Frontend:** `Profile.tsx` (622 lines) decomposed into 5 sub-components + 2 custom hooks
-- **Frontend:** `Auth.tsx` (514 lines) decomposed into 4 sub-components + `useAuthFlow` hook
-- **Backend:** Shared Lambda utilities (`get_user_id`, `report_telemetry`, `check_feature_gate`, `make_gated_handler`) extracted to `shared_services/lambda_utils.py` — eliminates duplication across 4 handlers
-
-### Added
-
-- **Docs:** `CONTRIBUTING.md` at project root — PR process, commit conventions, testing commands, architecture overview
+- **Security:** Restored OPENAI_API_KEY SSM SecureString pattern in template.yaml (OpenAIApiKeyArn parameter, ssm:GetParameter IAM policy) with 300s TTL cache in LLM Lambda
+- **Architecture:** Monolithic edge-processing Lambda (819 lines, 41 operations) split into 3 focused Lambdas -- `edge-crud` (15 ops, 30s/256MB), `ragstack-ops` (3 ops, 30s/256MB), `analytics-insights` (23 ops, 45s/512MB) with per-domain resource tuning
+- **Architecture:** Ingestion service converted to fire-and-forget -- removed `_wait_for_indexing()` polling loop and `time.sleep()` blocking; returns `status: 'submitted'` immediately
+- **Architecture:** Edge writes use DynamoDB `TransactWriteItems` for atomic dual-edge creation -- replaces manual put + update + rollback logic that could leave orphaned edges
+- **Performance:** Per-operation OpenAI timeouts (20-120s by operation type) prevent sequential calls from exhausting Lambda timeout; `_generate_icebreaker` shares `generate_message` timeout via `.get()` fallback
+- **Client:** LinkedIn interaction service (2,420 lines, 53 methods) decomposed into 4 domain files (`linkedinMessagingOps`, `linkedinConnectionOps`, `linkedinProfileOps`, `linkedinPostOps`) with thin facade preserving public API
+- **Client:** `profileInitService.ts` (1,351 lines) decomposed into 3 domain files (`profileScraping`, `profileBatchProcessing`, `profileIngestion`) with thin orchestrator; shared `MasterIndex` type exported from orchestrator
+- **Backend:** Shared Lambda utilities (`get_user_id`, `report_telemetry`, `check_feature_gate`, `lazy_gated_handler`, `sanitize_request_context`, `get_user_edges_cached`) extracted to `shared_services/handler_utils.py`
 
 ### Fixed
 
-- **Backend:** Unsafe key access in `_handle_analyze_gaps` — guarded with `.get()` and explicit 404
-- **Frontend:** Unsafe type cast in `useAuthFlow.ts` — extended `AuthFlowDeps.signUp` return type to include `needsVerification`
-- **Client:** Per-instance `RateLimiter` in sub-services — now shared via constructor injection from facade
-- **Client:** Internal underscore-prefixed methods removed from facade public surface
-- **Frontend:** `ProfileForm.tsx` `onInputChange` field parameter typed as `keyof ProfileData` instead of loose `string`
-- **Backend:** Removed deprecated `OpenAIApiKey` template parameter (no longer wired to any resource)
-- **Backend:** Lazy `_dynamodb_client` construction in `EdgeDataService` — avoids unnecessary cold-start overhead
-- **Cleanup:** Removed ~19 knip-flagged unused exports
-- **Docs:** Client README route listings aligned with `API_REFERENCE.md`
+- **Backend:** `TransactionCanceledException` no longer logs duplicate generic message in outer handler (inner handler already logs with cancellation reasons)
+- **Client:** Removed all `(service as any)` type-unsafe casts (23 instances across 3 profile sibling files); `ProfileInitService` fields marked `readonly`
+- **Cleanup:** Fixed knip config (added admin workspace entry), removed genuinely unused exports (`RagstackRetryConfig`, `RagstackConfig`, made `loadExistingLinksFromFiles` private)
+- **Docs:** Client README route tables replaced with link to `docs/API_REFERENCE.md` (single source of truth)
+- **Deps:** `requests` 2.32.5 -> 2.33.0 (CVE-2026-25645), `picomatch` high-severity ReDoS fix
+- **CI:** Added `pygments` CVE-2026-4539 ignore in pip-audit (no fix available)
 
 ## [1.8.1] - 2026-03-23
 

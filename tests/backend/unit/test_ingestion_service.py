@@ -55,7 +55,7 @@ class TestIngestProfile:
 
     @patch('shared_services.ingestion_service.requests.put')
     def test_ingest_profile_uploads_markdown(self, mock_put, ingestion_service, mock_ragstack_client):
-        """Test successful profile ingestion"""
+        """Test successful profile ingestion returns submitted status."""
         mock_put.return_value = Mock(status_code=200)
 
         result = ingestion_service.ingest_profile(
@@ -63,7 +63,7 @@ class TestIngestProfile:
             markdown_content="# Test Profile\n\nContent here",
         )
 
-        assert result["status"] == "uploaded"
+        assert result["status"] == "submitted"
         assert result["documentId"] == "doc123"
         assert result["profileId"] == "profile_abc"
         assert result["error"] is None
@@ -85,7 +85,7 @@ class TestIngestProfile:
             metadata={"user_id": "user123"},
         )
 
-        assert result["status"] == "uploaded"
+        assert result["status"] == "submitted"
 
         # Verify metadata was included in uploaded content
         call_args = mock_put.call_args
@@ -95,8 +95,8 @@ class TestIngestProfile:
         assert "source: linkedin_profile" in uploaded_data
 
     @patch('shared_services.ingestion_service.requests.put')
-    def test_ingest_profile_returns_immediately_after_upload(self, mock_put, ingestion_service, mock_ragstack_client):
-        """ingest_profile returns immediately with status 'uploaded' after S3 upload."""
+    def test_ingest_profile_returns_submitted(self, mock_put, ingestion_service, mock_ragstack_client):
+        """Test ingestion returns submitted status immediately (fire-and-forget)."""
         mock_put.return_value = Mock(status_code=200)
 
         result = ingestion_service.ingest_profile(
@@ -104,9 +104,8 @@ class TestIngestProfile:
             markdown_content="# Test Profile",
         )
 
-        assert result["status"] == "uploaded"
+        assert result["status"] == "submitted"
         assert result["documentId"] == "doc123"
-        # Should NOT call get_document_status (no polling)
         mock_ragstack_client.get_document_status.assert_not_called()
 
     def test_ingest_profile_without_profile_id(self, ingestion_service):
@@ -186,7 +185,7 @@ class TestS3Upload:
             markdown_content="# Test",
         )
 
-        assert result["status"] == "uploaded"
+        assert result["status"] == "submitted"
 
     @patch('shared_services.ingestion_service.requests.put')
     def test_upload_success_204(self, mock_put, ingestion_service):
@@ -198,7 +197,7 @@ class TestS3Upload:
             markdown_content="# Test",
         )
 
-        assert result["status"] == "uploaded"
+        assert result["status"] == "submitted"
 
     @patch('shared_services.ingestion_service.requests.post')
     def test_upload_multipart_with_fields(self, mock_post, ingestion_service, mock_ragstack_client):
@@ -215,7 +214,7 @@ class TestS3Upload:
             markdown_content="# Test",
         )
 
-        assert result["status"] == "uploaded"
+        assert result["status"] == "submitted"
         mock_post.assert_called_once()
 
     @patch('shared_services.ingestion_service.requests.put')
@@ -231,7 +230,7 @@ class TestS3Upload:
             markdown_content="# Test",
         )
 
-        assert result["status"] == "uploaded"
+        assert result["status"] == "submitted"
         assert mock_put.call_count == 2
 
     @patch('shared_services.ingestion_service.requests.put')
@@ -247,7 +246,54 @@ class TestS3Upload:
             markdown_content="# Test",
         )
 
-        assert result["status"] == "uploaded"
+        assert result["status"] == "submitted"
+
+
+class TestFireAndForgetIngestion:
+    """Tests for fire-and-forget ingestion (no blocking poll)."""
+
+    @patch('shared_services.ingestion_service.requests.put')
+    def test_ingest_returns_submitted_status(self, mock_put, ingestion_service, mock_ragstack_client):
+        """Ingestion returns status:'submitted' with documentId immediately."""
+        mock_put.return_value = Mock(status_code=200)
+
+        result = ingestion_service.ingest_profile(
+            profile_id="profile_abc",
+            markdown_content="# Test Profile",
+        )
+
+        assert result["status"] == "submitted"
+        assert result["documentId"] == "doc123"
+        assert result["error"] is None
+        # get_document_status should NOT be called (no polling)
+        mock_ragstack_client.get_document_status.assert_not_called()
+
+    @patch('shared_services.ingestion_service.requests.put')
+    @patch('shared_services.ingestion_service.time.sleep')
+    def test_ingest_does_not_block(self, mock_sleep, mock_put, ingestion_service):
+        """Verify time.sleep is not called during ingest (only upload retry uses it)."""
+        mock_put.return_value = Mock(status_code=200)
+
+        ingestion_service.ingest_profile(
+            profile_id="profile_abc",
+            markdown_content="# Test",
+        )
+
+        # time.sleep should not be called when upload succeeds on first attempt
+        mock_sleep.assert_not_called()
+
+    @patch('shared_services.ingestion_service.requests.put')
+    def test_wait_for_indexing_param_ignored(self, mock_put, ingestion_service, mock_ragstack_client):
+        """wait_for_indexing parameter is removed; ingestion always returns immediately."""
+        mock_put.return_value = Mock(status_code=200)
+
+        result = ingestion_service.ingest_profile(
+            profile_id="profile_abc",
+            markdown_content="# Test",
+        )
+
+        assert result["status"] == "submitted"
+        mock_ragstack_client.get_document_status.assert_not_called()
 
 
 class TestMetadataPreparation:

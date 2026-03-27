@@ -1,0 +1,96 @@
+[
+  {
+    "skill": "audit",
+    "date": "2026-03-13",
+    "plan": "2026-03-13-audit-9-of-10",
+    "audits": ["eval"]
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-03-13",
+    "plan": "2026-03-13-local-scraping"
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-03-13",
+    "plan": "2026-03-13-tech-debt-remediation"
+  },
+  {
+    "skill": "audit",
+    "date": "2026-03-19",
+    "plan": "2026-03-19-audit-warmreach-pro",
+    "audits": ["health", "eval", "docs"]
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-03-19",
+    "plan": "2026-03-19-warm-intro-paths"
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-03-21",
+    "plan": "2026-03-21-network-graph-visualization"
+  },
+  {
+    "skill": "audit",
+    "date": "2026-03-22",
+    "plan": "2026-03-22-audit-warmreach-pro",
+    "audits": ["health", "eval", "docs"]
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-03-22",
+    "plan": "2026-03-22-community-features"
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-03-22",
+    "plan": "2026-03-22-pro-features-v1.7"
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-03-22",
+    "plan": "2026-03-22-v1.8-admin-onboarding-stripe"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-03-13",
+    "plan": "v1.0",
+    "verdict": "GO"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-03-13",
+    "plan": "v1.1",
+    "verdict": "GO"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-03-13",
+    "plan": "v1.2",
+    "verdict": "GO"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-03-13",
+    "plan": "v1.2.1",
+    "verdict": "GO"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-03-13",
+    "plan": "v1.2.3",
+    "verdict": "GO"
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-03-26",
+    "plan": "2026-03-26-audit-debt-remediation"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-03-26",
+    "plan": "2026-03-26-audit-debt-remediation",
+    "verdict": "GO"
+  }
+]

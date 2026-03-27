@@ -2,7 +2,8 @@
 Profile Ingestion Service
 
 Uploads profile markdown documents to RAGStack for indexing.
-Handles S3 presigned URL uploads and status tracking.
+Returns immediately with status:'submitted' after upload (fire-and-forget).
+Callers check completion via the ragstack status operation.
 """
 
 import logging
@@ -65,10 +66,10 @@ class IngestionService:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Ingest a profile document into RAGStack.
+        Ingest a profile document into RAGStack (fire-and-forget).
 
-        Returns immediately after S3 upload with status 'uploaded'.
-        Callers that need completion status should poll the /ragstack status endpoint.
+        Uploads the document and returns immediately with status:'submitted'.
+        Callers should check completion via the ragstack status operation.
 
         Args:
             profile_id: Unique profile identifier (base64 encoded LinkedIn URL)
@@ -77,7 +78,7 @@ class IngestionService:
 
         Returns:
             Dict containing:
-            - status: "uploaded" or "failed"
+            - status: "submitted" or "failed"
             - documentId: The RAGStack document ID
             - error: Error message if status is "failed"
         """
@@ -105,15 +106,13 @@ class IngestionService:
             logger.info(f'Uploading profile {profile_id} to S3')
             self._upload_to_s3(upload_url, fields, content_with_metadata)
 
-            result = {
-                'status': 'uploaded',
+            logger.info(f'Profile {profile_id} submitted for ingestion')
+            return {
+                'status': 'submitted',
                 'documentId': document_id,
                 'profileId': profile_id,
                 'error': None,
             }
-
-            logger.info(f'Profile {profile_id} ingestion complete: {result["status"]}')
-            return result
 
         except RAGStackError as e:
             logger.error(f'RAGStack error during ingestion: {e}')

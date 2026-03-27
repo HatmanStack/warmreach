@@ -1,17 +1,22 @@
 import { logger } from '#utils/logger.js';
 import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { LinkedInErrorHandler } from '../../linkedin/utils/linkedinErrorHandler.js';
-import { generateProfileMarkdown } from '../utils/profileMarkdownGenerator.js';
 import axios from 'axios';
-import fs from 'fs/promises';
 import type { PuppeteerService } from '../../automation/services/puppeteerService.js';
-import type { LinkedInService } from '../../linkedin/services/linkedinService.js';
+import type { LinkedInService, ConnectionType } from '../../linkedin/services/linkedinService.js';
 import { LinkedInMessageScraperService } from '../../messaging/services/linkedinMessageScraperService.js';
 import { BrowserSessionManager } from '../../session/services/browserSessionManager.js';
 import { RagstackProxyService } from '../../ragstack/services/ragstackProxyService.js';
-import { BatchProcessor } from './batchProcessor.js';
-import { IngestionPipeline } from './ingestionPipeline.js';
-import type { ProcessingResult } from './batchProcessor.js';
+
+// Domain operations
+import { scrapeAndStoreMessages } from './profileScraping.js';
+import { processConnectionType } from './profileBatchProcessing.js';
+import {
+  triggerRAGStackIngestion as _triggerRAGStackIngestion,
+  createMasterIndexFile as _createMasterIndexFile,
+  loadMasterIndex as _loadMasterIndex,
+  updateMasterIndex as _updateMasterIndex,
+} from './profileIngestion.js';
 
 /**
  * Profile initialization state
@@ -44,6 +49,96 @@ interface ProfileInitState {
     expansionAttempt: number;
     currentFileIndex: number;
   };
+  [key: string]: unknown;
+}
+
+/**
+ * Master index file structure
+ */
+export interface MasterIndex {
+  metadata: {
+    capturedAt: string;
+    totalAllies: number;
+    totalIncoming: number;
+    totalOutgoing: number;
+    batchSize: number;
+    [key: string]: unknown;
+  };
+  files: {
+    allyConnections: FileReference[];
+    incomingConnections: FileReference[];
+    outgoingConnections: FileReference[];
+    [key: string]: FileReference[];
+  };
+  processingState: {
+    currentList: string;
+    currentBatch: number;
+    currentIndex: number;
+    completedBatches: number[];
+  };
+}
+
+/**
+ * File reference in master index
+ */
+interface FileReference {
+  fileName: string;
+  filePath?: string;
+  fileIndex?: number;
+  totalLinks?: number;
+  capturedAt?: string;
+  isComplete?: boolean;
+}
+
+/**
+ * Processing result
+ */
+interface ProcessingResult {
+  processed: number;
+  skipped: number;
+  errors: number;
+  connectionTypes?: Record<string, TypeResult>;
+  progressSummary?: unknown;
+  batches?: BatchResult[];
+}
+
+/**
+ * Type-specific processing result
+ */
+interface TypeResult {
+  processed: number;
+  skipped: number;
+  errors: number;
+  batches: BatchResult[];
+}
+
+/**
+ * Batch processing result
+ */
+interface BatchResult {
+  batchNumber: number;
+  batchFilePath?: string;
+  processed: number;
+  skipped: number;
+  errors: number;
+  connections: ConnectionProcessResult[];
+  startTime?: string;
+  endTime?: string;
+  duration?: number;
+}
+
+/**
+ * Individual connection processing result
+ */
+interface ConnectionProcessResult {
+  profileId: string;
+  action?: string;
+  status?: string;
+  reason?: string;
+  error?: string;
+  errorType?: string;
+  errorCategory?: string;
+  index: number;
 }
 
 /**
@@ -141,16 +236,20 @@ function getApiBaseUrl(): string | undefined {
 
 /**
  * Profile initialization service.
- * Thin orchestrator that delegates batch processing to BatchProcessor
- * and RAGStack ingestion to IngestionPipeline.
+ * Thin orchestrator that coordinates profile database initialization.
+ * Delegates connection processing, batch handling, and ingestion to sibling files.
  */
 export class ProfileInitService {
-  private linkedInService: LinkedInService;
-  private dynamoDBService: DynamoDBService;
-  private messageScraperService: InstanceType<typeof LinkedInMessageScraperService>;
-  private ragstackProxy: RagstackProxyService;
-  private batchProcessor: BatchProcessor;
-  private ingestionPipeline: IngestionPipeline;
+  readonly puppeteer: PuppeteerService;
+  readonly linkedInService: LinkedInService;
+  readonly dynamoDBService: DynamoDBService;
+  readonly messageScraperService: InstanceType<typeof LinkedInMessageScraperService>;
+  readonly localProfileScraper: LocalProfileScraperInterface | null;
+  readonly burstThrottleManager: BurstThrottleManagerInterface | null;
+  readonly interactionQueue: ImportModeToggle | null;
+  readonly backoffController: ImportModeToggle | null;
+  readonly ragstackProxy: RagstackProxyService;
+  readonly batchSize: number;
 
   constructor(
     puppeteerService: PuppeteerService,
@@ -162,8 +261,13 @@ export class ProfileInitService {
     interactionQueue?: ImportModeToggle,
     backoffController?: ImportModeToggle
   ) {
+    this.puppeteer = puppeteerService;
     this.linkedInService = linkedInService;
     this.dynamoDBService = dynamoDBService;
+    this.localProfileScraper = localProfileScraper || null;
+    this.burstThrottleManager = burstThrottleManager || null;
+    this.interactionQueue = interactionQueue || null;
+    this.backoffController = backoffController || null;
     this.messageScraperService = new LinkedInMessageScraperService({
       sessionManager: BrowserSessionManager,
     });
@@ -171,25 +275,7 @@ export class ProfileInitService {
       apiBaseUrl: getApiBaseUrl(),
       httpClient: axios,
     });
-
-    // Initialize extracted classes
-    this.ingestionPipeline = new IngestionPipeline({
-      ragstackProxy: this.ragstackProxy,
-      generateProfileMarkdown,
-    });
-
-    this.batchProcessor = new BatchProcessor({
-      dynamoDBService,
-      linkedInService,
-      localProfileScraper: localProfileScraper || null,
-      burstThrottleManager: burstThrottleManager || null,
-      interactionQueue: interactionQueue || null,
-      backoffController: backoffController || null,
-      ragstackProxy: this.ragstackProxy,
-      puppeteer: puppeteerService,
-      ingestionPipeline: this.ingestionPipeline,
-      batchSize: 100,
-    });
+    this.batchSize = 100;
   }
 
   /**
@@ -210,12 +296,10 @@ export class ProfileInitService {
         currentIndex: state.currentIndex,
       });
 
-      // Set auth token for DynamoDB and scrape operations
       if (state.jwtToken) {
         this.dynamoDBService.setAuthToken(state.jwtToken);
       }
 
-      // Perform LinkedIn login using existing LinkedInService
       await this.linkedInService.login(
         state.searchName,
         state.searchPassword,
@@ -224,7 +308,6 @@ export class ProfileInitService {
         'profile-init'
       );
 
-      // Process connection lists in batches (delegates to BatchProcessor)
       const result = await this.processConnectionLists(state);
 
       const totalDuration = Date.now() - startTime;
@@ -268,7 +351,6 @@ export class ProfileInitService {
         },
       });
 
-      // Add context to error for better debugging
       error.context = {
         requestId,
         duration: totalDuration,
@@ -286,85 +368,136 @@ export class ProfileInitService {
   }
 
   /**
-   * Process connection lists with batch processing.
-   * Delegates to BatchProcessor, then runs message scraping phase.
+   * Process connection lists with batch processing
    */
   async processConnectionLists(state: ProfileInitState): Promise<ProcessingResult> {
-    const result = await this.batchProcessor.processConnectionLists(state);
+    this.interactionQueue?.setImportMode(true);
+    this.backoffController?.setImportMode(true);
 
-    // Phase 2: Scrape message histories and update edges
-    if (state.masterIndexFile) {
-      await this._scrapeAndStoreMessages(state.masterIndexFile);
-    }
-
-    return result;
-  }
-
-  /**
-   * Trigger RAGStack ingestion for a profile.
-   * Delegates to IngestionPipeline.
-   */
-  async triggerRAGStackIngestion(profileId: string, state: ProfileInitState): Promise<unknown> {
-    return this.ingestionPipeline.triggerRAGStackIngestion(profileId, state);
-  }
-
-  /**
-   * Scrape LinkedIn message histories and store them on edges.
-   * Runs after edge creation so failures don't block profile init.
-   */
-  private async _scrapeAndStoreMessages(masterIndexFile: string): Promise<void> {
     try {
-      logger.info('Starting message history scraping phase');
+      logger.info('Starting connection list processing');
 
-      // Load master index to get batch file references
-      const content = await fs.readFile(masterIndexFile, 'utf8');
-      const masterIndex = JSON.parse(content);
-      const allConnectionIds: string[] = [];
+      ProfileInitStateManager.validateState(state);
 
-      for (const connectionType of ['ally', 'outgoing', 'incoming'] as const) {
-        const links = await this.batchProcessor._loadExistingLinksFromFiles(
-          connectionType,
-          masterIndex
-        );
-        for (const link of links) {
-          const match = link.match(/\/in\/([^/?\s]+)/);
-          const profileId = match?.[1]?.replace(/\/$/, '') ?? link;
-          if (profileId && profileId !== 'undefined') {
-            allConnectionIds.push(profileId);
-          }
+      const checkpoint = await this.dynamoDBService.getImportCheckpoint?.();
+      if (checkpoint) {
+        logger.info('Resuming from import checkpoint', {
+          connectionType: checkpoint.connectionType,
+          batchIndex: checkpoint.batchIndex,
+          lastProfileId: checkpoint.lastProfileId,
+        });
+        state.currentProcessingList = checkpoint.connectionType as string;
+        state.currentBatch = checkpoint.batchIndex as number;
+      }
+
+      let masterIndexFile = state.masterIndexFile;
+      if (!masterIndexFile) {
+        masterIndexFile = await this._createMasterIndexFile();
+        state.masterIndexFile = masterIndexFile;
+      }
+
+      const masterIndex = await this._loadMasterIndex(masterIndexFile);
+
+      if (masterIndex.metadata) {
+        state.totalConnections = {
+          ally: masterIndex.metadata.totalAllies || 0,
+          incoming: masterIndex.metadata.totalIncoming || 0,
+          outgoing: masterIndex.metadata.totalOutgoing || 0,
+        };
+      }
+
+      const connectionTypes: ConnectionType[] = ['ally', 'outgoing', 'incoming'];
+      const results: ProcessingResult = {
+        processed: 0,
+        skipped: 0,
+        errors: 0,
+        connectionTypes: {},
+        progressSummary: ProfileInitStateManager.getProgressSummary(state),
+      };
+
+      const processedInThisRun = new Set<string>();
+
+      for (const connectionType of connectionTypes) {
+        if (processedInThisRun.has(connectionType)) {
+          logger.info(`Skipping ${connectionType} connections - already processed in this run`);
+          continue;
         }
-      }
 
-      if (allConnectionIds.length === 0) {
-        logger.info('No connection IDs found for message scraping');
-        return;
-      }
+        if (state.currentProcessingList && state.currentProcessingList !== connectionType) {
+          logger.info(
+            `Skipping ${connectionType} connections - resuming from ${state.currentProcessingList}`
+          );
+          continue;
+        }
 
-      logger.info(`Scraping message histories for ${allConnectionIds.length} connections`);
+        logger.info(`Processing ${connectionType} connections`);
+        processedInThisRun.add(connectionType);
 
-      const scrapedMessages =
-        await this.messageScraperService.scrapeAllConversations(allConnectionIds);
-
-      if (scrapedMessages.size === 0) {
-        logger.info('No message histories scraped');
-        return;
-      }
-
-      // Store scraped messages on edges
-      let stored = 0;
-      for (const [profileId, messages] of scrapedMessages) {
         try {
-          await this.dynamoDBService.updateMessages(profileId, messages);
-          stored++;
+          const typeResult = await processConnectionType(this, connectionType, masterIndex, state);
+
+          results.connectionTypes![connectionType] = typeResult;
+          results.processed += typeResult.processed;
+          results.skipped += typeResult.skipped;
+          results.errors += typeResult.errors;
+
+          state = ProfileInitStateManager.updateBatchProgress(state, {
+            currentProcessingList: connectionType,
+            completedBatches: masterIndex.processingState.completedBatches,
+          }) as ProfileInitState;
+
+          await this._updateMasterIndex(masterIndexFile, masterIndex);
         } catch (error) {
-          logger.warn(`Failed to store messages for ${profileId}: ${(error as Error).message}`);
+          logger.error(`Failed to process ${connectionType} connections:`, error);
+
+          state.lastError = {
+            connectionType,
+            message: (error as Error).message,
+            timestamp: new Date().toISOString(),
+          };
+
+          throw error;
         }
       }
 
-      logger.info(`Message scraping phase complete: ${stored}/${scrapedMessages.size} stored`);
+      await scrapeAndStoreMessages(this, masterIndexFile);
+
+      await this.dynamoDBService.clearImportCheckpoint?.();
+
+      results.progressSummary = ProfileInitStateManager.getProgressSummary(state);
+
+      logger.info('Connection list processing completed', {
+        processed: results.processed,
+        skipped: results.skipped,
+        errors: results.errors,
+        progress: results.progressSummary,
+      });
+
+      return results;
     } catch (error) {
-      // Message scraping failure should NOT block profile init
-      logger.warn(`Message scraping phase failed (non-blocking): ${(error as Error).message}`);
+      logger.error('Connection list processing failed:', error);
+      throw error;
+    } finally {
+      this.interactionQueue?.setImportMode(false);
+      this.backoffController?.setImportMode(false);
     }
+  }
+
+  // --- Delegates to domain files ---
+
+  async triggerRAGStackIngestion(profileId: string, state: ProfileInitState): Promise<unknown> {
+    return _triggerRAGStackIngestion(this, profileId, state);
+  }
+
+  async _createMasterIndexFile(): Promise<string> {
+    return _createMasterIndexFile(this);
+  }
+
+  async _loadMasterIndex(masterIndexFile: string): Promise<MasterIndex> {
+    return _loadMasterIndex(this, masterIndexFile);
+  }
+
+  async _updateMasterIndex(masterIndexFile: string, masterIndex: MasterIndex): Promise<void> {
+    return _updateMasterIndex(this, masterIndexFile, masterIndex);
   }
 }

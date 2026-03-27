@@ -39,38 +39,8 @@ Server runs at `http://localhost:3001`
 
 ## API Endpoints
 
-### Search & Discovery
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/search` | Execute a LinkedIn search with company/role filters |
-
-### LinkedIn Interactions
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/linkedin-interactions/send-message` | Send a direct message to a connection |
-| POST | `/linkedin-interactions/add-connection` | Send a connection request |
-| POST | `/linkedin-interactions/create-post` | Create and publish a LinkedIn post |
-| POST | `/linkedin-interactions/follow-profile` | Follow a LinkedIn profile |
-| GET | `/linkedin-interactions/session-status` | Get browser session state |
-
-### Profile Initialization
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/profile-init` | Initialize profile database and extract connections |
-| GET | `/profile-init/health` | Profile initialization service health check |
-
-### System & Recovery
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/heal-restore/status` | Check recovery system status |
-| POST | `/heal-restore/authorize` | Authorize session recovery |
-| POST | `/heal-restore/cancel` | Cancel pending recovery |
-| GET | `/health` | System health, queue status, and configuration |
-| GET | `/config/status` | Environment and feature configuration |
+See [API Reference](../docs/API_REFERENCE.md) for the complete route documentation
+including request/response schemas and authentication requirements.
 
 ## Authentication
 
