@@ -47,9 +47,12 @@ export class LinkedInService {
   private puppeteer: PuppeteerService;
   private dynamoDBService: DynamoDBService;
 
-  constructor(puppeteerService: PuppeteerService) {
+  constructor(
+    puppeteerService: PuppeteerService,
+    dynamoDBService: DynamoDBService = new DynamoDBService()
+  ) {
     this.puppeteer = puppeteerService;
-    this.dynamoDBService = new DynamoDBService();
+    this.dynamoDBService = dynamoDBService;
   }
 
   /**

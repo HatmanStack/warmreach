@@ -1,4 +1,3 @@
-// @ts-nocheck -- migrated from .js; full type annotations pending
 /**
  * LinkedIn Post Operations - Post creation, publishing, media attachments
  *
@@ -10,6 +9,77 @@ import { logger } from '#utils/logger.js';
 import config from '#shared-config/index.js';
 import { LinkedInError } from '../utils/LinkedInError.js';
 import { linkedinResolver } from '../selectors/index.js';
+import type { Page, ElementHandle } from 'puppeteer';
+
+/**
+ * Subset of LinkedInInteractionService used by post ops.
+ */
+export interface PostOpsContext {
+  sessionManager: {
+    lastActivity: Date | null;
+    getSessionMetrics(): { recordOperation(success: boolean): void } | null;
+  };
+  configManager: {
+    get(key: string, defaultValue: number): number;
+  };
+  humanBehavior: {
+    checkAndApplyCooldown(): Promise<void>;
+    simulateHumanMouseMovement(page: Page, element: ElementHandle): Promise<void>;
+    recordAction(action: string, data: Record<string, unknown>): void;
+  };
+  getBrowserSession(): Promise<{
+    getPage(): Page;
+    goto(url: string, opts: Record<string, unknown>): Promise<void>;
+    waitForSelector(selector: string, opts: { timeout: number }): Promise<ElementHandle | null>;
+  }>;
+  navigateToPostCreator(): Promise<void>;
+  waitForLinkedInLoad(): Promise<boolean | void>;
+  waitForPostCreationInterface(): Promise<void>;
+  composePost(content: string): Promise<void>;
+  addMediaAttachments(attachments: MediaAttachment[]): Promise<void>;
+  publishPost(): Promise<PublishResult>;
+  clickElementHumanly(page: Page, element: ElementHandle): Promise<void>;
+  clearAndTypeText(page: Page, element: ElementHandle, text: string): Promise<void>;
+  typeWithHumanPattern(text: string, element?: ElementHandle | null): Promise<void>;
+  checkSuspiciousActivity(): Promise<unknown>;
+  _enforceRateLimit(): void;
+  _applyControlPlaneRateLimits(operation: string): Promise<void>;
+  _reportInteraction(operation: string): void;
+  _paced<T>(minMs: number, maxMs: number, fn: () => Promise<T>): Promise<T>;
+}
+
+interface MediaAttachment {
+  type: string;
+  filename: string;
+  filePath?: string;
+  url?: string;
+}
+
+export interface PublishResult {
+  postId: string;
+  postUrl: string;
+  publishedAt: string;
+  status: string;
+}
+
+export interface CreatePostResult {
+  postId: string;
+  postUrl: string;
+  publishStatus: string;
+  publishedAt: string;
+  userId: string;
+}
+
+export interface PostWorkflowResult {
+  workflowId: string;
+  postId: string;
+  postUrl: string;
+  publishStatus: string;
+  publishedAt: string;
+  contentLength: number;
+  mediaCount: number;
+  workflowSteps: { step: string; status: string }[];
+}
 
 /**
  * Create and publish a LinkedIn post
@@ -19,7 +89,12 @@ import { linkedinResolver } from '../selectors/index.js';
  * @param {string} userId
  * @returns {Promise<Object>}
  */
-export async function createPost(service, content, mediaAttachments = [], userId) {
+export async function createPost(
+  service: PostOpsContext,
+  content: string,
+  mediaAttachments: MediaAttachment[] = [],
+  userId: string
+): Promise<CreatePostResult> {
   const context = {
     operation: 'createPost',
     contentLength: content.length,
@@ -73,7 +148,7 @@ export async function createPost(service, content, mediaAttachments = [], userId
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<void>}
  */
-export async function navigateToPostCreator(service) {
+export async function navigateToPostCreator(service: PostOpsContext): Promise<void> {
   logger.info('Navigating to LinkedIn post creation interface');
 
   try {
@@ -87,7 +162,7 @@ export async function navigateToPostCreator(service) {
 
     await service.waitForLinkedInLoad();
 
-    let startPostButton = null;
+    let startPostButton: ElementHandle | null = null;
 
     try {
       startPostButton = await linkedinResolver.resolveWithWait(
@@ -96,9 +171,10 @@ export async function navigateToPostCreator(service) {
         { timeout: 5000 }
       );
       logger.debug(`Found start post button`);
-    } catch (err) {
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       logger.debug(`Selector failed for start post button:`, {
-        error: err.message,
+        error: errMsg,
       });
     }
 
@@ -112,11 +188,11 @@ export async function navigateToPostCreator(service) {
     await service.waitForPostCreationInterface();
 
     logger.info('Successfully navigated to post creation interface');
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error('Failed to navigate to post creation interface:', error);
-
+    const errMsg = error instanceof Error ? error.message : String(error);
     throw new LinkedInError(
-      `Post creator navigation failed: ${error.message}`,
+      `Post creator navigation failed: ${errMsg}`,
       'BROWSER_NAVIGATION_FAILED',
       { cause: error }
     );
@@ -128,11 +204,11 @@ export async function navigateToPostCreator(service) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<void>}
  */
-export async function waitForPostCreationInterface(service) {
+export async function waitForPostCreationInterface(service: PostOpsContext): Promise<void> {
   try {
     const session = await service.getBrowserSession();
 
-    let postCreationElement = null;
+    let postCreationElement: ElementHandle | null = null;
     try {
       postCreationElement = await linkedinResolver.resolveWithWait(
         session.getPage(),
@@ -159,7 +235,7 @@ export async function waitForPostCreationInterface(service) {
  * @param {string} content
  * @returns {Promise<void>}
  */
-export async function composePost(service, content) {
+export async function composePost(service: PostOpsContext, content: string): Promise<void> {
   logger.info('Composing LinkedIn post content', {
     contentLength: content.length,
   });
@@ -170,7 +246,7 @@ export async function composePost(service, content) {
 
     await service.waitForLinkedInLoad();
 
-    let contentInput = null;
+    let contentInput: ElementHandle | null = null;
     try {
       contentInput = await linkedinResolver.resolveWithWait(page, 'post:content-editor', {
         timeout: 3000,
@@ -197,9 +273,10 @@ export async function composePost(service, content) {
     await service.typeWithHumanPattern(content, contentInput);
 
     logger.info('Post content composed successfully');
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error('Failed to compose post content:', error);
-    throw new LinkedInError(`Post composition failed: ${error.message}`, 'POST_CREATION_FAILED', {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    throw new LinkedInError(`Post composition failed: ${errMsg}`, 'POST_CREATION_FAILED', {
       cause: error,
     });
   }
@@ -211,7 +288,10 @@ export async function composePost(service, content) {
  * @param {Array} mediaAttachments
  * @returns {Promise<void>}
  */
-export async function addMediaAttachments(service, mediaAttachments) {
+export async function addMediaAttachments(
+  service: PostOpsContext,
+  mediaAttachments: MediaAttachment[]
+): Promise<void> {
   logger.info('Adding media attachments to post', {
     attachmentCount: mediaAttachments.length,
   });
@@ -225,7 +305,7 @@ export async function addMediaAttachments(service, mediaAttachments) {
     const session = await service.getBrowserSession();
     const page = session.getPage();
 
-    let mediaButton = null;
+    let mediaButton: ElementHandle | null = null;
     try {
       mediaButton = await linkedinResolver.resolveWithWait(page, 'post:media-button', {
         timeout: 2000,
@@ -241,7 +321,7 @@ export async function addMediaAttachments(service, mediaAttachments) {
     }
 
     for (let i = 0; i < mediaAttachments.length; i++) {
-      const attachment = mediaAttachments[i];
+      const attachment = mediaAttachments[i]!;
       logger.info(`Processing media attachment ${i + 1}/${mediaAttachments.length}`, {
         type: attachment.type,
         filename: attachment.filename,
@@ -257,11 +337,13 @@ export async function addMediaAttachments(service, mediaAttachments) {
             timeout: 5000,
           });
           if (fileInput) {
-            await fileInput.uploadFile(attachment.filePath);
+            await (fileInput as ElementHandle<HTMLInputElement>).uploadFile(attachment.filePath);
             logger.debug(`Uploaded file: ${attachment.filePath}`);
           }
-        } catch (uploadError) {
-          logger.warn(`Failed to upload file ${attachment.filePath}:`, uploadError.message);
+        } catch (uploadError: unknown) {
+          const uploadMsg =
+            uploadError instanceof Error ? uploadError.message : String(uploadError);
+          logger.warn(`Failed to upload file ${attachment.filePath}:`, uploadMsg);
         }
       }
 
@@ -275,15 +357,15 @@ export async function addMediaAttachments(service, mediaAttachments) {
     });
 
     logger.info('Media attachments added successfully');
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error('Failed to add media attachments:', error);
-
+    const errMsg = error instanceof Error ? error.message : String(error);
     service.humanBehavior.recordAction('media_attachment_failed', {
       attachmentCount: mediaAttachments.length,
-      error: error.message,
+      error: errMsg,
     });
 
-    throw new LinkedInError(`Media attachment failed: ${error.message}`, 'POST_CREATION_FAILED', {
+    throw new LinkedInError(`Media attachment failed: ${errMsg}`, 'POST_CREATION_FAILED', {
       cause: error,
     });
   }
@@ -295,7 +377,7 @@ export async function addMediaAttachments(service, mediaAttachments) {
  * @param {string} content
  * @returns {Promise<void>}
  */
-export async function inputPostContent(service, content) {
+export async function inputPostContent(service: PostOpsContext, content: string): Promise<void> {
   logger.info('Inputting post content', {
     contentLength: content.length,
   });
@@ -317,9 +399,10 @@ export async function inputPostContent(service, content) {
     await service.clearAndTypeText(page, contentInput, content);
 
     logger.info('Post content input completed successfully');
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error('Failed to input post content:', error);
-    throw new Error(`Post content input failed: ${error.message}`);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Post content input failed: ${errMsg}`);
   }
 }
 
@@ -329,7 +412,10 @@ export async function inputPostContent(service, content) {
  * @param {Array} mediaAttachments
  * @returns {Promise<void>}
  */
-export async function attachMediaToPost(service, mediaAttachments) {
+export async function attachMediaToPost(
+  service: PostOpsContext,
+  mediaAttachments: MediaAttachment[]
+): Promise<void> {
   logger.info('Attaching media to post', {
     mediaCount: mediaAttachments.length,
   });
@@ -362,7 +448,7 @@ export async function attachMediaToPost(service, mediaAttachments) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<Object>}
  */
-export async function publishPost(service) {
+export async function publishPost(service: PostOpsContext): Promise<PublishResult> {
   logger.info('Publishing LinkedIn post');
 
   try {
@@ -377,7 +463,7 @@ export async function publishPost(service) {
       throw new LinkedInError('Publish button not found', 'ELEMENT_NOT_FOUND');
     }
 
-    const isDisabled = await publishButton.getAttribute('disabled');
+    const isDisabled = await publishButton.evaluate((el: Element) => el.getAttribute('disabled'));
     if (isDisabled) {
       throw new LinkedInError(
         'Publish button is disabled - post may be incomplete',
@@ -415,9 +501,10 @@ export async function publishPost(service) {
       publishedAt: new Date().toISOString(),
       status: 'published',
     };
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error('Failed to publish post:', error);
-    throw new LinkedInError(`Post publishing failed: ${error.message}`, 'POST_CREATION_FAILED', {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    throw new LinkedInError(`Post publishing failed: ${errMsg}`, 'POST_CREATION_FAILED', {
       cause: error,
     });
   }
@@ -430,7 +517,18 @@ export async function publishPost(service) {
  * @param {Array} mediaAttachments
  * @returns {Promise<Object>}
  */
-export async function createAndPublishPost(service, content, mediaAttachments = []) {
+export async function createAndPublishPost(
+  service: PostOpsContext,
+  content: string,
+  mediaAttachments: MediaAttachment[] = []
+): Promise<{
+  postId: string;
+  postUrl: string;
+  publishStatus: string;
+  publishedAt: string;
+  contentLength: number;
+  mediaCount: number;
+}> {
   logger.info('Creating and publishing LinkedIn post', {
     contentLength: content.length,
     hasMedia: mediaAttachments.length > 0,
@@ -470,12 +568,12 @@ export async function createAndPublishPost(service, content, mediaAttachments = 
       contentLength: content.length,
       mediaCount: mediaAttachments.length,
     };
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error('Failed to create and publish LinkedIn post:', error);
-
+    const errMsg = error instanceof Error ? error.message : String(error);
     service.humanBehavior.recordAction('post_failed', {
       contentLength: content.length,
-      error: error.message,
+      error: errMsg,
     });
 
     throw error;
@@ -491,11 +589,11 @@ export async function createAndPublishPost(service, content, mediaAttachments = 
  * @returns {Promise<Object>}
  */
 export async function executePostCreationWorkflow(
-  service,
-  content,
-  mediaAttachments = [],
-  options = {}
-) {
+  service: PostOpsContext,
+  content: string,
+  mediaAttachments: MediaAttachment[] = [],
+  options: Record<string, unknown> = {}
+): Promise<PostWorkflowResult> {
   const metrics = service.sessionManager.getSessionMetrics();
   try {
     const result = await _executePostCreationWorkflowInternal(
@@ -516,11 +614,11 @@ export async function executePostCreationWorkflow(
  * Internal implementation of post creation workflow
  */
 async function _executePostCreationWorkflowInternal(
-  service,
-  content,
-  mediaAttachments = [],
-  options = {}
-) {
+  service: PostOpsContext,
+  content: string,
+  mediaAttachments: MediaAttachment[] = [],
+  options: Record<string, unknown> = {}
+): Promise<PostWorkflowResult> {
   const context = {
     operation: 'executePostCreationWorkflow',
     contentLength: content.length,

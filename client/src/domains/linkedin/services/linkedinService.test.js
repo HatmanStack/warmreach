@@ -66,7 +66,7 @@ vi.mock('../../session/services/browserSessionManager.js', () => ({
   },
 }));
 
-// Mock DynamoDBService (relative path import)
+// Mock DynamoDBService (relative path import — still needed for the default constructor path)
 vi.mock('../../storage/services/dynamoDBService.js', () => ({
   default: class MockDynamoDBService {
     constructor() {
@@ -83,6 +83,17 @@ vi.mock('../../storage/services/dynamoDBService.js', () => ({
     }
   },
 }));
+
+function createMockDynamoDBService() {
+  return {
+    setAuthToken: vi.fn(),
+    getProfileDetails: vi.fn().mockResolvedValue(true),
+    upsertEdgeStatus: vi.fn().mockResolvedValue({}),
+    markBadContact: vi.fn().mockResolvedValue({}),
+    updateContactStatus: vi.fn().mockResolvedValue(),
+    getProfiles: vi.fn().mockResolvedValue([]),
+  };
+}
 
 vi.mock('../selectors/index.js', () => ({
   linkedinResolver: {
@@ -132,11 +143,13 @@ import { LinkedInService } from './linkedinService.js';
 describe('LinkedInService', () => {
   let service;
   let mockPuppeteer;
+  let mockDynamoDB;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockPuppeteer = createMockPuppeteerService();
-    service = new LinkedInService(mockPuppeteer);
+    mockDynamoDB = createMockDynamoDBService();
+    service = new LinkedInService(mockPuppeteer, mockDynamoDB);
 
     linkedinResolver.resolveWithWait.mockResolvedValue({
       type: vi.fn(),
@@ -150,8 +163,14 @@ describe('LinkedInService', () => {
       expect(service.puppeteer).toBe(mockPuppeteer);
     });
 
-    it('initializes with DynamoDBService', () => {
-      expect(service.dynamoDBService).toBeDefined();
+    it('uses injected DynamoDBService', () => {
+      expect(service.dynamoDBService).toBe(mockDynamoDB);
+    });
+
+    it('creates default DynamoDBService when none injected', () => {
+      const defaultService = new LinkedInService(mockPuppeteer);
+      expect(defaultService.dynamoDBService).toBeDefined();
+      expect(defaultService.dynamoDBService).not.toBe(mockDynamoDB);
     });
   });
 

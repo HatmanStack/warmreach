@@ -85,7 +85,7 @@ class TestEdgeServiceUpsertStatus:
         )
         mock_table.get_item.return_value = {'Item': {'name': 'John Doe'}}
 
-        with patch.object(service, '_trigger_ragstack_ingestion') as mock_ingest:
+        with patch.object(service._ingestion_svc, 'trigger_ragstack_ingestion') as mock_ingest:
             mock_ingest.return_value = {'success': True, 'status': 'uploaded'}
 
             result = service.upsert_status(
@@ -165,7 +165,7 @@ class TestEdgeServiceGetConnections:
         }
 
         service = EdgeService(table=mock_table)
-        service.batch_get_profile_metadata = MagicMock(return_value={
+        service._queries_svc.batch_get_profile_metadata = MagicMock(return_value={
             'dGVzdC1wcm9maWxl': {
                 'name': 'John Doe',
                 'headline': 'Software Engineer',
@@ -307,7 +307,7 @@ class TestEdgeServiceConversionLikelihood:
         }
 
         service = EdgeService(table=mock_table)
-        service.batch_get_profile_metadata = MagicMock(return_value={
+        service._queries_svc.batch_get_profile_metadata = MagicMock(return_value={
             'dGVzdC1wcm9maWxl': {
                 'name': 'John Doe',
                 'headline': 'Software Engineer',
@@ -342,7 +342,7 @@ class TestEdgeServiceConversionLikelihood:
         }
 
         service = EdgeService(table=mock_table)
-        service.batch_get_profile_metadata = MagicMock(return_value={
+        service._queries_svc.batch_get_profile_metadata = MagicMock(return_value={
             'dGVzdC1wcm9maWxl': {
                 'name': 'John Doe',
                 'headline': 'Software Engineer at Google',
@@ -374,7 +374,7 @@ class TestEdgeServiceConversionLikelihood:
         }
 
         service = EdgeService(table=mock_table)
-        service.batch_get_profile_metadata = MagicMock(return_value={
+        service._queries_svc.batch_get_profile_metadata = MagicMock(return_value={
             'dGVzdC1wcm9maWxl': {
                 'name': 'John Doe',
             }
@@ -650,7 +650,7 @@ class TestEdgeServiceProfilePicture:
         }
 
         service = EdgeService(table=mock_table)
-        service.batch_get_profile_metadata = MagicMock(return_value={
+        service._queries_svc.batch_get_profile_metadata = MagicMock(return_value={
             'dGVzdC1wcm9maWxl': {
                 'name': 'John Doe',
                 'profilePictureUrl': 'https://media.licdn.com/dms/image/test/photo.jpg',
@@ -678,7 +678,7 @@ class TestEdgeServiceProfilePicture:
         }
 
         service = EdgeService(table=mock_table)
-        service.batch_get_profile_metadata = MagicMock(return_value={
+        service._queries_svc.batch_get_profile_metadata = MagicMock(return_value={
             'dGVzdC1wcm9maWxl': {
                 'name': 'John Doe',
             }

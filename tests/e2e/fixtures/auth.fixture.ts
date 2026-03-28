@@ -15,7 +15,7 @@ export const test = base.extend<{ authenticatedPage: Page }>({
 
     // Wait for navigation after login
     await page.waitForURL('**/dashboard', { timeout: 10000 }).catch(() => {
-      // Some flows may redirect differently
+      console.warn('Auth fixture: dashboard redirect did not complete. Tests may fail if auth is required.');
     });
 
     await use(page);

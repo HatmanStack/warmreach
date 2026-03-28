@@ -1,4 +1,3 @@
-// @ts-nocheck -- migrated from .js; full type annotations pending
 /**
  * LinkedIn Connection Operations - Connection requests, status checks, follow operations
  *
@@ -9,6 +8,79 @@
 import { logger } from '#utils/logger.js';
 import { LinkedInError } from '../utils/LinkedInError.js';
 import { linkedinResolver, linkedinSelectors } from '../selectors/index.js';
+import type { Page, ElementHandle, JSHandle } from 'puppeteer';
+
+/**
+ * Subset of LinkedInInteractionService used by connection ops.
+ */
+export interface ConnectionOpsContext {
+  sessionManager: {
+    lastActivity: Date | null;
+    getSessionMetrics(): { recordOperation(success: boolean): void } | null;
+  };
+  humanBehavior: {
+    simulateHumanMouseMovement(page: Page, element: ElementHandle): Promise<void>;
+    recordAction(action: string, data: Record<string, unknown>): void;
+  };
+  dynamoDBService: {
+    setAuthToken(token: string): void;
+    upsertEdgeStatus(profileId: string, status: string): Promise<void>;
+  };
+  getBrowserSession(): Promise<{ getPage(): Page }>;
+  navigateToProfile(profileId: string): Promise<boolean>;
+  isProfileContainer(buttonName: string): Promise<boolean>;
+  getEarlyConnectionStatus(): Promise<string | null>;
+  ensureEdge(profileId: string, status: string, jwtToken?: string): Promise<void>;
+  sendConnectionRequest(profileId: string, jwtToken?: string): Promise<ConnectionRequestResult>;
+  createConnectionWorkflowResult(
+    profileId: string,
+    msg: string,
+    data: WorkflowData
+  ): ConnectionWorkflowResult;
+  checkFollowStatus(): Promise<boolean>;
+  clickFollowButton(profileId: string): Promise<FollowResult>;
+  clickElementHumanly(page: Page, element: ElementHandle): Promise<void>;
+  checkSuspiciousActivity(): Promise<unknown>;
+  _enforceRateLimit(): void;
+  _applyControlPlaneRateLimits(operation: string): Promise<void>;
+  _reportInteraction(operation: string): void;
+  _paced<T>(minMs: number, maxMs: number, fn: () => Promise<T>): Promise<T>;
+}
+
+export interface ConnectionRequestResult {
+  requestId: string;
+  status: string;
+  sentAt: string;
+  confirmationFound: boolean;
+}
+
+interface WorkflowData {
+  requestId?: string | null;
+  status?: string;
+  connectionStatus?: string;
+  sentAt?: string;
+  confirmationFound?: boolean;
+}
+
+export interface ConnectionWorkflowResult {
+  requestId: string | null;
+  status: string;
+  sentAt: string;
+  profileId: string;
+  hasPersonalizedMessage: boolean;
+}
+
+export interface FollowResult {
+  status: string;
+  selector: string | null;
+  timestamp: string;
+}
+
+export interface FollowProfileResult {
+  status: string;
+  profileId: string;
+  followedAt: string;
+}
 
 /**
  * Send the connection request after clicking connect button
@@ -17,7 +89,11 @@ import { linkedinResolver, linkedinSelectors } from '../selectors/index.js';
  * @param {string} jwtToken
  * @returns {Promise<Object>}
  */
-export async function sendConnectionRequest(service, profileId, jwtToken) {
+export async function sendConnectionRequest(
+  service: ConnectionOpsContext,
+  profileId: string,
+  jwtToken?: string
+): Promise<ConnectionRequestResult> {
   logger.info('Sending connection request for profile: ' + profileId);
   try {
     const session = await service.getBrowserSession();
@@ -56,9 +132,10 @@ export async function sendConnectionRequest(service, profileId, jwtToken) {
     });
     try {
       await service.ensureEdge(profileId, 'outgoing', jwtToken);
-    } catch (error) {
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
       logger.debug('Failed to create edge for connection request', {
-        error: error.message,
+        error: errMsg,
         profileId,
       });
     }
@@ -69,14 +146,13 @@ export async function sendConnectionRequest(service, profileId, jwtToken) {
       sentAt: new Date().toISOString(),
       confirmationFound: true,
     };
-  } catch (error) {
-    logger.error('Failed to send connection request:', error.message);
-    service.humanBehavior.recordAction('connection_request_failed', { error: error.message });
-    throw new LinkedInError(
-      `Connection request failed: ${error.message}`,
-      'BROWSER_NAVIGATION_FAILED',
-      { cause: error }
-    );
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.error('Failed to send connection request:', errMsg);
+    service.humanBehavior.recordAction('connection_request_failed', { error: errMsg });
+    throw new LinkedInError(`Connection request failed: ${errMsg}`, 'BROWSER_NAVIGATION_FAILED', {
+      cause: error,
+    });
   }
 }
 
@@ -85,7 +161,7 @@ export async function sendConnectionRequest(service, profileId, jwtToken) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<string>}
  */
-export async function checkConnectionStatus(service) {
+export async function checkConnectionStatus(service: ConnectionOpsContext): Promise<string> {
   try {
     const session = await service.getBrowserSession();
 
@@ -130,17 +206,20 @@ export async function checkConnectionStatus(service) {
  * @param {string} buttonName
  * @returns {Promise<boolean>}
  */
-export async function isProfileContainer(service, buttonName) {
+export async function isProfileContainer(
+  service: ConnectionOpsContext,
+  buttonName: string
+): Promise<boolean> {
   try {
     const session = await service.getBrowserSession();
     const page = session.getPage();
-    const cascadeContainer = linkedinSelectors['nav:profile-card-container'] || [];
+    const cascadeContainer = linkedinSelectors['nav:profile-card-container'] ?? [];
     const candidateSelectors = cascadeContainer
-      .filter((s) => !s.selector.includes('::-p-'))
-      .map((s) => s.selector);
+      .filter((s: { selector: string }) => !s.selector.includes('::-p-'))
+      .map((s: { selector: string }) => s.selector);
 
-    let container = null;
-    let usedSelector = null;
+    let container: ElementHandle | null = null;
+    let usedSelector: string | null = null;
     for (const sel of candidateSelectors) {
       try {
         const el = await page.$(sel);
@@ -149,10 +228,11 @@ export async function isProfileContainer(service, buttonName) {
           usedSelector = sel;
           break;
         }
-      } catch (error) {
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
         logger.debug('Selector query failed, trying next', {
           selector: sel,
-          error: error.message,
+          error: errMsg,
         });
       }
     }
@@ -165,7 +245,7 @@ export async function isProfileContainer(service, buttonName) {
 
     if (buttonName === 'pending') {
       const containsPending = await page.evaluate(
-        (el, buttonName) => {
+        (el: Element, buttonName: string) => {
           const html = el.innerHTML || '';
           return new RegExp(`aria[-\\s]?label\\s*=\\s*["'][^"']*${buttonName}[^"']*["']`, 'i').test(
             html
@@ -177,7 +257,7 @@ export async function isProfileContainer(service, buttonName) {
       logger.info(`${buttonName} container match: ${containsPending ? 'found' : 'not found'}`);
       return !!containsPending;
     } else if (buttonName === 'connection-degree') {
-      const isFirst = await page.evaluate((root) => {
+      const isFirst = await page.evaluate((root: Element) => {
         const el = root.querySelector('span.distance-badge .dist-value');
         const txt = el && el.textContent ? el.textContent.trim() : '';
         return txt === '1st';
@@ -185,24 +265,24 @@ export async function isProfileContainer(service, buttonName) {
       logger.info(`connection-degree match: ${isFirst ? '1st' : 'not 1st'}`);
       return !!isFirst;
     } else if (buttonName === 'connect') {
-      const cascadeAll = linkedinSelectors['connection:all-buttons'] || [];
+      const cascadeAll = linkedinSelectors['connection:all-buttons'] ?? [];
       const allSel = cascadeAll
-        .filter((s) => !s.selector.includes('::-p-'))
-        .map((s) => s.selector)
+        .filter((s: { selector: string }) => !s.selector.includes('::-p-'))
+        .map((s: { selector: string }) => s.selector)
         .join(', ');
 
-      const handle = await page.evaluateHandle(
-        (root, selString) => {
-          const lower = (s) => (s || '').toLowerCase();
-          const isVisible = (n) => {
+      const handle: JSHandle = await page.evaluateHandle(
+        (root: Element, selString: string) => {
+          const lower = (s: string | null) => (s || '').toLowerCase();
+          const isVisible = (n: Element) => {
             const r = n.getBoundingClientRect();
             const s = window.getComputedStyle(n);
             return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
           };
-          const nodes = root.querySelectorAll(selString || 'button');
+          const nodes = Array.from(root.querySelectorAll(selString || 'button'));
           for (const n of nodes) {
             const aria = lower(n.getAttribute('aria-label'));
-            const txt = lower((n.innerText || n.textContent || '').trim());
+            const txt = lower(((n as HTMLElement).innerText || n.textContent || '').trim());
             if (((aria && aria.includes('connect')) || txt === 'connect') && isVisible(n)) return n;
           }
           return null;
@@ -210,31 +290,31 @@ export async function isProfileContainer(service, buttonName) {
         container,
         allSel
       );
-      const btn = handle && handle.asElement && handle.asElement();
+      const btn = handle?.asElement?.() as ElementHandle<Element> | null;
       if (btn) {
         await service.clickElementHumanly(page, btn);
         return true;
       }
       return false;
     } else if (buttonName === 'more') {
-      const cascadeAll = linkedinSelectors['connection:all-buttons'] || [];
+      const cascadeAll = linkedinSelectors['connection:all-buttons'] ?? [];
       const allSel = cascadeAll
-        .filter((s) => !s.selector.includes('::-p-'))
-        .map((s) => s.selector)
+        .filter((s: { selector: string }) => !s.selector.includes('::-p-'))
+        .map((s: { selector: string }) => s.selector)
         .join(', ');
 
-      const handle = await page.evaluateHandle(
-        (root, selString) => {
-          const lower = (s) => (s || '').toLowerCase();
-          const isVisible = (n) => {
+      const handle: JSHandle = await page.evaluateHandle(
+        (root: Element, selString: string) => {
+          const lower = (s: string | null) => (s || '').toLowerCase();
+          const isVisible = (n: Element) => {
             const r = n.getBoundingClientRect();
             const s = window.getComputedStyle(n);
             return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
           };
-          const nodes = root.querySelectorAll(selString || 'button');
+          const nodes = Array.from(root.querySelectorAll(selString || 'button'));
           for (const n of nodes) {
             const aria = lower(n.getAttribute('aria-label'));
-            const txt = lower((n.innerText || n.textContent || '').trim());
+            const txt = lower(((n as HTMLElement).innerText || n.textContent || '').trim());
             if (((aria && aria.includes('more')) || txt === 'more') && isVisible(n)) return n;
           }
           return null;
@@ -242,7 +322,7 @@ export async function isProfileContainer(service, buttonName) {
         container,
         allSel
       );
-      const btn = handle && handle.asElement && handle.asElement();
+      const btn = handle?.asElement?.() as ElementHandle<Element> | null;
       if (btn) {
         await service.clickElementHumanly(page, btn);
         return true;
@@ -251,8 +331,9 @@ export async function isProfileContainer(service, buttonName) {
     } else {
       throw new LinkedInError(`Invalid button name: ${buttonName}`, 'MISSING_REQUIRED_FIELD');
     }
-  } catch (error) {
-    logger.debug('Pending container check failed:', error.message);
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.debug('Pending container check failed:', errMsg);
     return false;
   }
 }
@@ -264,14 +345,20 @@ export async function isProfileContainer(service, buttonName) {
  * @param {string} status
  * @param {string|undefined} jwtToken
  */
-export async function ensureEdge(service, profileId, status, jwtToken) {
+export async function ensureEdge(
+  service: ConnectionOpsContext,
+  profileId: string,
+  status: string,
+  jwtToken?: string
+): Promise<void> {
   try {
     if (jwtToken) {
       service.dynamoDBService.setAuthToken(jwtToken);
     }
     await service.dynamoDBService.upsertEdgeStatus(profileId, status);
-  } catch (error) {
-    logger.warn(`Failed to create edge with status '${status}' via edge manager:`, error.message);
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.warn(`Failed to create edge with status '${status}' via edge manager:`, errMsg);
   }
 }
 
@@ -280,7 +367,9 @@ export async function ensureEdge(service, profileId, status, jwtToken) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<string|null>}
  */
-export async function getEarlyConnectionStatus(service) {
+export async function getEarlyConnectionStatus(
+  service: ConnectionOpsContext
+): Promise<string | null> {
   try {
     const isAlly = await service.isProfileContainer('connection-degree');
     if (isAlly) return 'ally';
@@ -299,7 +388,11 @@ export async function getEarlyConnectionStatus(service) {
  * @param {Object} workflowData
  * @returns {Object}
  */
-export function createConnectionWorkflowResult(profileId, connectionMessage, workflowData) {
+export function createConnectionWorkflowResult(
+  profileId: string,
+  connectionMessage: string,
+  workflowData: WorkflowData
+): ConnectionWorkflowResult {
   return {
     requestId: workflowData.requestId || null,
     status: workflowData.status || workflowData.connectionStatus || 'unknown',
@@ -318,11 +411,11 @@ export function createConnectionWorkflowResult(profileId, connectionMessage, wor
  * @returns {Promise<Object>}
  */
 export async function executeConnectionWorkflow(
-  service,
-  profileId,
+  service: ConnectionOpsContext,
+  profileId: string,
   connectionMessage = '',
-  options = {}
-) {
+  options: Record<string, unknown> = {}
+): Promise<ConnectionWorkflowResult> {
   const metrics = service.sessionManager.getSessionMetrics();
   try {
     const result = await _executeConnectionWorkflowInternal(
@@ -343,11 +436,11 @@ export async function executeConnectionWorkflow(
  * Internal implementation of connection workflow
  */
 async function _executeConnectionWorkflowInternal(
-  service,
-  profileId,
+  service: ConnectionOpsContext,
+  profileId: string,
   connectionMessage = '',
-  options = {}
-) {
+  options: Record<string, unknown> = {}
+): Promise<ConnectionWorkflowResult> {
   const context = {
     operation: 'executeConnectionWorkflow',
     profileId,
@@ -376,7 +469,7 @@ async function _executeConnectionWorkflowInternal(
   logger.info('Step 2/4: Checking connection status');
   const earlyStatus = await service.getEarlyConnectionStatus();
   if (earlyStatus) {
-    await service.ensureEdge(profileId, earlyStatus, options?.jwtToken);
+    await service.ensureEdge(profileId, earlyStatus, options?.jwtToken as string | undefined);
     const earlyWorkflowData = { status: earlyStatus, connectionStatus: earlyStatus };
     const earlyResult = service.createConnectionWorkflowResult(
       profileId,
@@ -401,7 +494,10 @@ async function _executeConnectionWorkflowInternal(
   }
 
   logger.info('Step 4/4: Sending connection request');
-  const requestResult = await service.sendConnectionRequest(profileId, options?.jwtToken);
+  const requestResult = await service.sendConnectionRequest(
+    profileId,
+    options?.jwtToken as string | undefined
+  );
 
   service.sessionManager.lastActivity = new Date();
   service.humanBehavior.recordAction('connection_workflow_completed', {
@@ -438,7 +534,11 @@ async function _executeConnectionWorkflowInternal(
  * @param {Object} options
  * @returns {Promise<Object>}
  */
-export async function followProfile(service, profileId, options = {}) {
+export async function followProfile(
+  service: ConnectionOpsContext,
+  profileId: string,
+  options: Record<string, unknown> = {}
+): Promise<FollowProfileResult> {
   const metrics = service.sessionManager.getSessionMetrics();
   try {
     const result = await _followProfileInternal(service, profileId, options);
@@ -453,7 +553,11 @@ export async function followProfile(service, profileId, options = {}) {
 /**
  * Internal implementation of follow profile
  */
-async function _followProfileInternal(service, profileId, options = {}) {
+async function _followProfileInternal(
+  service: ConnectionOpsContext,
+  profileId: string,
+  options: Record<string, unknown> = {}
+): Promise<FollowProfileResult> {
   const context = {
     operation: 'followProfile',
     profileId,
@@ -482,7 +586,7 @@ async function _followProfileInternal(service, profileId, options = {}) {
     const alreadyFollowing = await service.checkFollowStatus();
     if (alreadyFollowing) {
       logger.info(`Already following profile: ${profileId}`);
-      await service.ensureEdge(profileId, 'followed', options?.jwtToken);
+      await service.ensureEdge(profileId, 'followed', options?.jwtToken as string | undefined);
       return {
         status: 'already_following',
         profileId,
@@ -493,7 +597,7 @@ async function _followProfileInternal(service, profileId, options = {}) {
     logger.info('Step 3/3: Clicking follow button');
     const followResult = await service.clickFollowButton(profileId);
 
-    await service.ensureEdge(profileId, 'followed', options?.jwtToken);
+    await service.ensureEdge(profileId, 'followed', options?.jwtToken as string | undefined);
 
     service.sessionManager.lastActivity = new Date();
 
@@ -514,12 +618,12 @@ async function _followProfileInternal(service, profileId, options = {}) {
       profileId,
       followedAt: new Date().toISOString(),
     };
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error(`Failed to follow profile ${profileId}:`, error);
-
+    const errMsg = error instanceof Error ? error.message : String(error);
     service.humanBehavior.recordAction('follow_profile_failed', {
       profileId,
-      error: error.message,
+      error: errMsg,
     });
 
     throw error;
@@ -531,7 +635,7 @@ async function _followProfileInternal(service, profileId, options = {}) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<boolean>}
  */
-export async function checkFollowStatus(service) {
+export async function checkFollowStatus(service: ConnectionOpsContext): Promise<boolean> {
   try {
     const session = await service.getBrowserSession();
     const page = session.getPage();
@@ -549,8 +653,9 @@ export async function checkFollowStatus(service) {
     }
 
     return false;
-  } catch (error) {
-    logger.debug('Follow status check failed:', error.message);
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.debug('Follow status check failed:', errMsg);
     return false;
   }
 }
@@ -561,21 +666,26 @@ export async function checkFollowStatus(service) {
  * @param {string} profileId
  * @returns {Promise<Object>}
  */
-export async function clickFollowButton(service, profileId) {
+export async function clickFollowButton(
+  service: ConnectionOpsContext,
+  profileId: string
+): Promise<FollowResult> {
   try {
     const session = await service.getBrowserSession();
     const page = session.getPage();
 
-    let followButton = null;
-    let foundSelector = null;
+    let followButton: ElementHandle | null = null;
+    let foundSelector: string | null = null;
 
     try {
       const element = await linkedinResolver.resolveWithWait(page, 'post:follow-button', {
         timeout: 2000,
       });
       if (element) {
-        const ariaLabel = await element.getAttribute('aria-label');
-        const innerText = await element.innerText();
+        const ariaLabel = await element.evaluate((el: Element) => el.getAttribute('aria-label'));
+        const innerText = await element.evaluate(
+          (el: Element) => (el as HTMLElement).innerText || ''
+        );
         if (
           ariaLabel?.toLowerCase().includes('following') ||
           innerText?.toLowerCase().includes('following')
@@ -624,9 +734,10 @@ export async function clickFollowButton(service, profileId) {
       selector: foundSelector,
       timestamp: new Date().toISOString(),
     };
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error(`Failed to click follow button for ${profileId}:`, error);
-    throw new LinkedInError(`Follow button click failed: ${error.message}`, 'ELEMENT_NOT_FOUND', {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    throw new LinkedInError(`Follow button click failed: ${errMsg}`, 'ELEMENT_NOT_FOUND', {
       cause: error,
     });
   }

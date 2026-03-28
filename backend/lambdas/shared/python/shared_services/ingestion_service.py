@@ -44,8 +44,8 @@ class IngestionService:
     def __init__(
         self,
         ragstack_client: RAGStackClient,
-        max_upload_retries: int = 3,
-        upload_retry_delay: float = 0.5,
+        max_upload_retries: int = 2,
+        upload_retry_delay: float = 0.3,
     ):
         """
         Initialize ingestion service.
@@ -180,7 +180,7 @@ class IngestionService:
         """
         Upload content to S3 via presigned URL.
 
-        Synchronous retry in Lambda. Max block time: ~7 seconds (3 retries with exponential backoff).
+        Synchronous retry in Lambda. Max block time: ~0.9 seconds (2 retries with exponential backoff).
         WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
         Consider Step Functions for long-running operations.
 

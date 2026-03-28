@@ -107,7 +107,7 @@ describe('LinkedInInteractionController', () => {
         sendMessage: vi.fn().mockResolvedValue({ messageId: 'msg-123', deliveryStatus: 'sent' }),
         executeConnectionWorkflow: vi
           .fn()
-          .mockResolvedValue({ connectionRequestId: 'conn-123', status: 'sent' }),
+          .mockResolvedValue({ requestId: 'conn-123', status: 'sent' }),
         isSessionActive: vi.fn().mockResolvedValue(true),
         initializeBrowserSession: vi.fn().mockResolvedValue({}),
         getSessionStatus: vi.fn().mockResolvedValue({

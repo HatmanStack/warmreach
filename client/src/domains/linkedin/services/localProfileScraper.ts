@@ -1,4 +1,3 @@
-// @ts-nocheck -- migrated from .js; cheerio generic types need follow-up
 /**
  * Local Profile Scraper
  *
@@ -7,13 +6,13 @@
  */
 
 import * as cheerio from 'cheerio';
+import type { AnyNode } from 'domhandler';
 import { logger } from '#utils/logger.js';
 import { LinkedInError } from '../utils/LinkedInError.js';
 import { profileSelectors } from '../selectors/profileSelectors.js';
 import type { Page } from 'puppeteer';
 
 type CheerioRoot = ReturnType<typeof cheerio.load>;
-type CheerioNode = Parameters<Parameters<ReturnType<typeof cheerio.load>>[1]>[1];
 
 const MAX_ACTIVITY_POSTS = 10;
 const PAGE_SETTLE_MS = 2500;
@@ -175,7 +174,7 @@ export class LocalProfileScraper {
     if (!items) return [];
 
     const experiences: ExperienceEntry[] = [];
-    items.each((_: number, el: CheerioNode) => {
+    items.each((_: number, el: AnyNode) => {
       const $el = cheerio.load(el);
       experiences.push({
         company: this._extractSubField($el, 'profile:scrape-experience-company'),
@@ -202,7 +201,7 @@ export class LocalProfileScraper {
     if (!items) return [];
 
     const entries: EducationEntry[] = [];
-    items.each((_: number, el: CheerioNode) => {
+    items.each((_: number, el: AnyNode) => {
       const $el = cheerio.load(el);
       entries.push({
         school: this._extractSubField($el, 'profile:scrape-education-school'),
@@ -228,7 +227,7 @@ export class LocalProfileScraper {
     if (!items) return [];
 
     const skills: string[] = [];
-    items.each((_: number, el: CheerioNode) => {
+    items.each((_: number, el: AnyNode) => {
       const text = cheerio.load(el).text().trim();
       if (text) skills.push(text);
     });
@@ -260,7 +259,7 @@ export class LocalProfileScraper {
     if (!posts) return [];
 
     const activities: ActivityEntry[] = [];
-    posts.each((i: number, el: CheerioNode) => {
+    posts.each((i: number, el: AnyNode) => {
       if (i >= MAX_ACTIVITY_POSTS) return;
 
       const $post = cheerio.load(el);

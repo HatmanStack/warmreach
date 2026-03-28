@@ -5,6 +5,32 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.3] - 2026-03-27
+
+### Changed
+
+- **Architecture:** EdgeDataService (920 lines) decomposed into 5 focused sub-services (EdgeStatusService, EdgeMessageService, EdgeNoteService, EdgeQueryService, EdgeIngestionService) with thin facade preserving public API
+- **Architecture:** LinkedInService accepts DynamoDBService via constructor injection instead of hard-instantiating
+- **Performance:** Retry parameters tuned in ragstack_client.py and ingestion_service.py: max_retries 3->2, base delay 0.5s->0.3s (worst case 3.5s->0.9s)
+- **Backend:** SSMCachedSecret extracted to shared_services/ssm_cache.py with TTL-based caching, replacing inline globals in LLM Lambda
+- **Client:** All 7 `@ts-nocheck` files fully typed: linkedinConnectionOps, linkedinMessagingOps, linkedinProfileOps, linkedinPostOps, localProfileScraper, linkedinInteractionService, linkedinInteractionController
+- **Client:** Fingerprint generation uses constrained sequential pool filtering (OS-to-GPU, device-to-resolution, browser-to-plugin compatibility maps) instead of independent random picks
+- **Client:** Signal detector uses EMA-based variance tracking per domain with adaptive thresholds (`mean + N*stddev`) replacing static 4x/2x multipliers
+
+### Fixed
+
+- **Frontend:** postsService.test.ts mock drift: 2 failing researchTopics tests updated from `callProfilesOperation` to `httpClient.makeRequest`
+
+### Added
+
+- **CI:** `test-backend-integration` job with LocalStack service container, running in parallel with unit tests
+- **E2E:** Playwright smoke tests for admin dashboard, billing/tier, network graph, and opportunities pages
+
+### Docs
+
+- 5 Lambda READMEs consolidated into ARCHITECTURE.md (LLM model routing, async research flow, registration lifecycle, WebSocket auth) and API_REFERENCE.md (command rate limiting)
+- PRO_FEATURES_ROADMAP updated with all completed debt items
+
 ## [1.10.2] - 2026-03-27
 
 ### Changed

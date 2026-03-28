@@ -128,7 +128,7 @@ class TestUpsertStatus:
         service, mock_table, mock_client = self._make_service()
         mock_table.get_item.return_value = {'Item': {'name': 'John'}}
 
-        with patch.object(service, '_trigger_ragstack_ingestion') as mock_ingest:
+        with patch.object(service._ingestion_svc, 'trigger_ragstack_ingestion') as mock_ingest:
             mock_ingest.return_value = {'success': True, 'status': 'uploaded'}
             result = service.upsert_status('test-user', 'profile', 'ally')
 
@@ -211,7 +211,7 @@ class TestGetConnectionsByStatus:
             ]
         }
         service = EdgeDataService(table=mock_table)
-        service.batch_get_profile_metadata = MagicMock(return_value={
+        service._queries_svc.batch_get_profile_metadata = MagicMock(return_value={
             'dGVzdA==': {'name': 'John Doe', 'headline': 'Engineer'}
         })
 
@@ -219,7 +219,7 @@ class TestGetConnectionsByStatus:
 
         assert result['success'] is True
         assert len(result['connections']) == 1
-        service.batch_get_profile_metadata.assert_called_once_with(['dGVzdA=='])
+        service._queries_svc.batch_get_profile_metadata.assert_called_once_with(['dGVzdA=='])
 
     def test_empty_edges_skips_batch_fetch(self):
         mock_table = MagicMock()
@@ -269,7 +269,7 @@ class TestQueryAllUserEdges:
         }
         service = EdgeDataService(table=mock_table)
 
-        edges = service._query_all_user_edges('u1')
+        edges = service.query_all_edges('u1')
 
         assert len(edges) == 1
         mock_table.query.assert_called_once()
@@ -287,7 +287,7 @@ class TestQueryAllUserEdges:
         ]
         service = EdgeDataService(table=mock_table)
 
-        edges = service._query_all_user_edges('u1')
+        edges = service.query_all_edges('u1')
 
         assert len(edges) == 2
         assert mock_table.query.call_count == 2
@@ -663,7 +663,7 @@ class TestFormatConnectionObjectNotes:
         edge_item = {'status': 'ally', 'messages': [], 'notes': notes}
         profile_data = {'name': 'John Doe'}
 
-        result = service._format_connection_object('profile-1', profile_data, edge_item)
+        result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
 
         assert result['notes'] == notes
 
@@ -673,7 +673,7 @@ class TestFormatConnectionObjectNotes:
         edge_item = {'status': 'ally', 'messages': []}
         profile_data = {'name': 'John Doe'}
 
-        result = service._format_connection_object('profile-1', profile_data, edge_item)
+        result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
 
         assert result['notes'] == []
 

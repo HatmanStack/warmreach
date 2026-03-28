@@ -22,13 +22,26 @@ interface SignalDetectorOptions {
   highSignalThreshold?: number;
 }
 
+interface DomainStats {
+  mean: number;
+  variance: number;
+  count: number;
+}
+
+const EMA_ALPHA = 0.1;
+const COLD_START_THRESHOLD = 3;
+const ADAPTIVE_MEDIUM_STDDEV = 3;
+const ADAPTIVE_LOW_STDDEV = 2;
+const STATIC_MEDIUM_MULTIPLIER = 4;
+const STATIC_LOW_MULTIPLIER = 2;
+
 /**
  * SignalDetector aggregates multiple signals (response timing, HTTP status, content analysis)
  * to assess if the automation should pause for account safety.
  */
 export class SignalDetector {
   private signals: Signal[] = [];
-  private responseBaselines: Map<string, number> = new Map();
+  private domainStats: Map<string, DomainStats> = new Map();
   private readonly windowMs: number;
   private readonly pauseThreatThreshold: number;
   private readonly highSignalThreshold: number;
@@ -40,29 +53,61 @@ export class SignalDetector {
   }
 
   /**
-   * Record a response timing signal and update baseline
+   * Record a response timing signal and update baseline with adaptive thresholds.
+   * Uses EMA-based variance tracking. Falls back to static multipliers during
+   * cold start (fewer than COLD_START_THRESHOLD data points).
    */
   recordResponseTiming(url: string, durationMs: number): void {
     const domain = this._getDomain(url);
-    const baseline = this.responseBaselines.get(domain) || durationMs;
+    const stats = this.domainStats.get(domain) || {
+      mean: durationMs,
+      variance: 0,
+      count: 0,
+    };
 
-    // Simple EMA for baseline (alpha = 0.1)
-    const newBaseline = baseline * 0.9 + durationMs * 0.1;
-    this.responseBaselines.set(domain, newBaseline);
+    // Compute thresholds from pre-update stats
+    let mediumThreshold: number;
+    let lowThreshold: number;
 
-    if (durationMs > 4 * baseline) {
+    if (stats.count < COLD_START_THRESHOLD) {
+      // Cold start: use static multipliers against current mean
+      mediumThreshold = STATIC_MEDIUM_MULTIPLIER * stats.mean;
+      lowThreshold = STATIC_LOW_MULTIPLIER * stats.mean;
+    } else {
+      // Adaptive: mean + N * stddev
+      // Floor stddev at 10% of mean to prevent zero-variance collapse
+      const rawStddev = Math.sqrt(stats.variance);
+      const stddev = Math.max(rawStddev, stats.mean * 0.1);
+      mediumThreshold = stats.mean + ADAPTIVE_MEDIUM_STDDEV * stddev;
+      lowThreshold = stats.mean + ADAPTIVE_LOW_STDDEV * stddev;
+    }
+
+    // Update EMA for mean
+    const newMean = stats.mean * (1 - EMA_ALPHA) + durationMs * EMA_ALPHA;
+
+    // Update EMA for variance: track (durationMs - mean)^2
+    const deviation = durationMs - stats.mean;
+    const newVariance = stats.variance * (1 - EMA_ALPHA) + EMA_ALPHA * deviation * deviation;
+
+    this.domainStats.set(domain, {
+      mean: newMean,
+      variance: newVariance,
+      count: stats.count + 1,
+    });
+
+    if (durationMs > mediumThreshold) {
       this._addSignal({
         type: 'slow-response',
         severity: 'medium',
         timestamp: Date.now(),
-        details: `Response time ${durationMs}ms is > 4x baseline ${Math.round(baseline)}ms`,
+        details: `Response time ${durationMs}ms exceeds medium threshold ${Math.round(mediumThreshold)}ms`,
       });
-    } else if (durationMs > 2 * baseline) {
+    } else if (durationMs > lowThreshold) {
       this._addSignal({
         type: 'slow-response',
         severity: 'low',
         timestamp: Date.now(),
-        details: `Response time ${durationMs}ms is > 2x baseline ${Math.round(baseline)}ms`,
+        details: `Response time ${durationMs}ms exceeds low threshold ${Math.round(lowThreshold)}ms`,
       });
     }
   }
@@ -174,7 +219,8 @@ export class SignalDetector {
         const critical = recentSignals.find((s) => s.severity === 'critical');
         reason = `Critical signal detected: ${critical?.type} (${critical?.details})`;
       } else if (highSignalCount >= this.highSignalThreshold) {
-        reason = `High threat detected: ${highSignalCount} high-severity signals in 10 minutes`;
+        const windowMinutes = Math.round(this.windowMs / 60000);
+        reason = `High threat detected: ${highSignalCount} high-severity signals in ${windowMinutes} minutes`;
       } else {
         reason = `Threat level elevated to ${threatLevel}`;
       }
@@ -193,7 +239,7 @@ export class SignalDetector {
    */
   clear(): void {
     this.signals = [];
-    this.responseBaselines.clear();
+    this.domainStats.clear();
     logger.info('[SignalDetector] Signals and baselines cleared');
   }
 
@@ -204,7 +250,7 @@ export class SignalDetector {
     return {
       signalCount: this.signals.length,
       threatLevel: this.assess().threatLevel,
-      baselines: Object.fromEntries(this.responseBaselines),
+      domainStats: Object.fromEntries(this.domainStats),
     };
   }
 

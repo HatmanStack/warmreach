@@ -93,8 +93,8 @@ class RAGStackClient:
         self,
         endpoint: str,
         api_key: str,
-        max_retries: int = 3,
-        retry_delay: float = 0.5,
+        max_retries: int = 2,
+        retry_delay: float = 0.3,
     ):
         """
         Initialize RAGStack client.
@@ -104,7 +104,7 @@ class RAGStackClient:
             api_key: AppSync API key for authentication
             max_retries: Maximum number of retry attempts for transient failures
             retry_delay: Base delay between retries in seconds (exponential backoff).
-                         Max block time: ~3.5s with defaults (0.5 + 1.0 + 2.0).
+                         Max block time: ~0.9s with defaults (0.3 + 0.6).
         """
         if not endpoint:
             raise ValueError('endpoint is required')

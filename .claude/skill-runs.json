@@ -104,5 +104,16 @@
     "date": "2026-03-27",
     "plan": "2026-03-27-audit-warmreach-pro",
     "verdict": "VERIFIED"
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-03-27",
+    "plan": "2026-03-27-audit-debt-cleanup"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-03-27",
+    "plan": "2026-03-27-audit-debt-cleanup",
+    "verdict": "GO"
   }
 ]

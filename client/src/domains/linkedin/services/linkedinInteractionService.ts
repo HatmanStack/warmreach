@@ -1,4 +1,3 @@
-// @ts-nocheck -- migrated from .js; full type annotations pending
 import { logger } from '#utils/logger.js';
 import { LinkedInErrorHandler } from '../utils/linkedinErrorHandler.js';
 import ConfigManager from '#shared-config/configManager.js';
@@ -10,20 +9,102 @@ import { LinkedInConnectionService } from '../../connections/services/linkedinCo
 import { LinkedInMessageScraperService } from '../../messaging/services/linkedinMessageScraperService.js';
 import { LinkedInError } from '../utils/LinkedInError.js';
 import { RateLimiter, RateLimitExceededError } from '../../automation/utils/rateLimiter.js';
+import type { Page, ElementHandle } from 'puppeteer';
 
 // Domain operations
 import * as profileOps from './linkedinProfileOps.js';
 import * as messagingOps from './linkedinMessagingOps.js';
 import * as connectionOps from './linkedinConnectionOps.js';
 import * as postOps from './linkedinPostOps.js';
+import type { ProfileOpsContext } from './linkedinProfileOps.js';
+import type { MessagingOpsContext } from './linkedinMessagingOps.js';
+import type { ConnectionOpsContext } from './linkedinConnectionOps.js';
+import type { PostOpsContext } from './linkedinPostOps.js';
+
+type OpsContext = ProfileOpsContext & MessagingOpsContext & ConnectionOpsContext & PostOpsContext;
+
+interface SessionManagerLike {
+  getInstance(opts: { reinitializeIfUnhealthy: boolean }): Promise<unknown>;
+  cleanup(): Promise<void>;
+  isSessionHealthy(): Promise<boolean>;
+  getHealthStatus(): Promise<Record<string, unknown>>;
+  recordError(error: unknown): Promise<void>;
+  getBackoffController(): { handleCheckpoint(url: string): Promise<void> } | null;
+  getSessionMetrics(): { recordOperation(success: boolean): void } | null;
+  lastActivity: Date | null;
+}
+
+interface ConfigManagerLike {
+  get(key: string, defaultValue: number): number;
+  setOverride(key: string, value: number): void;
+  getErrorHandlingConfig(): { retryAttempts: number; retryBaseDelay: number };
+}
+
+interface ControlPlaneServiceLike {
+  isConfigured: boolean;
+  syncRateLimits(): Promise<{
+    linkedin_interactions?: {
+      daily_limit?: number | null;
+      hourly_limit?: number | null;
+    };
+  } | null>;
+  reportInteraction(operation: string): void;
+}
+
+interface HumanBehaviorLike {
+  checkAndApplyCooldown(): Promise<void>;
+  simulateHumanMouseMovement(page: Page, element: ElementHandle): Promise<void>;
+  recordAction(action: string, data?: Record<string, unknown>): void;
+}
+
+interface ServiceOptions {
+  sessionManager?: SessionManagerLike;
+  configManager?: ConfigManagerLike;
+  dynamoDBService?: DynamoDBService;
+  controlPlaneService?: ControlPlaneServiceLike | null;
+  humanBehavior?: HumanBehaviorLike;
+  navigationService?: LinkedInNavigationService;
+  messagingService?: LinkedInMessagingService;
+  connectionService?: LinkedInConnectionService;
+  messageScraperService?: LinkedInMessageScraperService;
+}
+
+interface ExecutionContext {
+  operation?: string;
+  attemptCount?: number;
+  [key: string]: unknown;
+}
+
+interface ValidationResult {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+interface WorkflowParams {
+  recipientProfileId?: string;
+  messageContent?: string;
+  profileId?: string;
+  connectionMessage?: string;
+  content?: string;
+  mediaAttachments?: unknown[];
+  operations?: unknown[];
+}
 
 const RandomHelpers = {
-  async randomDelay(minMs = 300, maxMs = 800) {
+  async randomDelay(minMs = 300, maxMs = 800): Promise<void> {
     const span = Math.max(0, maxMs - minMs);
     const delayMs = minMs + Math.floor(Math.random() * (span + 1));
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   },
 };
+
+/**
+ * Each ops module defines its own narrow ServiceContext interface.
+ * This service satisfies all of them at runtime via duck typing.
+ * The _self() helper bridges the structural mismatch with a single cast
+ * rather than repeating type assertions at every delegation call site.
+ */
 
 /**
  * LinkedIn Interaction Service - Thin facade that delegates to domain operation files.
@@ -32,10 +113,28 @@ const RandomHelpers = {
  * All dependencies default to production implementations when not provided.
  */
 export class LinkedInInteractionService {
-  constructor(options = {}) {
-    // Inject core dependencies or use defaults
-    this.sessionManager = options.sessionManager || BrowserSessionManager;
-    this.configManager = options.configManager || ConfigManager;
+  // BrowserSessionManager is a static-method class used as a duck-typed singleton.
+  // ConfigManager's default export is an instance from getInstance().
+  // Both satisfy narrow duck-typed interfaces in each ops module at runtime.
+  sessionManager: SessionManagerLike;
+  configManager: ConfigManagerLike;
+  dynamoDBService: DynamoDBService;
+  controlPlaneService: ControlPlaneServiceLike | null;
+  humanBehavior: HumanBehaviorLike;
+  navigationService: LinkedInNavigationService;
+  messagingService: LinkedInMessagingService;
+  connectionService: LinkedInConnectionService;
+  messageScraperService: LinkedInMessageScraperService;
+  maxRetries: number;
+  baseRetryDelay: number;
+  _rateLimiter: RateLimiter;
+
+  constructor(options: ServiceOptions = {}) {
+    // Inject core dependencies or use defaults.
+    // BrowserSessionManager and ConfigManager are duck-typed singletons from JS modules.
+    this.sessionManager =
+      options.sessionManager || (BrowserSessionManager as unknown as SessionManagerLike);
+    this.configManager = options.configManager || (ConfigManager as unknown as ConfigManagerLike);
     this.dynamoDBService = options.dynamoDBService || new DynamoDBService();
     this.controlPlaneService = options.controlPlaneService || null;
 
@@ -45,34 +144,40 @@ export class LinkedInInteractionService {
       recordAction() {},
     };
 
+    // The domain services accept duck-typed options; BrowserSessionManager (a static class)
+    // and ConfigManager satisfy the structural interfaces at runtime, so we assert here.
+    const sm = this.sessionManager as unknown;
+    const cm = this.configManager as unknown;
+    const db = this.dynamoDBService as unknown;
+
     this.navigationService =
       options.navigationService ||
       new LinkedInNavigationService({
-        sessionManager: this.sessionManager,
-        configManager: this.configManager,
-      });
+        sessionManager: sm,
+        configManager: cm,
+      } as ConstructorParameters<typeof LinkedInNavigationService>[0]);
 
     this.messagingService =
       options.messagingService ||
       new LinkedInMessagingService({
-        sessionManager: this.sessionManager,
+        sessionManager: sm,
         navigationService: this.navigationService,
-        dynamoDBService: this.dynamoDBService,
-      });
+        dynamoDBService: db,
+      } as unknown as ConstructorParameters<typeof LinkedInMessagingService>[0]);
 
     this.connectionService =
       options.connectionService ||
       new LinkedInConnectionService({
-        sessionManager: this.sessionManager,
+        sessionManager: sm,
         navigationService: this.navigationService,
-        dynamoDBService: this.dynamoDBService,
-      });
+        dynamoDBService: db,
+      } as ConstructorParameters<typeof LinkedInConnectionService>[0]);
 
     this.messageScraperService =
       options.messageScraperService ||
       new LinkedInMessageScraperService({
-        sessionManager: this.sessionManager,
-      });
+        sessionManager: sm,
+      } as ConstructorParameters<typeof LinkedInMessageScraperService>[0]);
 
     const errorConfig = this.configManager.getErrorHandlingConfig();
     this.maxRetries = errorConfig.retryAttempts;
@@ -89,15 +194,15 @@ export class LinkedInInteractionService {
 
   // --- Shared utilities (used across domain files via service instance) ---
 
-  async _paced(minMs, maxMs, fn) {
+  async _paced<T>(minMs: number, maxMs: number, fn: () => Promise<T>): Promise<T> {
     await RandomHelpers.randomDelay(minMs, maxMs);
     return await fn();
   }
 
-  _enforceRateLimit() {
+  _enforceRateLimit(): void {
     try {
       this._rateLimiter.enforce();
-    } catch (err) {
+    } catch (err: unknown) {
       if (err instanceof RateLimitExceededError) {
         throw new LinkedInError('Rate limit exceeded', 'LINKEDIN_RATE_LIMIT');
       }
@@ -105,7 +210,7 @@ export class LinkedInInteractionService {
     }
   }
 
-  async _applyControlPlaneRateLimits(_operation) {
+  async _applyControlPlaneRateLimits(_operation: string): Promise<void> {
     if (!this.controlPlaneService?.isConfigured) return;
     try {
       const cpLimits = await this.controlPlaneService.syncRateLimits();
@@ -126,12 +231,13 @@ export class LinkedInInteractionService {
           );
         }
       }
-    } catch (error) {
-      logger.debug('Control plane rate limit sync skipped', { error: error.message });
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.debug('Control plane rate limit sync skipped', { error: errMsg });
     }
   }
 
-  _reportInteraction(operation) {
+  _reportInteraction(operation: string): void {
     if (!this.controlPlaneService?.isConfigured) return;
     try {
       this.controlPlaneService.reportInteraction(operation);
@@ -140,30 +246,38 @@ export class LinkedInInteractionService {
     }
   }
 
-  async executeOnce(operation, context = {}) {
+  async executeOnce<T>(operation: () => Promise<T>, context: ExecutionContext = {}): Promise<T> {
     try {
       context.attemptCount = 1;
       return await operation();
-    } catch (error) {
-      const categorizedError = LinkedInErrorHandler.categorizeError(error, context);
+    } catch (error: unknown) {
+      const errorObj = error instanceof Error ? error : new Error(String(error));
+      const categorizedError = LinkedInErrorHandler.categorizeError(errorObj);
       logger.error(`Operation ${context.operation || 'unknown'} failed without retry`, {
         context,
-        error: error.message,
+        error: errorObj.message,
         errorCategory: categorizedError.category,
       });
       throw error;
     }
   }
 
-  async delay(ms) {
+  async delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async findElementBySelectors(selectors, waitTimeout = 3000) {
+  async findElementBySelectors(
+    selectors: string[],
+    waitTimeout = 3000
+  ): Promise<{ element: ElementHandle | null; selector: string | null }> {
     const session = await this.getBrowserSession();
     for (const selector of selectors) {
       try {
-        const element = await session.waitForSelector(selector, { timeout: waitTimeout });
+        const element = await (
+          session as {
+            waitForSelector(s: string, opts: { timeout: number }): Promise<ElementHandle | null>;
+          }
+        ).waitForSelector(selector, { timeout: waitTimeout });
         if (element) {
           return { element, selector };
         }
@@ -174,15 +288,18 @@ export class LinkedInInteractionService {
     return { element: null, selector: null };
   }
 
-  async waitForAnySelector(selectors, waitTimeout = 5000) {
+  async waitForAnySelector(
+    selectors: string[],
+    waitTimeout = 5000
+  ): Promise<{ element: ElementHandle | null; selector: string | null }> {
     return await this.findElementBySelectors(selectors, waitTimeout);
   }
 
-  async clickElementHumanly(page, element) {
+  async clickElementHumanly(_page: Page, element: ElementHandle): Promise<void> {
     await element.click();
   }
 
-  async clearAndTypeText(page, element, text) {
+  async clearAndTypeText(page: Page, element: ElementHandle, text: string): Promise<void> {
     await element.click();
     await page.keyboard.down('Control');
     await page.keyboard.press('KeyA');
@@ -191,174 +308,228 @@ export class LinkedInInteractionService {
     await this.typeWithHumanPattern(text, element);
   }
 
+  /**
+   * Return `this` cast to an ops-compatible context. Each ops module defines its own
+   * narrow ServiceContext interface; this service satisfies them all at runtime.
+   */
+  private get _self(): OpsContext {
+    return this as unknown as OpsContext;
+  }
+
   // --- Profile operations ---
 
   async initializeBrowserSession() {
-    return profileOps.initializeBrowserSession(this);
+    return profileOps.initializeBrowserSession(this._self);
   }
 
   async getBrowserSession() {
-    return profileOps.getBrowserSession(this);
+    return profileOps.getBrowserSession(this._self);
   }
 
   async closeBrowserSession() {
-    return profileOps.closeBrowserSession(this);
+    return profileOps.closeBrowserSession(this._self);
   }
 
   async isSessionActive() {
-    return profileOps.isSessionActive(this);
+    return profileOps.isSessionActive(this._self);
   }
 
   async getSessionStatus() {
-    return profileOps.getSessionStatus(this);
+    return profileOps.getSessionStatus(this._self);
   }
 
   async checkSuspiciousActivity() {
-    return profileOps.checkSuspiciousActivity(this);
+    return profileOps.checkSuspiciousActivity(this._self);
   }
 
-  async navigateToProfile(profileId) {
-    return profileOps.navigateToProfile(this, profileId);
+  async navigateToProfile(profileId: string): Promise<boolean> {
+    return profileOps.navigateToProfile(this._self, profileId);
   }
 
-  async verifyProfilePage(page) {
-    return profileOps.verifyProfilePage(this, page);
+  async verifyProfilePage(page: Page): Promise<boolean> {
+    return profileOps.verifyProfilePage(this._self, page);
   }
 
-  async waitForLinkedInLoad() {
-    return profileOps.waitForLinkedInLoad(this);
+  async waitForLinkedInLoad(): Promise<boolean | void> {
+    return profileOps.waitForLinkedInLoad(this._self);
   }
 
-  async waitForPageStability(maxWaitMs, sampleIntervalMs) {
-    return profileOps.waitForPageStability(this, maxWaitMs, sampleIntervalMs);
+  async waitForPageStability(maxWaitMs?: number, sampleIntervalMs?: number): Promise<boolean> {
+    return profileOps.waitForPageStability(this._self, maxWaitMs, sampleIntervalMs);
   }
 
-  async handleBrowserRecovery(error, context) {
-    return profileOps.handleBrowserRecovery(this, error, context);
+  async handleBrowserRecovery(error: Error, context: Record<string, unknown>): Promise<void> {
+    return profileOps.handleBrowserRecovery(this._self, error, context);
   }
 
   // --- Messaging operations ---
 
-  async sendMessage(recipientProfileId, messageContent, userId) {
-    return messagingOps.sendMessage(this, recipientProfileId, messageContent, userId);
+  async sendMessage(recipientProfileId: string, messageContent: string, userId: string) {
+    return messagingOps.sendMessage(this._self, recipientProfileId, messageContent, userId);
   }
 
-  async _scrapeAndStoreConversation(profileId) {
-    return messagingOps._scrapeAndStoreConversation(this, profileId);
+  async _scrapeAndStoreConversation(profileId: string): Promise<void> {
+    return messagingOps._scrapeAndStoreConversation(this._self, profileId);
   }
 
-  async navigateToMessaging(profileId) {
-    return messagingOps.navigateToMessaging(this, profileId);
+  async navigateToMessaging(profileId: string): Promise<void> {
+    return messagingOps.navigateToMessaging(this._self, profileId);
   }
 
-  async waitForMessagingInterface() {
-    return messagingOps.waitForMessagingInterface(this);
+  async waitForMessagingInterface(): Promise<void> {
+    return messagingOps.waitForMessagingInterface(this._self);
   }
 
-  async composeAndSendMessage(messageContent) {
-    return messagingOps.composeAndSendMessage(this, messageContent);
+  async composeAndSendMessage(messageContent: string) {
+    return messagingOps.composeAndSendMessage(this._self, messageContent);
   }
 
-  async waitForMessageSent() {
-    return messagingOps.waitForMessageSent(this);
+  async waitForMessageSent(): Promise<void> {
+    return messagingOps.waitForMessageSent(this._self);
   }
 
-  async typeWithHumanPattern(text, element = null) {
-    return messagingOps.typeWithHumanPattern(this, text, element);
+  async typeWithHumanPattern(text: string, element: ElementHandle | null = null): Promise<void> {
+    return messagingOps.typeWithHumanPattern(this._self, text, element);
   }
 
-  async executeMessagingWorkflow(recipientProfileId, messageContent, options = {}) {
-    return messagingOps.executeMessagingWorkflow(this, recipientProfileId, messageContent, options);
+  async executeMessagingWorkflow(
+    recipientProfileId: string,
+    messageContent: string,
+    options: Record<string, unknown> = {}
+  ) {
+    return messagingOps.executeMessagingWorkflow(
+      this._self,
+      recipientProfileId,
+      messageContent,
+      options
+    );
   }
 
   // --- Connection operations ---
 
-  async sendConnectionRequest(profileId, jwtToken) {
-    return connectionOps.sendConnectionRequest(this, profileId, jwtToken);
+  async sendConnectionRequest(profileId: string, jwtToken?: string) {
+    return connectionOps.sendConnectionRequest(this._self, profileId, jwtToken);
   }
 
-  async checkConnectionStatus() {
-    return connectionOps.checkConnectionStatus(this);
+  async checkConnectionStatus(): Promise<string> {
+    return connectionOps.checkConnectionStatus(this._self);
   }
 
-  async isProfileContainer(buttonName) {
-    return connectionOps.isProfileContainer(this, buttonName);
+  async isProfileContainer(buttonName: string): Promise<boolean> {
+    return connectionOps.isProfileContainer(this._self, buttonName);
   }
 
-  async ensureEdge(profileId, status, jwtToken) {
-    return connectionOps.ensureEdge(this, profileId, status, jwtToken);
+  async ensureEdge(profileId: string, status: string, jwtToken?: string): Promise<void> {
+    return connectionOps.ensureEdge(this._self, profileId, status, jwtToken);
   }
 
-  async getEarlyConnectionStatus() {
-    return connectionOps.getEarlyConnectionStatus(this);
+  async getEarlyConnectionStatus(): Promise<string | null> {
+    return connectionOps.getEarlyConnectionStatus(this._self);
   }
 
-  createConnectionWorkflowResult(profileId, connectionMessage, workflowData) {
+  createConnectionWorkflowResult(
+    profileId: string,
+    connectionMessage: string,
+    workflowData: Parameters<typeof connectionOps.createConnectionWorkflowResult>[2]
+  ) {
     return connectionOps.createConnectionWorkflowResult(profileId, connectionMessage, workflowData);
   }
 
-  async executeConnectionWorkflow(profileId, connectionMessage = '', options = {}) {
-    return connectionOps.executeConnectionWorkflow(this, profileId, connectionMessage, options);
+  async executeConnectionWorkflow(
+    profileId: string,
+    connectionMessage = '',
+    options: Record<string, unknown> = {}
+  ) {
+    return connectionOps.executeConnectionWorkflow(
+      this._self,
+      profileId,
+      connectionMessage,
+      options
+    );
   }
 
-  async followProfile(profileId, options = {}) {
-    return connectionOps.followProfile(this, profileId, options);
+  async followProfile(profileId: string, options: Record<string, unknown> = {}) {
+    return connectionOps.followProfile(this._self, profileId, options);
   }
 
-  async checkFollowStatus() {
-    return connectionOps.checkFollowStatus(this);
+  async checkFollowStatus(): Promise<boolean> {
+    return connectionOps.checkFollowStatus(this._self);
   }
 
-  async clickFollowButton(profileId) {
-    return connectionOps.clickFollowButton(this, profileId);
+  async clickFollowButton(profileId: string) {
+    return connectionOps.clickFollowButton(this._self, profileId);
   }
 
   // --- Post operations ---
 
-  async createPost(content, mediaAttachments = [], userId) {
-    return postOps.createPost(this, content, mediaAttachments, userId);
+  async createPost(content: string, mediaAttachments: unknown[] = [], userId: string) {
+    return postOps.createPost(
+      this._self,
+      content,
+      mediaAttachments as Parameters<typeof postOps.createPost>[2],
+      userId
+    );
   }
 
-  async navigateToPostCreator() {
-    return postOps.navigateToPostCreator(this);
+  async navigateToPostCreator(): Promise<void> {
+    return postOps.navigateToPostCreator(this._self);
   }
 
-  async waitForPostCreationInterface() {
-    return postOps.waitForPostCreationInterface(this);
+  async waitForPostCreationInterface(): Promise<void> {
+    return postOps.waitForPostCreationInterface(this._self);
   }
 
-  async composePost(content) {
-    return postOps.composePost(this, content);
+  async composePost(content: string): Promise<void> {
+    return postOps.composePost(this._self, content);
   }
 
-  async addMediaAttachments(mediaAttachments) {
-    return postOps.addMediaAttachments(this, mediaAttachments);
+  async addMediaAttachments(mediaAttachments: unknown[]): Promise<void> {
+    return postOps.addMediaAttachments(
+      this._self,
+      mediaAttachments as Parameters<typeof postOps.addMediaAttachments>[1]
+    );
   }
 
-  async inputPostContent(content) {
-    return postOps.inputPostContent(this, content);
+  async inputPostContent(content: string): Promise<void> {
+    return postOps.inputPostContent(this._self, content);
   }
 
-  async attachMediaToPost(mediaAttachments) {
-    return postOps.attachMediaToPost(this, mediaAttachments);
+  async attachMediaToPost(mediaAttachments: unknown[]): Promise<void> {
+    return postOps.attachMediaToPost(
+      this._self,
+      mediaAttachments as Parameters<typeof postOps.attachMediaToPost>[1]
+    );
   }
 
   async publishPost() {
-    return postOps.publishPost(this);
+    return postOps.publishPost(this._self);
   }
 
-  async createAndPublishPost(content, mediaAttachments = []) {
-    return postOps.createAndPublishPost(this, content, mediaAttachments);
+  async createAndPublishPost(content: string, mediaAttachments: unknown[] = []) {
+    return postOps.createAndPublishPost(
+      this._self,
+      content,
+      mediaAttachments as Parameters<typeof postOps.createAndPublishPost>[2]
+    );
   }
 
-  async executePostCreationWorkflow(content, mediaAttachments = [], options = {}) {
-    return postOps.executePostCreationWorkflow(this, content, mediaAttachments, options);
+  async executePostCreationWorkflow(
+    content: string,
+    mediaAttachments: unknown[] = [],
+    options: Record<string, unknown> = {}
+  ) {
+    return postOps.executePostCreationWorkflow(
+      this._self,
+      content,
+      mediaAttachments as Parameters<typeof postOps.executePostCreationWorkflow>[2],
+      options
+    );
   }
 
   // --- Validation ---
 
-  validateWorkflowParameters(workflowType, params) {
-    const validation = {
+  validateWorkflowParameters(workflowType: string, params: WorkflowParams): ValidationResult {
+    const validation: ValidationResult = {
       isValid: true,
       errors: [],
       warnings: [],

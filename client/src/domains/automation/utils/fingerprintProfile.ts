@@ -69,12 +69,46 @@ const SCREEN_RESOLUTIONS = [
   { width: 2560, height: 1600 },
 ];
 
-function getOSFamily(ua: string): 'Windows' | 'Macintosh' | 'Linux' | 'Other' {
+export function getOSFamily(ua: string): 'Windows' | 'Macintosh' | 'Linux' | 'Other' {
   if (ua.includes('Windows')) return 'Windows';
   if (ua.includes('Macintosh')) return 'Macintosh';
   if (ua.includes('Linux')) return 'Linux';
   return 'Other';
 }
+
+function getBrowserFamily(ua: string): 'Chrome' | 'Firefox' | 'Edge' | 'Other' {
+  if (ua.includes('Edg/')) return 'Edge';
+  if (ua.includes('Firefox')) return 'Firefox';
+  if (ua.includes('Chrome')) return 'Chrome';
+  return 'Other';
+}
+
+// OS -> compatible GPU profile indices (based on GPU_PROFILES array)
+// Windows: NVIDIA (0-2), AMD (3-4), Intel (5-6)
+// Macintosh: Apple (7-8)
+// Linux: Intel (5-6), AMD (3-4)
+const OS_GPU_COMPAT: Record<string, number[]> = {
+  Windows: [0, 1, 2, 3, 4, 5, 6],
+  Macintosh: [7, 8],
+  Linux: [3, 4, 5, 6],
+};
+
+// All UAs in the pool are desktop Chrome, so resolutions are desktop-class.
+// Large resolutions (2560+) are more common on high-end desktops, smaller on laptops.
+// Windows/Linux: all resolutions. Mac: prefer higher resolutions.
+const OS_RESOLUTION_COMPAT: Record<string, number[]> = {
+  Windows: [0, 1, 2, 3, 4, 5], // all
+  Macintosh: [0, 1, 4, 5], // 1920x1080, 2560x1440, 1440x900, 2560x1600
+  Linux: [0, 1, 2, 3], // 1920x1080, 2560x1440, 1366x768, 1536x864
+};
+
+// Browser -> plugin count range [min, max]
+const BROWSER_PLUGIN_RANGE: Record<string, [number, number]> = {
+  Chrome: [3, 7],
+  Edge: [2, 5],
+  Firefox: [1, 4],
+  Other: [2, 5],
+};
 
 function getPlatformForUA(ua: string): string {
   if (ua.includes('Windows')) return 'Win32';
@@ -95,12 +129,33 @@ export function generateFingerprintProfile(existing?: FingerprintProfile): Finge
     if (uaPool.length === 0) uaPool = USER_AGENT_POOL;
   }
 
+  // Step 1: Pick UA
   const userAgent = uaPool[Math.floor(rng() * uaPool.length)]!;
-  const gpuProfile = GPU_PROFILES[Math.floor(rng() * GPU_PROFILES.length)]!;
-  const screenResolution = SCREEN_RESOLUTIONS[Math.floor(rng() * SCREEN_RESOLUTIONS.length)]!;
+  const osFamily = getOSFamily(userAgent);
+  const browserFamily = getBrowserFamily(userAgent);
+
+  // Step 2: GPU constrained by OS family (fallback to full pool)
+  const gpuIndices = OS_GPU_COMPAT[osFamily];
+  const compatibleGpus = gpuIndices ? gpuIndices.map((i) => GPU_PROFILES[i]).filter(Boolean) : [];
+  const gpuPool = compatibleGpus.length > 0 ? compatibleGpus : GPU_PROFILES;
+  const gpuProfile = gpuPool[Math.floor(rng() * gpuPool.length)]!;
+
+  // Step 3: Resolution constrained by OS family (fallback to full pool)
+  const resIndices = OS_RESOLUTION_COMPAT[osFamily];
+  const compatibleRes = resIndices
+    ? resIndices.map((i) => SCREEN_RESOLUTIONS[i]).filter(Boolean)
+    : [];
+  const resPool = compatibleRes.length > 0 ? compatibleRes : SCREEN_RESOLUTIONS;
+  const screenResolution = resPool[Math.floor(rng() * resPool.length)]!;
+
+  // Step 4: Plugin count constrained by browser family
+  const [pluginMin, pluginMax] =
+    BROWSER_PLUGIN_RANGE[browserFamily] || BROWSER_PLUGIN_RANGE['Other']!;
+  const pluginRange = pluginMax - pluginMin + 1;
+  const pluginCount = Math.floor(rng() * pluginRange) + pluginMin;
+
   const canvasNoiseSeed = Math.floor(rng() * 1000000);
   const audioNoiseSeed = Math.floor(rng() * 1000000);
-  const pluginCount = Math.floor(rng() * 5) + 3; // 3-7
 
   const now = new Date().toISOString();
 

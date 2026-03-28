@@ -1,4 +1,3 @@
-// @ts-nocheck -- migrated from .js; full type annotations pending
 /**
  * LinkedIn Profile Operations - Navigation, sessions, page verification
  *
@@ -11,6 +10,71 @@ import config from '#shared-config/index.js';
 import { LinkedInError } from '../utils/LinkedInError.js';
 import { linkedinResolver, linkedinSelectors } from '../selectors/index.js';
 import { BrowserSessionManager } from '../../session/services/browserSessionManager.js';
+import type { Page } from 'puppeteer';
+
+/**
+ * Subset of LinkedInInteractionService used by profile ops.
+ * Avoids circular dependency on the full service class.
+ */
+export interface ProfileOpsContext {
+  sessionManager: {
+    getInstance(opts: { reinitializeIfUnhealthy: boolean }): Promise<unknown>;
+    cleanup(): Promise<void>;
+    isSessionHealthy(): Promise<boolean>;
+    getHealthStatus(): Promise<Record<string, unknown>>;
+    recordError(error: unknown): Promise<void>;
+    getBackoffController(): { handleCheckpoint(url: string): Promise<void> } | null;
+    lastActivity: Date | null;
+  };
+  configManager: {
+    get(key: string, defaultValue: number): number;
+  };
+  getBrowserSession(): Promise<{
+    getPage(): Page;
+    goto(url: string, opts: Record<string, unknown>): Promise<void>;
+  }>;
+  waitForLinkedInLoad(): Promise<boolean | void>;
+  waitForPageStability(): Promise<boolean>;
+  verifyProfilePage(page: Page): Promise<boolean>;
+  navigateToProfile(profileId: string): Promise<boolean>;
+}
+
+interface PageMetrics {
+  ready: string;
+  main: boolean;
+  scaffold: boolean;
+  nav: boolean;
+  anchors: number;
+  images: number;
+  height: number;
+  isCheckpoint: boolean;
+  url: string;
+}
+
+interface StabilityMetrics {
+  ready: string;
+  links: number;
+  imgs: number;
+}
+
+export interface SessionStatus {
+  isActive?: boolean;
+  isHealthy?: boolean;
+  isAuthenticated?: boolean;
+  lastActivity?: string | null;
+  sessionAge?: number;
+  errorCount?: number;
+  memoryUsage?: { rss: number; heapUsed: number; heapTotal: number; external: number };
+  currentUrl?: string;
+  humanBehavior?: {
+    totalActions: number;
+    actionsLastHour: number;
+    actionsLastMinute: number;
+    averageActionInterval: number;
+    actionsByType: Record<string, number>;
+    suspiciousActivity: { isSuspicious: boolean; patterns: string[] };
+  };
+}
 
 /**
  * Navigate to a LinkedIn profile page
@@ -18,7 +82,10 @@ import { BrowserSessionManager } from '../../session/services/browserSessionMana
  * @param {string} profileId - LinkedIn profile ID or vanity URL
  * @returns {Promise<boolean>} True if navigation successful
  */
-export async function navigateToProfile(service, profileId) {
+export async function navigateToProfile(
+  service: ProfileOpsContext,
+  profileId: string
+): Promise<boolean> {
   logger.info(`Navigating to LinkedIn profile: ${profileId}`);
 
   try {
@@ -49,8 +116,9 @@ export async function navigateToProfile(service, profileId) {
     // Extra stabilization wait using a lightweight heuristic
     try {
       await service.waitForPageStability();
-    } catch (error) {
-      logger.debug('Page stability check failed, continuing anyway', { error: error.message });
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.debug('Page stability check failed, continuing anyway', { error: errMsg });
     }
 
     // Verify we're on a profile page
@@ -64,7 +132,7 @@ export async function navigateToProfile(service, profileId) {
 
     logger.info(`Successfully navigated to profile: ${profileId}`);
     return true;
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error(`Failed to navigate to profile ${profileId}:`, error);
     await service.sessionManager.recordError(error);
     return false;
@@ -77,7 +145,7 @@ export async function navigateToProfile(service, profileId) {
  * @param {Object} page - Puppeteer page object
  * @returns {Promise<boolean>} True if on profile page
  */
-export async function verifyProfilePage(service, page) {
+export async function verifyProfilePage(_service: ProfileOpsContext, page: Page): Promise<boolean> {
   try {
     const element = await linkedinResolver
       .resolveWithWait(page, 'nav:profile-indicator', { timeout: 2000 })
@@ -90,8 +158,9 @@ export async function verifyProfilePage(service, page) {
     // Check URL pattern as fallback
     const currentUrl = page.url();
     return currentUrl.includes('/in/') || currentUrl.includes('/profile/');
-  } catch (error) {
-    logger.debug('Profile page verification failed:', error.message);
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.debug('Profile page verification failed:', errMsg);
     return false;
   }
 }
@@ -101,7 +170,7 @@ export async function verifyProfilePage(service, page) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<void>}
  */
-export async function waitForLinkedInLoad(service) {
+export async function waitForLinkedInLoad(service: ProfileOpsContext): Promise<boolean | void> {
   try {
     const session = await service.getBrowserSession();
     const page = session.getPage();
@@ -110,26 +179,26 @@ export async function waitForLinkedInLoad(service) {
     const sampleIntervalMs = 250;
     const requiredStableSamples = 3;
 
-    let lastMetrics = null;
+    let lastMetrics: PageMetrics | null = null;
     let stableSamples = 0;
     const startTs = Date.now();
 
-    const navMain = (linkedinSelectors['nav:main-content'] || [])
-      .filter((s) => !s.selector.includes('::-p-'))
-      .map((s) => s.selector)
+    const navMain = (linkedinSelectors['nav:main-content'] ?? [])
+      .filter((s: { selector: string }) => !s.selector.includes('::-p-'))
+      .map((s: { selector: string }) => s.selector)
       .join(', ');
-    const navPageLoaded = (linkedinSelectors['nav:page-loaded'] || [])
-      .filter((s) => !s.selector.includes('::-p-'))
-      .map((s) => s.selector)
+    const navPageLoaded = (linkedinSelectors['nav:page-loaded'] ?? [])
+      .filter((s: { selector: string }) => !s.selector.includes('::-p-'))
+      .map((s: { selector: string }) => s.selector)
       .join(', ');
-    const navHomepage = (linkedinSelectors['nav:homepage'] || [])
-      .filter((s) => !s.selector.includes('::-p-'))
-      .map((s) => s.selector)
+    const navHomepage = (linkedinSelectors['nav:homepage'] ?? [])
+      .filter((s: { selector: string }) => !s.selector.includes('::-p-'))
+      .map((s: { selector: string }) => s.selector)
       .join(', ');
 
     while (Date.now() - startTs < maxWaitMs) {
-      const metrics = await page.evaluate(
-        (mainSel, loadedSel, homeSel) => {
+      const metrics: PageMetrics = await page.evaluate(
+        (mainSel: string, loadedSel: string, homeSel: string) => {
           const ready = document.readyState;
           const main = mainSel
             ? mainSel.split(',').some((sel) => !!document.querySelector(sel.trim()))
@@ -201,11 +270,15 @@ export async function waitForLinkedInLoad(service) {
  * @param {number} sampleIntervalMs
  * @returns {Promise<boolean>}
  */
-export async function waitForPageStability(service, maxWaitMs = 8000, sampleIntervalMs = 300) {
+export async function waitForPageStability(
+  service: ProfileOpsContext,
+  maxWaitMs = 8000,
+  sampleIntervalMs = 300
+): Promise<boolean> {
   try {
     const session = await service.getBrowserSession();
     const page = session.getPage();
-    let last = null;
+    let last: StabilityMetrics | null = null;
     let stable = 0;
     const start = Date.now();
     while (Date.now() - start < maxWaitMs) {
@@ -228,8 +301,9 @@ export async function waitForPageStability(service, maxWaitMs = 8000, sampleInte
       last = metrics;
       await new Promise((resolve) => setTimeout(resolve, sampleIntervalMs));
     }
-  } catch (error) {
-    logger.debug('Page stability monitoring failed', { error: error.message });
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.debug('Page stability monitoring failed', { error: errMsg });
   }
   return false;
 }
@@ -239,16 +313,15 @@ export async function waitForPageStability(service, maxWaitMs = 8000, sampleInte
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<Object>} Browser session instance
  */
-export async function initializeBrowserSession(service) {
+export async function initializeBrowserSession(service: ProfileOpsContext): Promise<unknown> {
   try {
     return await service.sessionManager.getInstance({ reinitializeIfUnhealthy: true });
-  } catch (error) {
+  } catch (error: unknown) {
     logger.error('Failed to initialize browser session:', error);
-    throw new LinkedInError(
-      `Browser session initialization failed: ${error.message}`,
-      'BROWSER_CRASH',
-      { cause: error }
-    );
+    const errMsg = error instanceof Error ? error.message : String(error);
+    throw new LinkedInError(`Browser session initialization failed: ${errMsg}`, 'BROWSER_CRASH', {
+      cause: error,
+    });
   }
 }
 
@@ -257,7 +330,7 @@ export async function initializeBrowserSession(service) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<Object>} Browser session instance
  */
-export async function getBrowserSession(service) {
+export async function getBrowserSession(service: ProfileOpsContext): Promise<unknown> {
   return await service.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
 }
 
@@ -266,7 +339,7 @@ export async function getBrowserSession(service) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<void>}
  */
-export async function closeBrowserSession(service) {
+export async function closeBrowserSession(service: ProfileOpsContext): Promise<void> {
   await service.sessionManager.cleanup();
 }
 
@@ -275,7 +348,7 @@ export async function closeBrowserSession(service) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<boolean>}
  */
-export async function isSessionActive(service) {
+export async function isSessionActive(service: ProfileOpsContext): Promise<boolean> {
   return await service.sessionManager.isSessionHealthy();
 }
 
@@ -284,16 +357,16 @@ export async function isSessionActive(service) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<Object>}
  */
-export async function getSessionStatus(service) {
+export async function getSessionStatus(service: ProfileOpsContext): Promise<SessionStatus> {
   const sessionHealth = await service.sessionManager.getHealthStatus();
   const activityStats = {
     totalActions: 0,
     actionsLastHour: 0,
     actionsLastMinute: 0,
     averageActionInterval: 0,
-    actionsByType: {},
+    actionsByType: {} as Record<string, number>,
   };
-  const suspiciousActivity = { isSuspicious: false, patterns: [] };
+  const suspiciousActivity = { isSuspicious: false, patterns: [] as string[] };
 
   return {
     ...sessionHealth,
@@ -309,7 +382,9 @@ export async function getSessionStatus(service) {
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<Object>}
  */
-export async function checkSuspiciousActivity(_service) {
+export async function checkSuspiciousActivity(
+  _service: ProfileOpsContext
+): Promise<{ isSuspicious: boolean; patterns: string[]; recommendation: string }> {
   return { isSuspicious: false, patterns: [], recommendation: '' };
 }
 
@@ -319,7 +394,11 @@ export async function checkSuspiciousActivity(_service) {
  * @param {Error} error
  * @param {Object} context
  */
-export async function handleBrowserRecovery(service, error, context) {
+export async function handleBrowserRecovery(
+  _service: ProfileOpsContext,
+  error: Error,
+  context: Record<string, unknown>
+): Promise<void> {
   try {
     logger.info('Attempting browser session recovery', { context, error: error.message });
 
@@ -338,10 +417,12 @@ export async function handleBrowserRecovery(service, error, context) {
 
       logger.info('Browser session recovery completed');
     }
-  } catch (recoveryError) {
+  } catch (recoveryError: unknown) {
+    const recoveryMsg =
+      recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
     logger.error('Browser recovery failed', {
       originalError: error.message,
-      recoveryError: recoveryError.message,
+      recoveryError: recoveryMsg,
     });
   }
 }

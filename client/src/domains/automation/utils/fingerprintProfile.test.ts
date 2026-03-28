@@ -6,6 +6,7 @@ import {
   generateFingerprintProfile,
   loadOrCreateProfile,
   rotateProfile,
+  getOSFamily,
 } from './fingerprintProfile';
 
 vi.mock('fs/promises');
@@ -150,6 +151,55 @@ describe('fingerprintProfile', () => {
         } else if (profile.userAgent.includes('Linux')) {
           expect(profile.platform).toBe('Linux x86_64');
         }
+      }
+    });
+  });
+
+  describe('Constrained sequential filtering', () => {
+    it('generates OS-consistent GPU profiles', () => {
+      for (let i = 0; i < 50; i++) {
+        const profile = generateFingerprintProfile();
+        const os = getOSFamily(profile.userAgent);
+
+        if (os === 'Macintosh') {
+          expect(profile.gpuProfile.vendor).toContain('Apple');
+        } else if (os === 'Windows') {
+          // Windows GPUs: NVIDIA, AMD, or Intel (not Apple)
+          expect(profile.gpuProfile.vendor).not.toContain('Apple');
+        } else if (os === 'Linux') {
+          // Linux GPUs: AMD or Intel (not NVIDIA D3D11, not Apple)
+          expect(profile.gpuProfile.vendor).not.toContain('Apple');
+        }
+      }
+    });
+
+    it('constrains plugin count by browser family', () => {
+      for (let i = 0; i < 50; i++) {
+        const profile = generateFingerprintProfile();
+        // All UAs in the pool are Chrome, so range is 3-7
+        expect(profile.pluginCount).toBeGreaterThanOrEqual(3);
+        expect(profile.pluginCount).toBeLessThanOrEqual(7);
+      }
+    });
+
+    it('falls back gracefully for unknown OS family', () => {
+      // Force an "Other" OS by using a profile with an unknown UA
+      const fakeProfile = generateFingerprintProfile();
+      fakeProfile.userAgent = 'Mozilla/5.0 (Unknown OS) AppleWebKit/537.36';
+
+      // Rotation with unknown OS should still produce a valid profile
+      const rotated = rotateProfile(fakeProfile);
+      expect(rotated.gpuProfile).toHaveProperty('vendor');
+      expect(rotated.gpuProfile).toHaveProperty('renderer');
+      expect(rotated.pluginCount).toBeGreaterThanOrEqual(1);
+      expect(rotated.pluginCount).toBeLessThanOrEqual(7);
+    });
+
+    it('produces valid screen resolutions for each OS', () => {
+      for (let i = 0; i < 50; i++) {
+        const profile = generateFingerprintProfile();
+        expect(profile.screenResolution.width).toBeGreaterThan(0);
+        expect(profile.screenResolution.height).toBeGreaterThan(0);
       }
     });
   });

@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { UserProfile } from '@/types';
 
-const { mockSendLLMRequest, mockCallProfilesOperation } = vi.hoisted(() => ({
+const { mockSendLLMRequest, mockMakeRequest } = vi.hoisted(() => ({
   mockSendLLMRequest: vi.fn(),
-  mockCallProfilesOperation: vi.fn(),
+  mockMakeRequest: vi.fn(),
 }));
 
 vi.mock('@/shared/services/analyticsApiService', () => ({
   analyticsApiService: {
     sendLLMRequest: mockSendLLMRequest,
-    callProfilesOperation: mockCallProfilesOperation,
+  },
+}));
+
+vi.mock('@/shared/utils/httpClient', () => ({
+  httpClient: {
+    makeRequest: mockMakeRequest,
   },
 }));
 
@@ -112,9 +117,9 @@ describe('postsService', () => {
         success: true,
         data: { job_id: 'job-123' },
       });
-      mockCallProfilesOperation.mockResolvedValue({
+      mockMakeRequest.mockResolvedValue({
         success: true,
-        content: 'Deep research results about AI trends',
+        data: { content: 'Deep research results about AI trends' },
       });
 
       // Use fake timers to avoid waiting 15s
@@ -155,9 +160,9 @@ describe('postsService', () => {
         success: true,
         data: { job_id: 'job-456' },
       });
-      mockCallProfilesOperation.mockResolvedValue({
+      mockMakeRequest.mockResolvedValue({
         success: true,
-        content: 'results',
+        data: { content: 'results' },
       });
 
       vi.useFakeTimers();

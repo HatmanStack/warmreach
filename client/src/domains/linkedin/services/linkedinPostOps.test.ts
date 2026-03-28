@@ -100,7 +100,7 @@ describe('linkedinPostOps', () => {
   describe('publishPost', () => {
     it('should click publish button and return result', async () => {
       const mockPublishButton = {
-        getAttribute: vi.fn().mockResolvedValue(null),
+        evaluate: vi.fn().mockResolvedValue(null),
       };
       mockResolver.resolveWithWait.mockResolvedValue(mockPublishButton);
 
