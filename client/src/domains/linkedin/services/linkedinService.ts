@@ -166,10 +166,11 @@ export class LinkedInService {
             timeout: shortCapMs / 2,
           }),
         ]);
-      } catch {
+      } catch (error) {
         // Intentionally swallowed: LinkedIn is an SPA that may not trigger traditional
         // navigation events. The subsequent waitForSelector() with configurable timeout
         // handles the actual login verification. This race is just an optimization.
+        logger.debug('Post-login readiness probe failed (non-blocking):', error);
       }
       const spent = Date.now() - start;
       logger.debug(`Post-login readiness probe took ${spent}ms`);
@@ -247,8 +248,8 @@ export class LinkedInService {
         const currentUrl = decodeURIComponent(page.url());
         const companyMatch = currentUrl.match(/currentCompany=\["?(\d+)"?\]/);
         extractedCompanyNumber = companyMatch?.[1] ?? null;
-      } catch {
-        logger.warn('Timed out waiting for company parameter in URL');
+      } catch (error) {
+        logger.warn('Timed out waiting for company parameter in URL:', error);
       }
 
       // Analyze search results content
@@ -318,8 +319,8 @@ export class LinkedInService {
         const currentUrl = decodeURIComponent(page.url());
         const geoMatch = currentUrl.match(/geoUrn=\["?(\d+)"?\]/);
         extractedGeoNumber = geoMatch?.[1] ?? null;
-      } catch {
-        logger.warn('Timed out waiting for geoUrn parameter in URL');
+      } catch (error) {
+        logger.warn('Timed out waiting for geoUrn parameter in URL:', error);
       }
 
       // Analyze search results content
@@ -350,8 +351,8 @@ export class LinkedInService {
       await button.click();
       logger.debug(`Clicked filter "${filterName}" with resolver`);
       return true;
-    } catch {
-      logger.debug(`Filter selector failed for: ${filterName}`);
+    } catch (error) {
+      logger.debug(`Filter selector failed for: ${filterName}`, error);
     }
 
     // Fallback: find by text content in both buttons and labels
@@ -372,8 +373,8 @@ export class LinkedInService {
         logger.debug(`Clicked filter "${filterName}" via text content fallback`);
         return true;
       }
-    } catch {
-      // ignore
+    } catch (error) {
+      logger.debug(`Filter text-content fallback failed for "${filterName}":`, error);
     }
 
     logger.warn(`Could not find filter: ${filterName}`);
@@ -393,8 +394,8 @@ export class LinkedInService {
       await element.type(text, { delay: 50 });
       logger.debug(`Typed "${text}" in filter input with resolver`);
       return true;
-    } catch {
-      logger.debug(`Filter input selector failed`);
+    } catch (error) {
+      logger.debug('Filter input selector failed:', error);
     }
 
     logger.warn('Could not find filter input field');
@@ -407,8 +408,8 @@ export class LinkedInService {
 
     try {
       await linkedinResolver.resolveWithWait(page, 'search:filter-suggestions', { timeout: 5000 });
-    } catch {
-      logger.debug('Suggestion selector failed to find items');
+    } catch (error) {
+      logger.debug('Suggestion selector failed to find items:', error);
       return false;
     }
 
@@ -450,8 +451,8 @@ export class LinkedInService {
           logger.debug(`Selected suggestion for "${searchText}" with strategy: ${strat.strategy}`);
           return true;
         }
-      } catch {
-        // continue
+      } catch (error) {
+        logger.debug(`Suggestion strategy "${strat.strategy}" failed for "${searchText}":`, error);
       }
     }
 
@@ -470,8 +471,8 @@ export class LinkedInService {
       await button.click();
       logger.debug(`Clicked "Show results" with resolver`);
       return true;
-    } catch {
-      // try fallback below
+    } catch (error) {
+      logger.debug('Show-results resolver failed, trying fallback:', error);
     }
 
     // Fallback: find by button text
@@ -492,8 +493,8 @@ export class LinkedInService {
         logger.debug('Clicked "Show results" via text content fallback');
         return true;
       }
-    } catch {
-      // ignore
+    } catch (error) {
+      logger.debug('Show-results text-content fallback failed:', error);
     }
 
     // If no explicit apply button, the filter may auto-apply on selection
@@ -544,8 +545,8 @@ export class LinkedInService {
       try {
         await linkedinResolver.resolveWithWait(page, 'search:result-items', { timeout: 5000 });
         hasContent = true;
-      } catch {
-        // no content
+      } catch (error) {
+        logger.debug(`Search result items not found on page ${pageNumber}:`, error);
       }
 
       if (!hasContent) {
@@ -560,8 +561,8 @@ export class LinkedInService {
       let pictureUrls: Record<string, string> = {};
       try {
         pictureUrls = await this.puppeteer.extractProfilePictures();
-      } catch {
-        // non-fatal
+      } catch (error) {
+        logger.debug('Profile picture extraction failed (non-fatal):', error);
       }
 
       return { links, pictureUrls };
@@ -628,8 +629,8 @@ export class LinkedInService {
       for (let i = 0; i < historyToCheck; i++) {
         try {
           await linkedinResolver.resolveWithWait(page, 'profile:activity-time', { timeout: 5000 });
-        } catch {
-          // ignore
+        } catch (error) {
+          logger.debug(`Activity time selector not found on iteration ${i}:`, error);
         }
 
         const timeSelectors = (

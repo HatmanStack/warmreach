@@ -130,6 +130,6 @@ def lambda_handler(event, context):
         return api_response(502, {'error': e.message}, event)
     except ServiceError as e:
         return api_response(500, {'error': e.message}, event)
-    except Exception as e:
-        logger.error(f'Error: {e}')
+    except Exception:
+        logger.exception('Unexpected error in ragstack-ops handler')
         return api_response(500, {'error': 'Internal server error'}, event)

@@ -21,7 +21,7 @@ Thank you for your interest in contributing to WarmReach.
 npm install
 
 # Set up backend test virtualenv
-cd tests/backend && uv venv .venv && source .venv/bin/activate && uv pip install -r requirements.txt
+cd tests/backend && uv venv .venv && source .venv/bin/activate && uv pip install -r requirements-test.lock
 ```
 
 Copy `.env.example` to `.env` and fill in required values.

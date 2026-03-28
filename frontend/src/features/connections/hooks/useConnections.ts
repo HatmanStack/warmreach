@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { lambdaApiService } from '@/shared/services';
+import { connectionsApiService } from '@/shared/services/connectionsApiService';
 import { useAuth } from '@/features/auth';
 import { queryKeys } from '@/shared/lib/queryKeys';
 import type { Connection, ConnectionStatus } from '@/shared/types';
@@ -21,7 +21,7 @@ export const useConnections = (filters?: { status?: string; tags?: string[]; lim
     queryKey: fullQueryKey,
     queryFn: async () => {
       const statusFilter = filters?.status as ConnectionStatus | undefined;
-      return await lambdaApiService.getConnectionsByStatus(statusFilter);
+      return await connectionsApiService.getConnectionsByStatus(statusFilter);
     },
     enabled: !!user,
   });
@@ -29,7 +29,7 @@ export const useConnections = (filters?: { status?: string; tags?: string[]; lim
   // Mutation for updating connection status
   const updateMutation = useMutation({
     mutationFn: ({ id, updates }: { id: string; updates: Partial<Connection> }) =>
-      lambdaApiService.updateConnectionStatus(id, updates.status as ConnectionStatus, {
+      connectionsApiService.updateConnectionStatus(id, updates.status as ConnectionStatus, {
         profileId: id,
       }),
     onSuccess: (_, { id, updates }) => {

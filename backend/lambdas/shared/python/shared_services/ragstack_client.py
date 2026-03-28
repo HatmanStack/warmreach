@@ -13,7 +13,7 @@ from typing import Any
 
 import boto3
 import requests
-from shared_services.circuit_breaker import CircuitBreaker, DynamoDBStore, InMemoryStore
+from shared_services.circuit_breaker import CachedDynamoDBStore, CircuitBreaker, InMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ class RAGStackClient:
 
         # Initialize circuit breaker with DynamoDB store for distributed state
         cb_table = _get_cb_table()
-        cb_store = DynamoDBStore(cb_table) if cb_table else InMemoryStore()
+        cb_store = CachedDynamoDBStore(cb_table) if cb_table else InMemoryStore()
 
         self._circuit_breaker = CircuitBreaker(
             service_name='ragstack',

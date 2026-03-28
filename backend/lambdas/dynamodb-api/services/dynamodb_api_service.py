@@ -228,8 +228,8 @@ class DynamoDBApiService(BaseService):
         try:
             response = self.table.get_item(Key={'PK': f'PROFILE#{profile_id_b64}', 'SK': '#METADATA'})
             return response.get('Item')
-        except ClientError as e:
-            logger.error(f'Error getting profile metadata: {str(e)}')
+        except ClientError:
+            logger.exception('Error getting profile metadata')
             return None
 
     def validate_profile_field(self, field: str, value: Any) -> bool:
@@ -347,5 +347,6 @@ class DynamoDBApiService(BaseService):
                 logger.warning(f"DNS resolution failed for hostname '{hostname}': {e}")
                 return False
             return True
-        except Exception:
+        except (ValueError, OSError) as e:
+            logger.warning('URL safety check failed for URL: %s', e)
             return False

@@ -52,8 +52,8 @@ def report_telemetry(quota_service: Any, table: Any, user_id: str, operation: st
     try:
         ensure_tier_exists(table, user_id)
         quota_service.report_usage(user_id, operation, count=count)
-    except Exception as e:
-        logger.warning(f'Telemetry report failed for {operation}: {e}')
+    except Exception:
+        logger.exception('Telemetry report failed for %s', operation)
 
 
 def check_feature_gate(feature_flag_service: Any, user_id: str, feature_key: str, event: dict) -> dict | None:
@@ -66,7 +66,7 @@ def check_feature_gate(feature_flag_service: Any, user_id: str, feature_key: str
                     403, {'error': 'Feature not available on current plan', 'code': 'FEATURE_GATED'}, event
                 )
         except Exception:
-            logger.error(f'Feature flag check failed for {feature_key}, denying request')
+            logger.exception('Feature flag check failed for %s, denying request', feature_key)
             return api_response(503, {'error': 'Feature availability check failed'}, event)
     return None
 

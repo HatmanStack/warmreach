@@ -1,10 +1,28 @@
-import axios from 'axios';
+import axios, { type AxiosInstance, type AxiosError } from 'axios';
 import { logger } from '#utils/logger.js';
 
 const API_BASE_URL = process.env.API_GATEWAY_BASE_URL;
 const DAILY_SCRAPE_CAP = 200;
 
+interface MessageObject {
+  content: string;
+  timestamp: string;
+  sender: string;
+}
+
+interface ImportCheckpoint {
+  batchIndex: number;
+  lastProfileId: string;
+  connectionType: string;
+  processedCount: number;
+  totalCount: number;
+  [key: string]: unknown;
+}
+
 class DynamoDBService {
+  private authToken: string | null;
+  private apiClient: AxiosInstance;
+
   constructor() {
     this.authToken = null;
     // Ensure trailing slash so relative endpoint paths join correctly (preserve stage path)
@@ -25,7 +43,11 @@ class DynamoDBService {
   /**
    * Internal POST helper with unified headers and error handling
    */
-  async _post(path, body) {
+  // Returns parsed JSON from the API (shape varies per endpoint)
+  private async _post(
+    path: string,
+    body: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
     try {
       const response = await this.apiClient.post(path, body, { headers: this.getHeaders() });
       return response?.data;
@@ -37,7 +59,11 @@ class DynamoDBService {
   /**
    * Internal GET helper with unified headers and error handling
    */
-  async _get(path, params = {}) {
+  // Returns parsed JSON from the API (shape varies per endpoint)
+  private async _get(
+    path: string,
+    params: Record<string, string> = {}
+  ): Promise<Record<string, unknown>> {
     try {
       const response = await this.apiClient.get(path, {
         headers: this.getHeaders(),
@@ -51,18 +77,16 @@ class DynamoDBService {
 
   /**
    * Set the authorization token for API requests
-   * @param {string} token - JWT token from Cognito
    */
-  setAuthToken(token) {
+  setAuthToken(token: string): void {
     this.authToken = token;
   }
 
   /**
    * Get headers for API requests
-   * @returns {Object} Headers object
    */
-  getHeaders() {
-    const headers = {
+  getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
 
@@ -74,27 +98,28 @@ class DynamoDBService {
   }
 
   /**
-   * Check if a profile exists and has been updated in the past month
-   * @param {string} profileId - Profile ID to check
-   * @returns {Promise<boolean>} true if profile doesn't exist or hasn't been updated in last month, false otherwise
+   * Check if a profile exists and has been updated in the past month.
+   * Returns true if profile doesn't exist or hasn't been updated in last month.
    */
-  async getProfileDetails(profileId) {
+  async getProfileDetails(profileId: string): Promise<boolean> {
     try {
       const data = await this._get('dynamodb', {
         profileId: profileId,
       });
       if (!data || !data.profile) return true;
-      const { updatedAt, evaluated } = data.profile;
-      const isStale = this._isStale(updatedAt);
+      const profile = data.profile as Record<string, unknown>;
+      const { updatedAt, evaluated } = profile;
+      const isStale = this._isStale(updatedAt as string | undefined);
       if (typeof evaluated === 'boolean') return evaluated === false ? true : isStale;
       return isStale;
-    } catch (error) {
-      logger.info(`getProfileDetails fallback: ${error.message}`);
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.info(`getProfileDetails fallback: ${errMsg}`);
       return true;
     }
   }
 
-  _isStale(updatedAt) {
+  private _isStale(updatedAt: string | undefined): boolean {
     if (!updatedAt) return true;
     const oneMonthAgo = new Date();
     oneMonthAgo.setDate(oneMonthAgo.getDate() - 30);
@@ -103,11 +128,8 @@ class DynamoDBService {
 
   /**
    * Create a "bad contact" profile and its edges with processed status
-   * @param {Object} profileData - Profile information
-   * @param {Object} edgesData - Edge relationship data
-   * @returns {Promise<Object>} Creation result
    */
-  async createBadContactProfile(profileId) {
+  async createBadContactProfile(profileId: string): Promise<unknown> {
     return await this._post('dynamodb', {
       operation: 'create',
       profileId: profileId,
@@ -121,28 +143,27 @@ class DynamoDBService {
 
   /**
    * Mark a profile as bad contact (wrapper around createBadContactProfile)
-   * @param {string} profileId
-   * @returns {Promise<boolean>}
    */
-  async markBadContact(profileId) {
+  async markBadContact(profileId: string): Promise<boolean> {
     if (!profileId) throw new Error('profileId is required');
     try {
       await this.createBadContactProfile(profileId);
       logger?.info?.(`Marked bad contact profile: ${profileId}`);
       return true;
-    } catch (error) {
-      logger?.error?.(`Failed to mark bad contact for ${profileId}: ${error.message}`);
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger?.error?.(`Failed to mark bad contact for ${profileId}: ${errMsg}`);
       throw error;
     }
   }
 
   /**
    * Create or update profile metadata record.
-   * @param {string} profileId - Profile identifier
-   * @param {Object} metadata - Profile metadata (name, headline, etc.)
-   * @returns {Promise<Object>} Creation result
    */
-  async createProfileMetadata(profileId, metadata = {}) {
+  async createProfileMetadata(
+    profileId: string,
+    metadata: Record<string, string | undefined> = {}
+  ): Promise<unknown> {
     return await this._post('dynamodb', {
       operation: 'create',
       profileId,
@@ -156,11 +177,8 @@ class DynamoDBService {
 
   /**
    * Update only the profile picture URL on an existing profile metadata record.
-   * @param {string} profileId - Profile identifier
-   * @param {string} pictureUrl - LinkedIn CDN picture URL
-   * @returns {Promise<Object>} Update result
    */
-  async updateProfilePictureUrl(profileId, pictureUrl) {
+  async updateProfilePictureUrl(profileId: string, pictureUrl: string): Promise<unknown> {
     return await this._post('dynamodb', {
       operation: 'update_profile_picture',
       profileId,
@@ -171,7 +189,11 @@ class DynamoDBService {
   /**
    * Public: Single entrypoint to upsert edge status (create if missing, update otherwise)
    */
-  async upsertEdgeStatus(profileId, status, extraUpdates = {}) {
+  async upsertEdgeStatus(
+    profileId: string,
+    status: string,
+    extraUpdates: Record<string, unknown> = {}
+  ): Promise<unknown> {
     const now = new Date().toISOString();
     return await this._post('edges', {
       operation: 'upsert_status',
@@ -182,11 +204,8 @@ class DynamoDBService {
 
   /**
    * Replace the full messages list on an edge (used after scraping a conversation).
-   * @param {string} profileId - Connection profile ID
-   * @param {Array} messages - Array of message objects {content, timestamp, sender}
-   * @returns {Promise<Object>} Update result
    */
-  async updateMessages(profileId, messages) {
+  async updateMessages(profileId: string, messages: MessageObject[]): Promise<unknown> {
     return await this._post('edges', {
       operation: 'update_messages',
       profileId,
@@ -195,38 +214,37 @@ class DynamoDBService {
   }
 
   /**
-   * Check if an edge relationship exists between user and connection profile
-   * The user ID is extracted from the JWT token in the Lambda function
-   * @param {string} connectionProfileId - Connection profile ID to check
-   * @returns {Promise<boolean>} true if edge exists, false otherwise
+   * Check if an edge relationship exists between user and connection profile.
+   * The user ID is extracted from the JWT token in the Lambda function.
    */
-  async checkEdgeExists(connectionProfileId) {
+  async checkEdgeExists(connectionProfileId: string): Promise<boolean> {
     try {
       const data = await this._post('edges', {
         operation: 'check_exists',
         profileId: connectionProfileId,
       });
-      const exists = !!data?.result?.exists;
+      const result = data?.result as Record<string, unknown> | undefined;
+      const exists = !!result?.exists;
       logger.info(`Edge existence for ${connectionProfileId}: ${exists}`);
       return exists;
-    } catch (error) {
-      logger.warn(`checkEdgeExists failed for ${connectionProfileId}: ${error.message}`);
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(`checkEdgeExists failed for ${connectionProfileId}: ${errMsg}`);
       return false;
     }
   }
 
   /**
    * Get daily scrape count for today (UTC).
-   * @returns {Promise<number>} Count of scrapes today, default 0
    */
-  async getDailyScrapeCount() {
+  async getDailyScrapeCount(): Promise<number> {
     const today = new Date().toISOString().split('T')[0];
     try {
       const data = await this._get('dynamodb', {
         operation: 'get_daily_scrape_count',
-        date: today,
+        date: today!,
       });
-      return data?.count || 0;
+      return (data?.count as number) || 0;
     } catch {
       return 0;
     }
@@ -234,32 +252,27 @@ class DynamoDBService {
 
   /**
    * Increment the daily scrape counter by 1.
-   * @returns {Promise<Object>} The updated count
    */
-  async incrementDailyScrapeCount() {
+  async incrementDailyScrapeCount(): Promise<unknown> {
     const today = new Date().toISOString().split('T')[0];
     return await this._post('dynamodb', {
       operation: 'increment_daily_scrape_count',
-      date: today,
+      date: today!,
     });
   }
 
   /**
    * Check if daily scrape cap has been reached.
-   * @param {number} [dailyCap=200] - Maximum scrapes per day
-   * @returns {Promise<boolean>} true if under cap, false if at or over
    */
-  async canScrapeToday(dailyCap = DAILY_SCRAPE_CAP) {
+  async canScrapeToday(dailyCap = DAILY_SCRAPE_CAP): Promise<boolean> {
     const count = await this.getDailyScrapeCount();
     return count < dailyCap;
   }
 
   /**
    * Save an import checkpoint for bulk import resume.
-   * @param {Object} checkpoint - Checkpoint data
-   * @returns {Promise<Object>}
    */
-  async saveImportCheckpoint(checkpoint) {
+  async saveImportCheckpoint(checkpoint: ImportCheckpoint): Promise<unknown> {
     return await this._post('dynamodb', {
       operation: 'save_import_checkpoint',
       checkpoint,
@@ -268,14 +281,13 @@ class DynamoDBService {
 
   /**
    * Get the current import checkpoint, or null if none exists.
-   * @returns {Promise<Object|null>}
    */
-  async getImportCheckpoint() {
+  async getImportCheckpoint(): Promise<ImportCheckpoint | null> {
     try {
       const data = await this._get('dynamodb', {
         operation: 'get_import_checkpoint',
       });
-      return data?.checkpoint || null;
+      return (data?.checkpoint as ImportCheckpoint) || null;
     } catch {
       return null;
     }
@@ -283,9 +295,8 @@ class DynamoDBService {
 
   /**
    * Clear the import checkpoint after completion.
-   * @returns {Promise<Object>}
    */
-  async clearImportCheckpoint() {
+  async clearImportCheckpoint(): Promise<unknown> {
     return await this._post('dynamodb', {
       operation: 'clear_import_checkpoint',
     });
@@ -293,14 +304,13 @@ class DynamoDBService {
 
   /**
    * Handle API errors consistently
-   * @param {Error} error - The error object
-   * @returns {Error} Formatted error
    */
-  handleError(error) {
-    if (error.response) {
+  handleError(error: unknown): Error {
+    const axiosErr = error as AxiosError<{ error?: string }>;
+    if (axiosErr.response) {
       // API responded with error status
-      const message = error.response.data?.error || error.response.statusText;
-      const statusCode = error.response.status;
+      const message = axiosErr.response.data?.error || axiosErr.response.statusText;
+      const statusCode = axiosErr.response.status;
 
       if (statusCode === 401) {
         return new Error('Authentication required. Please log in again.');
@@ -313,12 +323,13 @@ class DynamoDBService {
       }
 
       return new Error(`API Error (${statusCode}): ${message}`);
-    } else if (error.request) {
+    } else if (axiosErr.request) {
       // Network error
       return new Error('Network error. Please check your connection.');
     } else {
       // Other error
-      return new Error(error.message || 'An unexpected error occurred.');
+      const errMsg = error instanceof Error ? error.message : 'An unexpected error occurred.';
+      return new Error(errMsg);
     }
   }
 }

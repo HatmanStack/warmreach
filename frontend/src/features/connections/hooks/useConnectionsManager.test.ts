@@ -17,7 +17,7 @@ vi.mock('@/features/tier', () => ({
 }));
 
 vi.mock('@/shared/services', () => ({
-  lambdaApiService: {
+  connectionsApiService: {
     getConnectionsByStatus: vi.fn(() => Promise.resolve([])),
     computeRelationshipScores: vi.fn(() => Promise.resolve({ scoresComputed: 0 })),
   },
@@ -32,10 +32,10 @@ vi.mock('@/shared/utils/logger', () => ({
 import { useConnectionsManager } from './useConnectionsManager';
 import { useAuth } from '@/features/auth';
 import { useTier } from '@/features/tier';
-import { lambdaApiService } from '@/shared/services';
+import { connectionsApiService } from '@/shared/services';
 
 const mockUseAuth = useAuth as ReturnType<typeof vi.fn>;
-const mockGetConnectionsByStatus = lambdaApiService.getConnectionsByStatus as ReturnType<
+const mockGetConnectionsByStatus = connectionsApiService.getConnectionsByStatus as ReturnType<
   typeof vi.fn
 >;
 
@@ -291,7 +291,7 @@ describe('useConnectionsManager', () => {
   });
 
   describe('relationship score computation', () => {
-    const mockComputeScores = lambdaApiService.computeRelationshipScores as ReturnType<
+    const mockComputeScores = connectionsApiService.computeRelationshipScores as ReturnType<
       typeof vi.fn
     >;
     const mockUseTier = useTier as ReturnType<typeof vi.fn>;

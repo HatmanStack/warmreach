@@ -43,8 +43,8 @@ interface MessageGenerationResponse {
   /** AI-generated message content */
   generatedMessage: string;
 
-  /** Confidence score for the generated message (0-1) */
-  confidence: number;
+  /** Confidence score for the generated message (0-1), if available */
+  confidence?: number;
 
   /** Optional reasoning or explanation for the message */
   reasoning?: string;

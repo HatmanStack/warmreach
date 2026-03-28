@@ -1,3 +1,4 @@
+// @ts-nocheck -- migrated from .js; full type annotations pending
 import { logger } from '#utils/logger.js';
 import { LinkedInErrorHandler } from '../utils/linkedinErrorHandler.js';
 import ConfigManager from '#shared-config/configManager.js';

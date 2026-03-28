@@ -1,6 +1,6 @@
 // src/contexts/UserProfileContext.tsx
 import { createContext, useState, useContext, type ReactNode, useMemo, useEffect } from 'react';
-import { lambdaApiService } from '@/shared/services';
+import { profileApiService } from '@/shared/services/profileApiService';
 import { useAuth } from '@/features/auth';
 import { createLogger } from '@/shared/utils/logger';
 
@@ -42,7 +42,7 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
 
     setIsLoading(true);
     try {
-      const response = await lambdaApiService.getUserProfile();
+      const response = await profileApiService.getUserProfile();
       logger.info('Profile fetch result', {
         success: response.success,
         hasData: !!response.data,
@@ -58,7 +58,7 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
           const storedTimezone = response.data.timezone;
           if (detectedTimezone && detectedTimezone !== storedTimezone) {
             // Fire-and-forget: do not block profile fetch flow
-            lambdaApiService
+            profileApiService
               .updateUserProfile({ timezone: detectedTimezone })
               .catch((err: unknown) => logger.warn('Failed to save timezone', { error: err }));
           }
@@ -94,7 +94,7 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
 
     setIsLoading(true);
     try {
-      const response = await lambdaApiService.updateUserProfile(updates);
+      const response = await profileApiService.updateUserProfile(updates);
       if (response.success) {
         // Refresh the profile to get updated data
         await fetchUserProfile();

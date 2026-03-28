@@ -61,7 +61,7 @@ describe('useConnections (integration)', () => {
     server.use(
       http.post('*/edges', async ({ request }) => {
         const body = (await request.json()) as any;
-        if (body.operation === 'update_metadata') {
+        if (body.operation === 'upsert_status') {
           return HttpResponse.json({ success: true });
         }
         if (body.operation === 'get_connections_by_status') {

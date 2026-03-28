@@ -5,6 +5,46 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.2] - 2026-03-27
+
+### Changed
+
+- **Architecture:** analytics-insights Lambda uses lazy `_get_service()` factory pattern, instantiating only the services needed per request instead of 14 at module scope
+- **Architecture:** LinkedInService instantiation consolidated from 5 per-handler calls to 1 via `_ensureLinkedInAuth` helper
+- **Performance:** GSI2 (inverted SK/PK index) added to DynamoDB template; digest-coordinator and admin-metrics use GSI queries with scan fallback
+- **Performance:** LLM operation timeouts reduced (max 90s, down from 120s) with documented 30s margin budget
+- **Performance:** Circuit breaker uses `CachedDynamoDBStore` with 5s TTL, reducing DynamoDB reads from 2-3 to ~1 per call
+- **Performance:** ConnectionCard resize listeners consolidated into shared `useCharacterBudget` hook with 150ms debounce
+- **Backend:** Bare `except Exception` blocks across 7 files narrowed to specific exception types (`TypeError`, `ValueError`, `json.JSONDecodeError`, `OSError`)
+- **Backend:** `logger.error(str(e))` replaced with `logger.exception` in 11 Lambda handler top-level catches, preserving stack traces
+- **Backend:** LLM input size validation gate (`MAX_INPUT_SIZE = 50_000`) returns 400 before dispatching to OpenAI
+- **Backend:** BFS path accumulation bounded via `max_bfs_paths` parameter (default 50) in `warm_intro_paths_service.py`
+- **Backend:** 14 new TypedDicts added to `dynamodb_types.py`; return type annotations added to `analytics_service`, `relationship_scoring_service`, `edge_data_service`, `quota_service`
+- **Client:** Error handler registry pattern replaces string-matching `categorizeError` with `ERROR_PATTERNS` regex registry and `ERROR_CODES` fast path
+- **Client:** 15 `.js` files migrated to `.ts` (8 fully typed, 7 with `@ts-nocheck` pending full annotation)
+- **Client:** 13 silent catch blocks in `linkedinService.ts` now log errors with operation context
+- **Client:** `any` types eliminated from all production `.ts` files (frontend and client)
+- **Frontend:** `LambdaApiServiceFacade` removed (99-line pass-through); 16 production files updated to import specific services directly
+- **Frontend:** Hardcoded confidence scores (`0.85`/`0.80`) removed from LLM responses; frontend field made optional
+
+### Fixed
+
+- **Backend:** Stripe webhook `getattr` dispatch now validates method existence with `hasattr`/`callable` guard before calling
+- **Backend:** `_format_user_profile_context()` extracted as static method, replacing 4 duplicated inline loops in LLM service
+- **Deps:** picomatch ReDoS, yaml stack overflow, brace-expansion vulnerabilities resolved via `npm audit fix`
+- **Git:** `.env.docker` added to `.gitignore` and untracked
+
+### Docs
+
+- All `edge-processing` references replaced with `edge-crud`/`ragstack-ops`/`analytics-insights` across ARCHITECTURE.md, CLAUDE.md, API_REFERENCE.md, CONFIGURATION.md, DEPLOYMENT.md
+- `handler_utils.py` added to shared services tables in ARCHITECTURE.md and CLAUDE.md
+- `/analytics` endpoint documented in API_REFERENCE.md (23 operations)
+- `OPENAI_API_KEY_ARN` replaces `OPENAI_API_KEY` in CONFIGURATION.md and .env.example
+- Admin dashboard documented: `admin/README.md`, `admin/.env.example`, config section in CONFIGURATION.md
+- Client stealth env vars (`ENABLE_HUMAN_BEHAVIOR`, `ENABLE_SUSPICIOUS_ACTIVITY_DETECTION`) documented in CONFIGURATION.md
+- CONTRIBUTING.md `requirements-test.lock` reference corrected
+- Broken relative link in Phase-3.md fixed
+
 ## [1.10.0] - 2026-03-27
 
 ### Changed

@@ -8,27 +8,46 @@
 import { logger } from '#utils/logger.js';
 import { config } from '#shared-config/index.js';
 import { linkedinResolver, linkedinSelectors } from '../../linkedin/selectors/index.js';
+import type { Page } from 'puppeteer';
+
+interface SessionManagerLike {
+  getInstance(opts: { reinitializeIfUnhealthy: boolean }): Promise<{
+    getPage(): Page;
+    goto(url: string, opts: { waitUntil: string; timeout: number }): Promise<void>;
+    waitForSelector(
+      selector: string,
+      opts: { timeout: number }
+    ): Promise<import('puppeteer').ElementHandle | null>;
+  }>;
+  recordError(error: unknown): Promise<void>;
+  getBackoffController(): { handleCheckpoint(url: string): Promise<void> } | null;
+}
+
+interface ConfigManagerLike {
+  get(key: string, defaultValue: number): number;
+}
+
+interface NavigationOptions {
+  sessionManager?: SessionManagerLike;
+  configManager?: ConfigManagerLike;
+}
 
 /**
  * Navigation service for LinkedIn page interactions.
  */
 export class LinkedInNavigationService {
-  /**
-   * Create a new LinkedInNavigationService.
-   * @param {Object} options
-   * @param {Object} options.sessionManager - Browser session manager
-   * @param {Object} options.configManager - Configuration manager
-   */
-  constructor(options = {}) {
-    this.sessionManager = options.sessionManager;
-    this.configManager = options.configManager;
+  private sessionManager: SessionManagerLike;
+  private configManager: ConfigManagerLike;
 
-    if (!this.sessionManager) {
+  constructor(options: NavigationOptions = {}) {
+    if (!options.sessionManager) {
       throw new Error('LinkedInNavigationService requires sessionManager');
     }
-    if (!this.configManager) {
+    if (!options.configManager) {
       throw new Error('LinkedInNavigationService requires configManager');
     }
+    this.sessionManager = options.sessionManager;
+    this.configManager = options.configManager;
   }
 
   /**
@@ -44,7 +63,7 @@ export class LinkedInNavigationService {
    * @param {string} profileId - LinkedIn profile ID or vanity URL
    * @returns {Promise<boolean>} True if navigation successful
    */
-  async navigateToProfile(profileId) {
+  async navigateToProfile(profileId: string): Promise<boolean> {
     logger.info(`Navigating to LinkedIn profile: ${profileId}`);
 
     try {
@@ -76,8 +95,9 @@ export class LinkedInNavigationService {
       // Extra stabilization wait
       try {
         await this.waitForPageStability();
-      } catch (error) {
-        logger.debug('Page stability check failed, continuing anyway', { error: error.message });
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logger.debug('Page stability check failed, continuing anyway', { error: errMsg });
       }
 
       // Verify we're on a profile page
@@ -100,7 +120,7 @@ export class LinkedInNavigationService {
    * @param {Object} page - Puppeteer page object
    * @returns {Promise<boolean>} True if on profile page
    */
-  async verifyProfilePage(page) {
+  async verifyProfilePage(page: Page): Promise<boolean> {
     try {
       const element = await linkedinResolver.resolveWithWait(page, 'nav:profile-indicator', {
         timeout: 2000,
@@ -118,7 +138,8 @@ export class LinkedInNavigationService {
       const currentUrl = page.url();
       return currentUrl.includes('/in/') || currentUrl.includes('/profile/');
     } catch (error) {
-      logger.debug('Profile page verification failed:', error.message);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.debug('Profile page verification failed:', errMsg);
       return false;
     }
   }
@@ -128,7 +149,7 @@ export class LinkedInNavigationService {
    * Uses heuristic DOM stability detection.
    * @returns {Promise<void>}
    */
-  async waitForLinkedInLoad() {
+  async waitForLinkedInLoad(): Promise<boolean | void> {
     try {
       const session = await this.getBrowserSession();
       const page = session.getPage();
@@ -137,19 +158,29 @@ export class LinkedInNavigationService {
       const sampleIntervalMs = 250;
       const requiredStableSamples = 3;
 
-      let lastMetrics = null;
+      let lastMetrics: {
+        ready: string;
+        main: boolean;
+        scaffold: boolean;
+        nav: boolean;
+        anchors: number;
+        images: number;
+        height: number;
+        isCheckpoint: boolean;
+        url: string;
+      } | null = null;
       let stableSamples = 0;
       const startTs = Date.now();
 
-      const navMain = (linkedinSelectors['nav:main-content'] || [])
+      const navMain = (linkedinSelectors['nav:main-content'] ?? [])
         .filter((s) => !s.selector.includes('::-p-'))
         .map((s) => s.selector)
         .join(', ');
-      const navPageLoaded = (linkedinSelectors['nav:page-loaded'] || [])
+      const navPageLoaded = (linkedinSelectors['nav:page-loaded'] ?? [])
         .filter((s) => !s.selector.includes('::-p-'))
         .map((s) => s.selector)
         .join(', ');
-      const navHomepage = (linkedinSelectors['nav:homepage'] || [])
+      const navHomepage = (linkedinSelectors['nav:homepage'] ?? [])
         .filter((s) => !s.selector.includes('::-p-'))
         .map((s) => s.selector)
         .join(', ');
@@ -231,7 +262,7 @@ export class LinkedInNavigationService {
     try {
       const session = await this.getBrowserSession();
       const page = session.getPage();
-      let last = null;
+      let last: { ready: DocumentReadyState; links: number; imgs: number } | null = null;
       let stable = 0;
       const start = Date.now();
 
@@ -256,8 +287,9 @@ export class LinkedInNavigationService {
         last = metrics;
         await new Promise((resolve) => setTimeout(resolve, sampleIntervalMs));
       }
-    } catch (error) {
-      logger.debug('Page stability monitoring failed', { error: error.message });
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.debug('Page stability monitoring failed', { error: errMsg });
     }
     return false;
   }
@@ -266,9 +298,12 @@ export class LinkedInNavigationService {
    * Find the first element matching any selector in order.
    * @param {string[]} selectors - CSS selectors to try in order
    * @param {number} waitTimeout - Per-selector timeout in ms
-   * @returns {Promise<{element: any, selector: string}>} Found element and selector or nulls
+   * Returns the found element and matching selector, or nulls if none matched.
    */
-  async findElementBySelectors(selectors, waitTimeout = 3000) {
+  async findElementBySelectors(
+    selectors: string[],
+    waitTimeout = 3000
+  ): Promise<{ element: import('puppeteer').ElementHandle | null; selector: string | null }> {
     const session = await this.getBrowserSession();
     for (const selector of selectors) {
       try {
@@ -287,9 +322,12 @@ export class LinkedInNavigationService {
    * Wait until any of the provided selectors appears.
    * @param {string[]} selectors
    * @param {number} waitTimeout
-   * @returns {Promise<{element: any, selector: string}>} Found element and selector or nulls
+   * Returns the found element and matching selector, or nulls if none matched.
    */
-  async waitForAnySelector(selectors, waitTimeout = 5000) {
+  async waitForAnySelector(
+    selectors: string[],
+    waitTimeout = 5000
+  ): Promise<{ element: import('puppeteer').ElementHandle | null; selector: string | null }> {
     return await this.findElementBySelectors(selectors, waitTimeout);
   }
 
@@ -298,7 +336,10 @@ export class LinkedInNavigationService {
    * @param {Object} page - Puppeteer page
    * @param {Object} element - Element to click
    */
-  async clickElementHumanly(page, element) {
+  async clickElementHumanly(
+    _page: Page,
+    element: import('puppeteer').ElementHandle
+  ): Promise<void> {
     await element.click();
   }
 
@@ -308,7 +349,11 @@ export class LinkedInNavigationService {
    * @param {Object} element - Input element
    * @param {string} text - Text to type
    */
-  async clearAndTypeText(page, element, text) {
+  async clearAndTypeText(
+    page: Page,
+    element: import('puppeteer').ElementHandle,
+    text: string
+  ): Promise<void> {
     await element.click();
     await page.keyboard.down('Control');
     await page.keyboard.press('KeyA');
@@ -321,7 +366,7 @@ export class LinkedInNavigationService {
    * Simple delay helper.
    * @param {number} ms - Milliseconds to delay
    */
-  async delay(ms) {
+  async delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

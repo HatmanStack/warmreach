@@ -94,10 +94,10 @@ def _check_rate_limit(user_sub):
     except ClientError as e:
         if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
             return False
-        logger.error(f'Rate limit check DynamoDB error: {e}')
+        logger.exception('Rate limit check DynamoDB error')
         raise RateLimitUnavailableError(str(e)) from e
     except Exception as e:
-        logger.error(f'Rate limit check error: {e}')
+        logger.exception('Rate limit check error')
         raise RateLimitUnavailableError(str(e)) from e
 
 

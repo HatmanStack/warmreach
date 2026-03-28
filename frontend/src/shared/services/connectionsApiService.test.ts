@@ -44,7 +44,7 @@ describe('ConnectionsApiService', () => {
   });
 
   describe('updateConnectionStatus', () => {
-    it('should call update_metadata operation', async () => {
+    it('should call upsert_status operation', async () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: true,
         data: { success: true, updated: {} },
@@ -54,7 +54,7 @@ describe('ConnectionsApiService', () => {
 
       expect(httpClient.makeRequest).toHaveBeenCalledWith(
         'edges',
-        'update_metadata',
+        'upsert_status',
         expect.objectContaining({
           profileId: 'c1',
           updates: expect.objectContaining({ status: 'ally' }),
@@ -72,7 +72,7 @@ describe('ConnectionsApiService', () => {
 
       expect(httpClient.makeRequest).toHaveBeenCalledWith(
         'edges',
-        'update_metadata',
+        'upsert_status',
         expect.objectContaining({
           profileId: 'p1',
         })

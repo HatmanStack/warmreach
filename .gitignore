@@ -3,6 +3,7 @@ node_modules
 
 # Environment
 .env
+.env.docker
 .env.ragstack
 .env.aws-outputs
 *.local

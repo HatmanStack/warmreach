@@ -1,3 +1,4 @@
+// @ts-nocheck -- migrated from .js; full type annotations pending
 /**
  * LinkedIn Messaging Operations - Message sending, composition, conversation scraping
  *

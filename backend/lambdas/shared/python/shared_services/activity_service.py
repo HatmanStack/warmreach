@@ -76,7 +76,7 @@ class ActivityService(BaseService):
             try:
                 decoded = json.loads(base64.urlsafe_b64decode(cursor))
                 query_params['ExclusiveStartKey'] = decoded
-            except Exception:
+            except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
                 logger.warning('Invalid pagination cursor, ignoring')
 
         response = self.table.query(**query_params)

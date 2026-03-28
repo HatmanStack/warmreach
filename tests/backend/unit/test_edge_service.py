@@ -6,11 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.exceptions import ClientError
 
-from conftest import load_service_class
-
-# Load EdgeService using the helper to avoid import conflicts
-_edge_service_module = load_service_class('edge-processing', 'edge_service')
-EdgeService = _edge_service_module.EdgeService
+from shared_services.edge_data_service import EdgeDataService as EdgeService
 
 # Also load shared error classes for assertions
 from errors.exceptions import ExternalServiceError, ValidationError

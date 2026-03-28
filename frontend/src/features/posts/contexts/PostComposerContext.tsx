@@ -10,7 +10,7 @@ import {
 import { postsService } from '@/features/posts';
 import { useAuth } from '@/features/auth';
 import { useUserProfile } from '@/features/profile';
-import { lambdaApiService } from '@/shared/services';
+import { profileApiService } from '@/shared/services/profileApiService';
 import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('PostComposer');
@@ -206,7 +206,7 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
       /* ignore */
     }
     try {
-      await lambdaApiService.updateUserProfile({ ai_generated_research: '' });
+      await profileApiService.updateUserProfile({ ai_generated_research: '' });
     } catch (error) {
       logger.error('Failed to clear research from profile', { error });
     }
@@ -220,7 +220,7 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
       /* ignore */
     }
     try {
-      await lambdaApiService.updateUserProfile({ ai_generated_ideas: newIdeas });
+      await profileApiService.updateUserProfile({ ai_generated_ideas: newIdeas });
     } catch (error) {
       logger.error('Failed to update ideas in profile', { error });
     }

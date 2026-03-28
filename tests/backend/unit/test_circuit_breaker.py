@@ -1,6 +1,6 @@
 """Tests for CircuitBreaker pattern implementation."""
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -8,7 +8,12 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..', 'backend/lambdas/shared/python'))
 
-from shared_services.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
+from shared_services.circuit_breaker import (
+    CachedDynamoDBStore,
+    CircuitBreaker,
+    CircuitBreakerOpenError,
+    DynamoDBStore,
+)
 
 
 class TestCircuitBreakerInit:
@@ -140,3 +145,72 @@ class TestCircuitBreakerToDict:
         assert info['failure_count'] == 0
         assert info['failure_threshold'] == 5
         assert info['recovery_timeout'] == 30.0
+
+
+class TestCachedDynamoDBStore:
+    """Tests for in-memory caching around DynamoDBStore."""
+
+    def test_caches_get_state_within_ttl(self):
+        """Consecutive reads within TTL window only hit DynamoDB once."""
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {'state': 'closed', 'failure_count': 0}
+        }
+        store = CachedDynamoDBStore(mock_table, cache_ttl_seconds=5.0)
+
+        # First read hits DynamoDB
+        result1 = store.get_state('test-svc')
+        assert result1['state'] == 'closed'
+        assert mock_table.get_item.call_count == 1
+
+        # Second read within TTL uses cache
+        result2 = store.get_state('test-svc')
+        assert result2['state'] == 'closed'
+        assert mock_table.get_item.call_count == 1  # Still 1
+
+    def test_cache_expires_after_ttl(self):
+        """After TTL expires, the next read hits DynamoDB again."""
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {'state': 'closed', 'failure_count': 0}
+        }
+        store = CachedDynamoDBStore(mock_table, cache_ttl_seconds=0.1)
+
+        store.get_state('test-svc')
+        assert mock_table.get_item.call_count == 1
+
+        time.sleep(0.15)
+
+        store.get_state('test-svc')
+        assert mock_table.get_item.call_count == 2
+
+    def test_set_state_updates_cache_and_dynamodb(self):
+        """Writes persist to DynamoDB and update the in-memory cache."""
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {'Item': {}}
+        store = CachedDynamoDBStore(mock_table, cache_ttl_seconds=5.0)
+
+        state_data = {'state': 'open', 'failure_count': 5}
+        store.set_state('test-svc', state_data)
+
+        # DynamoDB write happened
+        mock_table.put_item.assert_called_once()
+
+        # Subsequent read uses cache, no DynamoDB read
+        result = store.get_state('test-svc')
+        assert result['state'] == 'open'
+        assert result['failure_count'] == 5
+        assert mock_table.get_item.call_count == 0  # Never read from DB
+
+    def test_circuit_breaker_with_cached_store_reduces_reads(self):
+        """CircuitBreaker using CachedDynamoDBStore reduces DynamoDB round trips."""
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {'Item': {}}
+        store = CachedDynamoDBStore(mock_table, cache_ttl_seconds=5.0)
+        cb = CircuitBreaker(service_name='test', store=store)
+
+        # A successful call involves multiple internal reads
+        cb.call(lambda: 42)
+
+        # With caching, DynamoDB should be read at most once
+        assert mock_table.get_item.call_count <= 1

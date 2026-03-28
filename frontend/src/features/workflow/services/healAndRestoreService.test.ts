@@ -8,7 +8,6 @@ vi.mock('@/shared/services', () => ({
     send: (...args: unknown[]) => mockSend(...args),
     onMessage: (...args: unknown[]) => mockOnMessage(...args),
   },
-  lambdaApiService: {},
   commandService: {},
 }));
 

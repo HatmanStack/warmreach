@@ -6,8 +6,8 @@ const { mockSendLLMRequest, mockCallProfilesOperation } = vi.hoisted(() => ({
   mockCallProfilesOperation: vi.fn(),
 }));
 
-vi.mock('@/shared/services', () => ({
-  lambdaApiService: {
+vi.mock('@/shared/services/analyticsApiService', () => ({
+  analyticsApiService: {
     sendLLMRequest: mockSendLLMRequest,
     callProfilesOperation: mockCallProfilesOperation,
   },

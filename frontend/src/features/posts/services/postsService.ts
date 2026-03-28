@@ -1,4 +1,5 @@
-import { lambdaApiService } from '@/shared/services';
+import { analyticsApiService } from '@/shared/services/analyticsApiService';
+import { httpClient } from '@/shared/utils/httpClient';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserProfile } from '@/types';
 import { createLogger } from '@/shared/utils/logger';
@@ -42,7 +43,7 @@ export const postsService = {
       const profileToSend = sanitizeProfileForBackend(userProfile);
 
       const jobId = uuidv4();
-      const response = await lambdaApiService.sendLLMRequest('generate_ideas', {
+      const response = await analyticsApiService.sendLLMRequest('generate_ideas', {
         prompt: prompt || '',
         user_profile: profileToSend,
         job_id: jobId,
@@ -70,7 +71,7 @@ export const postsService = {
   async researchTopics(topics: string[], userProfile?: UserProfile): Promise<string> {
     try {
       const filteredProfile = sanitizeProfileForBackend(userProfile);
-      const response = await lambdaApiService.sendLLMRequest('research_selected_ideas', {
+      const response = await analyticsApiService.sendLLMRequest('research_selected_ideas', {
         selected_ideas: topics,
         user_profile: filteredProfile,
       });
@@ -94,17 +95,17 @@ export const postsService = {
       await sleep(intervalMs);
       for (let i = 0; i < maxChecks; i++) {
         try {
-          const poll = await lambdaApiService.callProfilesOperation<{
+          const poll = await httpClient.makeRequest<{
             content?: string;
             status?: string;
-          }>('get_research_result', {
+          }>('llm', 'get_research_result', {
             job_id: jobId,
             kind: 'RESEARCH',
           });
-          if (poll && (poll.success === true || poll.status === 'ok')) {
+          if (poll && poll.success === true) {
             const pollData = poll as Record<string, unknown>;
-            const nestedData = pollData.data as Record<string, unknown> | undefined;
-            const content = (pollData.content as string) || (nestedData?.content as string);
+            const nestedData = (pollData.data as Record<string, unknown>) ?? undefined;
+            const content = (nestedData?.content as string) || '';
             if (content && typeof content === 'string' && content.trim().length > 0) {
               return content;
             }
@@ -129,7 +130,7 @@ export const postsService = {
       const profileToSend = sanitizeProfileForBackend(userProfile);
 
       const jobId = uuidv4();
-      const response = await lambdaApiService.sendLLMRequest('synthesize_research', {
+      const response = await analyticsApiService.sendLLMRequest('synthesize_research', {
         existing_content: payload.existing_content,
         research_content: payload.research_content ?? null,
         selected_ideas:

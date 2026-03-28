@@ -7,13 +7,11 @@ import type { Connection } from '@/shared/types';
 const mockGetConnectionsByStatus = vi.fn();
 
 // Mock the dependencies
-vi.mock('@/shared/services', () => ({
-  lambdaApiService: {
+vi.mock('@/shared/services/connectionsApiService', () => ({
+  connectionsApiService: {
     getConnectionsByStatus: (...args: unknown[]) => mockGetConnectionsByStatus(...args),
     updateConnectionStatus: vi.fn(),
   },
-  websocketService: { onMessage: vi.fn(() => vi.fn()), onStateChange: vi.fn(() => vi.fn()) },
-  commandService: {},
 }));
 
 vi.mock('@/features/auth', () => ({

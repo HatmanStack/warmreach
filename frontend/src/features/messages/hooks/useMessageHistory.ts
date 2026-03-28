@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { Message } from '@/types';
-import { lambdaApiService } from '@/shared/services';
+import { messagesApiService } from '@/shared/services/messagesApiService';
 
 export function useMessageHistory() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -16,7 +16,7 @@ export function useMessageHistory() {
     setIsLoading(true);
     setError(null);
     try {
-      const fetched = await lambdaApiService.getMessageHistory(connectionId);
+      const fetched = await messagesApiService.getMessageHistory(connectionId);
       if (Array.isArray(fetched)) {
         setMessages(fetched);
       } else {

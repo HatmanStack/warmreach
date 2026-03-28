@@ -4,15 +4,9 @@ import base64
 
 import pytest
 
-from conftest import load_service_class
+from shared_services.edge_data_service import EdgeDataService
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def edge_service_module():
-    """Load EdgeService module."""
-    return load_service_class('edge-processing', 'edge_service')
 
 
 class TestEdgeServiceIntegration:
@@ -20,7 +14,7 @@ class TestEdgeServiceIntegration:
 
     def test_full_upsert_flow(self, edge_service_module, localstack_dynamodb_table):
         """Test complete upsert flow with real DynamoDB."""
-        service = edge_service_module.EdgeService(table=localstack_dynamodb_table)
+        service = EdgeDataService(table=localstack_dynamodb_table)
 
         result = service.upsert_status(
             user_id='test-user',
@@ -42,7 +36,7 @@ class TestEdgeServiceIntegration:
 
     def test_get_connections_by_status(self, edge_service_module, localstack_dynamodb_table):
         """Test retrieving connections by status."""
-        service = edge_service_module.EdgeService(table=localstack_dynamodb_table)
+        service = EdgeDataService(table=localstack_dynamodb_table)
 
         service.upsert_status(user_id='test-user', profile_id='ally-profile-1', status='ally')
         service.upsert_status(user_id='test-user', profile_id='ally-profile-2', status='ally')
@@ -55,7 +49,7 @@ class TestEdgeServiceIntegration:
 
     def test_add_message_to_edge(self, edge_service_module, localstack_dynamodb_table):
         """Test adding message to existing edge."""
-        service = edge_service_module.EdgeService(table=localstack_dynamodb_table)
+        service = EdgeDataService(table=localstack_dynamodb_table)
 
         upsert_result = service.upsert_status(user_id='test-user', profile_id='test-profile', status='ally')
         profile_id_b64 = upsert_result['profileId']
@@ -75,7 +69,7 @@ class TestEdgeServiceIntegration:
 
     def test_check_exists(self, edge_service_module, localstack_dynamodb_table):
         """Test checking if edge exists."""
-        service = edge_service_module.EdgeService(table=localstack_dynamodb_table)
+        service = EdgeDataService(table=localstack_dynamodb_table)
 
         nonexistent_b64 = base64.urlsafe_b64encode(b'nonexistent').decode()
         result = service.check_exists('test-user', nonexistent_b64)

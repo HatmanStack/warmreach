@@ -62,6 +62,42 @@ class DynamoDBStore:
             logger.error(f'Failed to set circuit breaker state in DynamoDB: {e}')
 
 
+class CachedDynamoDBStore:
+    """DynamoDB store with short-lived in-memory cache to reduce round trips.
+
+    Wraps DynamoDBStore with a per-service-name TTL cache. Within a single
+    Lambda invocation the circuit state rarely changes between consecutive
+    reads, so caching for a few seconds eliminates redundant DynamoDB calls
+    (typically from 2-3 per circuit breaker call down to 0-1).
+    """
+
+    def __init__(self, table, ttl_seconds: int = 3600, cache_ttl_seconds: float = 5.0):
+        self._inner = DynamoDBStore(table, ttl_seconds)
+        self._cache_ttl = cache_ttl_seconds
+        self._cache: dict[str, dict[str, Any]] = {}
+        self._cache_ts: dict[str, float] = {}
+
+    def _is_fresh(self, service_name: str) -> bool:
+        ts = self._cache_ts.get(service_name)
+        if ts is None:
+            return False
+        return (time.time() - ts) < self._cache_ttl
+
+    def get_state(self, service_name: str) -> dict[str, Any]:
+        if self._is_fresh(service_name):
+            return self._cache[service_name]
+        state = self._inner.get_state(service_name)
+        self._cache[service_name] = state
+        self._cache_ts[service_name] = time.time()
+        return state
+
+    def set_state(self, service_name: str, state_data: dict[str, Any]) -> None:
+        self._inner.set_state(service_name, state_data)
+        # Update cache immediately so subsequent reads see the new state
+        self._cache[service_name] = state_data
+        self._cache_ts[service_name] = time.time()
+
+
 class CircuitBreakerOpenError(Exception):
     """Raised when circuit is open and calls are rejected."""
 

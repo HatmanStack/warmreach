@@ -36,8 +36,8 @@ vi.mock('@/features/profile', () => ({
   useUserProfile: () => ({ userProfile: mockUserProfile.value }),
 }));
 
-vi.mock('@/shared/services', () => ({
-  lambdaApiService: {
+vi.mock('@/shared/services/profileApiService', () => ({
+  profileApiService: {
     updateUserProfile: mockUpdateUserProfile,
   },
 }));

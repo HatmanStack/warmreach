@@ -93,8 +93,8 @@ def _validate_jwt(token: str) -> dict | None:
     except jwt.InvalidTokenError as e:
         logger.warning(f'JWT validation failed: {e}')
         return None
-    except Exception as e:
-        logger.error(f'Unexpected error during JWT validation: {e}')
+    except Exception:
+        logger.exception('Unexpected error during JWT validation')
         return None
 
 

@@ -10,8 +10,8 @@ const { mockGetUserProfile, mockUpdateUserProfile, mockUser } = vi.hoisted(() =>
   },
 }));
 
-vi.mock('@/shared/services', () => ({
-  lambdaApiService: {
+vi.mock('@/shared/services/profileApiService', () => ({
+  profileApiService: {
     getUserProfile: mockGetUserProfile,
     updateUserProfile: mockUpdateUserProfile,
   },

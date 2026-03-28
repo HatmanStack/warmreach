@@ -71,6 +71,51 @@ describe('LinkedInErrorHandler', () => {
       expect(result).toBe(LinkedInErrorHandler.ERROR_CODES.LINKEDIN_RATE_LIMIT);
       expect(result.category).toBe('RATE_LIMIT');
     });
+
+    // Registry pattern coverage: every ERROR_PATTERNS entry
+    it.each([
+      ['session expired', 'LINKEDIN_SESSION_EXPIRED', 'AUTHENTICATION'],
+      ['user logged out', 'LINKEDIN_SESSION_EXPIRED', 'AUTHENTICATION'],
+      ['authentication required', 'LINKEDIN_AUTH_REQUIRED', 'AUTHENTICATION'],
+      ['please login first', 'LINKEDIN_AUTH_REQUIRED', 'AUTHENTICATION'],
+      ['Browser window closed unexpectedly', 'BROWSER_CRASH', 'BROWSER'],
+      ['operation timed out', 'BROWSER_TIMEOUT', 'BROWSER'],
+      ['navigation to page failed', 'BROWSER_NAVIGATION_FAILED', 'BROWSER'],
+      ['element not found on page', 'ELEMENT_NOT_FOUND', 'BROWSER'],
+      ['CSS selector mismatch', 'ELEMENT_NOT_FOUND', 'BROWSER'],
+      ['rate limit exceeded', 'LINKEDIN_RATE_LIMIT', 'RATE_LIMIT'],
+      ['suspicious activity detected', 'LINKEDIN_SUSPICIOUS_ACTIVITY', 'RATE_LIMIT'],
+      ['account restricted', 'LINKEDIN_SUSPICIOUS_ACTIVITY', 'RATE_LIMIT'],
+      ['profile not found for user', 'PROFILE_NOT_FOUND', 'LINKEDIN'],
+      ['user not found in directory', 'PROFILE_NOT_FOUND', 'LINKEDIN'],
+      ['already connected to this person', 'ALREADY_CONNECTED', 'LINKEDIN'],
+      ['connection exists already', 'ALREADY_CONNECTED', 'LINKEDIN'],
+      ['message blocked by recipient', 'MESSAGE_BLOCKED', 'LINKEDIN'],
+      ['messaging not allowed for user', 'MESSAGE_BLOCKED', 'LINKEDIN'],
+      ['post creation failed', 'POST_CREATION_FAILED', 'LINKEDIN'],
+      ['post had an error', 'POST_CREATION_FAILED', 'LINKEDIN'],
+      ['network error occurred', 'NETWORK_ERROR', 'NETWORK'],
+      ['ENOTFOUND linkedin.com', 'NETWORK_ERROR', 'NETWORK'],
+      ['dns lookup failed', 'DNS_RESOLUTION_FAILED', 'NETWORK'],
+      ['could not resolve host', 'DNS_RESOLUTION_FAILED', 'NETWORK'],
+      ['out of memory', 'MEMORY_LIMIT_EXCEEDED', 'SYSTEM'],
+      ['JavaScript heap exhausted', 'MEMORY_LIMIT_EXCEEDED', 'SYSTEM'],
+      ['disk full', 'DISK_SPACE_LOW', 'SYSTEM'],
+      ['insufficient space', 'DISK_SPACE_LOW', 'SYSTEM'],
+    ])('pattern: "%s" -> %s (%s)', (message, expectedCode, expectedCategory) => {
+      const result = LinkedInErrorHandler.categorizeError(new Error(message));
+      expect(result).toBe(LinkedInErrorHandler.ERROR_CODES[expectedCode]);
+      expect(result.category).toBe(expectedCategory);
+    });
+
+    it('should return FALLBACK_ERROR for unrecognized messages', () => {
+      const result = LinkedInErrorHandler.categorizeError(
+        new Error('completely unknown situation xyz')
+      );
+      expect(result).toBe(LinkedInErrorHandler.FALLBACK_ERROR);
+      expect(result.category).toBe('SYSTEM');
+      expect(result.httpStatus).toBe(500);
+    });
   });
 
   describe('createErrorResponse', () => {

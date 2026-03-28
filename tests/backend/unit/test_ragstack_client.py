@@ -12,6 +12,7 @@ import requests_mock
 SHARED_PYTHON_PATH = Path(__file__).parent.parent.parent.parent / 'backend' / 'lambdas' / 'shared' / 'python'
 sys.path.insert(0, str(SHARED_PYTHON_PATH))
 
+import shared_services.ragstack_client as _ragstack_mod
 from shared_services.ragstack_client import (
     RAGStackAuthError,
     RAGStackClient,
@@ -329,6 +330,33 @@ class TestErrorHandling:
             # JSON decode errors may be wrapped in different exception types
             with pytest.raises((RAGStackError, RAGStackNetworkError)):
                 ragstack_client.search("test")
+
+
+class TestCircuitBreakerStoreSelection:
+    """Tests that RAGStackClient uses CachedDynamoDBStore in production."""
+
+    def test_uses_cached_dynamodb_store_when_table_available(self):
+        """When a DynamoDB table is available, the circuit breaker store should be CachedDynamoDBStore."""
+        mock_table = Mock()
+        mock_table.get_item.return_value = {'Item': {}}
+
+        with patch.object(_ragstack_mod, '_get_cb_table', return_value=mock_table):
+            client = RAGStackClient(
+                endpoint="https://api.example.com/graphql",
+                api_key="test-key",
+            )
+            # Use class name to avoid identity mismatch from module reloads in test suite
+            assert type(client._circuit_breaker.store).__name__ == 'CachedDynamoDBStore'
+
+    def test_uses_inmemory_store_when_no_table(self):
+        """When no DynamoDB table is configured, falls back to InMemoryStore."""
+        with patch.object(_ragstack_mod, '_get_cb_table', return_value=None):
+            client = RAGStackClient(
+                endpoint="https://api.example.com/graphql",
+                api_key="test-key",
+            )
+            # Use class name to avoid identity mismatch from module reloads in test suite
+            assert type(client._circuit_breaker.store).__name__ == 'InMemoryStore'
 
 
 class TestApiKeyHeader:

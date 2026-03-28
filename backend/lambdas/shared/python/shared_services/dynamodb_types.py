@@ -247,3 +247,126 @@ class FeatureFlagResult(TypedDict):
     features: dict[str, bool]
     quotas: dict[str, int]
     rateLimits: dict[str, Any]
+
+
+# --- Analytics service return types ---
+
+
+class FunnelCounts(TypedDict):
+    """Stage counts within the connection funnel."""
+
+    possible: int
+    outgoing: int
+    ally: int
+    processed: int
+
+
+class ConversionRates(TypedDict):
+    """Stage-to-stage conversion rates."""
+
+    possibleToOutgoing: float
+    outgoingToAlly: float
+    overallConversion: float
+
+
+class ConnectionFunnelResult(TypedDict):
+    """Return type for AnalyticsService.get_connection_funnel()."""
+
+    funnel: FunnelCounts
+    conversionRates: ConversionRates
+    total: int
+
+
+class GrowthTimelineEntry(TypedDict):
+    """Single day in the growth timeline."""
+
+    date: str
+    added: int
+    cumulative: int
+
+
+class GrowthTimelineResult(TypedDict):
+    """Return type for AnalyticsService.get_growth_timeline()."""
+
+    timeline: list[GrowthTimelineEntry]
+    period: int
+    totalGrowth: int
+    avgDailyGrowth: float
+
+
+class EngagementTimelineEntry(TypedDict):
+    """Single day in the engagement timeline."""
+
+    date: str
+    outbound: int
+    inbound: int
+
+
+class EngagementTotals(TypedDict):
+    """Totals section of engagement metrics."""
+
+    outbound: int
+    inbound: int
+    responseRate: float
+
+
+class EngagementMetricsResult(TypedDict):
+    """Return type for AnalyticsService.get_engagement_metrics()."""
+
+    timeline: list[EngagementTimelineEntry]
+    totals: EngagementTotals
+    period: int
+
+
+class UsageDailyTrendEntry(TypedDict):
+    """Single day in the usage daily trend."""
+
+    date: str
+    total: int
+
+
+class UsageSummaryResult(TypedDict):
+    """Return type for AnalyticsService.get_usage_summary()."""
+
+    byOperation: dict[str, int]
+    dailyTrend: list[UsageDailyTrendEntry]
+    totalOperations: int
+    period: int
+
+
+class DashboardSummaryResult(TypedDict):
+    """Return type for AnalyticsService.get_dashboard_summary()."""
+
+    funnel: ConnectionFunnelResult
+    growth: GrowthTimelineResult
+    engagement: EngagementMetricsResult
+    usage: UsageSummaryResult
+    generatedAt: str
+
+
+# --- Relationship scoring return types ---
+
+
+class ScoreBreakdown(TypedDict):
+    """Component scores within a relationship score."""
+
+    frequency: int
+    recency: int
+    reciprocity: int
+    profile_completeness: int
+    depth: int
+
+
+class RelationshipScoreResult(TypedDict):
+    """Return type for RelationshipScoringService.compute_score()."""
+
+    score: int
+    breakdown: ScoreBreakdown
+
+
+class BatchScoreEntry(TypedDict):
+    """Single entry in batch score results."""
+
+    profileId: str
+    score: int
+    breakdown: ScoreBreakdown

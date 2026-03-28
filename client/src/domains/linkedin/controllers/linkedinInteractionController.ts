@@ -1,3 +1,4 @@
+// @ts-nocheck -- migrated from .js; full type annotations pending
 import { logger } from '#utils/logger.js';
 import { validateJwt } from '#utils/jwtValidator.js';
 import { LinkedInInteractionService } from '../services/linkedinInteractionService.js';
@@ -7,6 +8,7 @@ import { LinkedInAuditLogger } from '../utils/linkedinAuditLogger.js';
 import ControlPlaneService from '../../../shared/services/controlPlaneService.js';
 import { v4 as uuidv4 } from 'uuid';
 import { linkedInInteractionQueue } from '../../automation/utils/interactionQueue.js';
+import type { Request, Response } from 'express';
 
 // Shared singleton — same instance for all controller methods
 const _controlPlaneService = new ControlPlaneService();
@@ -16,7 +18,7 @@ export class LinkedInInteractionController {
    * Send a direct message to a LinkedIn connection
    * POST /linkedin-interactions/send-message
    */
-  async sendMessage(req, res) {
+  async sendMessage(req: Request, res: Response) {
     const requestId = uuidv4();
     const startTime = Date.now();
 
@@ -106,26 +108,16 @@ export class LinkedInInteractionController {
       // Enqueue the interaction to prevent concurrent page access
       const meta = { type: 'send-message', requestId, userId, recipientProfileId };
       const result = await linkedInInteractionQueue.enqueue(async () => {
-        // Initialize LinkedIn interaction service
         const linkedinService = new LinkedInInteractionService({
           controlPlaneService: _controlPlaneService,
         });
 
-        // Ensure we are logged in if no active authenticated session
         try {
-          const sessionActive = await linkedinService.isSessionActive();
-          if (!sessionActive) {
-            const puppeteerService = await linkedinService.initializeBrowserSession();
-            const credentialsCiphertext = req.body?.linkedinCredentialsCiphertext;
-            const loginHelper = new LinkedInService(puppeteerService);
-            await loginHelper.login(
-              null,
-              null,
-              null,
-              credentialsCiphertext,
-              'interaction-controller'
-            );
-          }
+          await this._ensureLinkedInAuth(
+            linkedinService,
+            req.body?.linkedinCredentialsCiphertext,
+            'sendMessage'
+          );
         } catch (loginErr) {
           logger.error('LinkedIn login failed during message send', {
             error: loginErr.message,
@@ -136,7 +128,6 @@ export class LinkedInInteractionController {
           );
         }
 
-        // Send message via service layer
         logger.info('Attempting to send LinkedIn message', {
           requestId,
           recipientProfileId,
@@ -219,7 +210,7 @@ export class LinkedInInteractionController {
    * Send a connection request to a LinkedIn profile
    * POST /linkedin-interactions/add-connection
    */
-  async addConnection(req, res) {
+  async addConnection(req: Request, res: Response) {
     const requestId = uuidv4();
     logger.info('LinkedIn add connection request received', {
       requestId,
@@ -268,26 +259,16 @@ export class LinkedInInteractionController {
       // Enqueue the interaction to prevent concurrent page access
       const meta = { type: 'add-connection', requestId, userId, profileId };
       const result = await linkedInInteractionQueue.enqueue(async () => {
-        // Initialize LinkedIn interaction service
         const linkedinService = new LinkedInInteractionService({
           controlPlaneService: _controlPlaneService,
         });
 
-        // Ensure we are logged in if no active authenticated session
         try {
-          const sessionActive = await linkedinService.isSessionActive();
-          if (!sessionActive) {
-            const puppeteerService = await linkedinService.initializeBrowserSession();
-            const credentialsCiphertext = req.body?.linkedinCredentialsCiphertext;
-            const loginHelper = new LinkedInService(puppeteerService);
-            await loginHelper.login(
-              null,
-              null,
-              null,
-              credentialsCiphertext,
-              'interaction-controller'
-            );
-          }
+          await this._ensureLinkedInAuth(
+            linkedinService,
+            req.body?.linkedinCredentialsCiphertext,
+            'addConnection'
+          );
         } catch (loginErr) {
           logger.error('LinkedIn login failed during connection request', {
             error: loginErr.message,
@@ -298,7 +279,6 @@ export class LinkedInInteractionController {
           );
         }
 
-        // Send connection request via service layer (single workflow)
         logger.info('Attempting to send LinkedIn connection request', {
           requestId,
           profileId,
@@ -492,19 +472,11 @@ export class LinkedInInteractionController {
         });
 
         try {
-          const sessionActive = await linkedinService.isSessionActive();
-          if (!sessionActive) {
-            const puppeteerService = await linkedinService.initializeBrowserSession();
-            const credentialsCiphertext = req.body?.linkedinCredentialsCiphertext;
-            const loginHelper = new LinkedInService(puppeteerService);
-            await loginHelper.login(
-              null,
-              null,
-              null,
-              credentialsCiphertext,
-              'interaction-controller'
-            );
-          }
+          await this._ensureLinkedInAuth(
+            linkedinService,
+            req.body?.linkedinCredentialsCiphertext,
+            'followProfile'
+          );
         } catch (loginErr) {
           logger.error('LinkedIn login failed during follow profile', {
             error: loginErr.message,
@@ -573,14 +545,39 @@ export class LinkedInInteractionController {
   );
 
   /**
+   * Ensure LinkedIn session is active and authenticated, logging in if needed.
+   * Consolidates the repeated login pattern across all handler methods.
+   * @param {object} linkedinService - LinkedInInteractionService instance
+   * @param {string} credentialsCiphertext - Encrypted LinkedIn credentials
+   * @param {string} operationName - For logging context
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _ensureLinkedInAuth(linkedinService, credentialsCiphertext, _operationName) {
+    const sessionActive = await linkedinService.isSessionActive();
+    if (sessionActive) return;
+
+    const puppeteerService = await linkedinService.initializeBrowserSession();
+    const loginHelper = new LinkedInService(puppeteerService);
+    await loginHelper.login(null, null, null, credentialsCiphertext, 'interaction-controller');
+  }
+
+  /**
    * Shared wrapper that handles auth/session/error boilerplate for controller methods.
    * @param {string} operationName - Name of the operation for logging
    * @param {function} handler - Async callback: (req, res, { requestId, userId }) => void
    * @returns {function} Express-compatible async handler
    * @private
    */
-  _withAuthenticatedSession(operationName, handler) {
-    return async (req, res) => {
+  _withAuthenticatedSession(
+    operationName: string,
+    handler: (
+      req: Request,
+      res: Response,
+      ctx: { requestId: string; userId: string }
+    ) => Promise<void>
+  ) {
+    return async (req: Request, res: Response) => {
       const requestId = uuidv4();
 
       logger.info(`LinkedIn ${operationName} request received`, {
@@ -666,18 +663,11 @@ export class LinkedInInteractionController {
         controlPlaneService: _controlPlaneService,
       });
 
-      const sessionActive = await linkedinService.isSessionActive();
-      if (!sessionActive) {
-        const puppeteerService = await linkedinService.initializeBrowserSession();
-        const loginHelper = new LinkedInService(puppeteerService);
-        await loginHelper.login(
-          null,
-          null,
-          null,
-          payload.linkedinCredentialsCiphertext,
-          'interaction-controller'
-        );
-      }
+      await this._ensureLinkedInAuth(
+        linkedinService,
+        payload.linkedinCredentialsCiphertext,
+        'sendMessageDirect'
+      );
 
       return await linkedinService.sendMessage(recipientProfileId, messageContent, userId);
     }, meta);
@@ -725,18 +715,11 @@ export class LinkedInInteractionController {
         controlPlaneService: _controlPlaneService,
       });
 
-      const sessionActive = await linkedinService.isSessionActive();
-      if (!sessionActive) {
-        const puppeteerService = await linkedinService.initializeBrowserSession();
-        const loginHelper = new LinkedInService(puppeteerService);
-        await loginHelper.login(
-          null,
-          null,
-          null,
-          payload.linkedinCredentialsCiphertext,
-          'interaction-controller'
-        );
-      }
+      await this._ensureLinkedInAuth(
+        linkedinService,
+        payload.linkedinCredentialsCiphertext,
+        'addConnectionDirect'
+      );
 
       return await linkedinService.executeConnectionWorkflow(profileId, '', {
         jwtToken: payload.jwtToken,

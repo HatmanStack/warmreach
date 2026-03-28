@@ -1,3 +1,4 @@
+// @ts-nocheck -- migrated from .js; full type annotations pending
 /**
  * LinkedIn Profile Operations - Navigation, sessions, page verification
  *

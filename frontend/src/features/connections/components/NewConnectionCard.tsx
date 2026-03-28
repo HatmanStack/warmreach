@@ -15,7 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { User, Building, MapPin, Tag, X, Loader2, CheckCircle, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { lambdaApiService as dbConnector } from '@/services/lambdaApiService';
+import { connectionsApiService } from '@/shared/services/connectionsApiService';
 import { commandService } from '@/shared/services/commandService';
 import { transformErrorForUser, getToastVariant, ERROR_MESSAGES } from '@/utils/errorHandling';
 import { createLogger } from '@/shared/utils/logger';
@@ -122,7 +122,7 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
       const profileId = connection.linkedin_url || connection.id;
 
       // Update status from 'possible' to 'processed' via edge API
-      await dbConnector.updateConnectionStatus(connection.id, 'processed', { profileId });
+      await connectionsApiService.updateConnectionStatus(connection.id, 'processed', { profileId });
 
       // Show success feedback with animation
       toast({
@@ -254,7 +254,9 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
 
       // Update status to 'outgoing' in DB for consistency
       try {
-        await dbConnector.updateConnectionStatus(connection.id, 'outgoing', { profileId });
+        await connectionsApiService.updateConnectionStatus(connection.id, 'outgoing', {
+          profileId,
+        });
       } catch {
         // Ignore DB update failures
       }

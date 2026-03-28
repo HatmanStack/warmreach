@@ -7,7 +7,7 @@ import {
   buildMockTierReturn,
   buildMockToastReturn,
 } from '@/test-utils';
-import { lambdaApiService as dbConnector, ApiError } from '@/shared/services';
+import { connectionsApiService, ApiError } from '@/shared/services';
 import { useAuth } from '@/features/auth';
 import { useTier } from '@/features/tier';
 import { useToast } from '@/shared/hooks';
@@ -16,16 +16,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/features/auth');
 vi.mock('@/features/tier');
 vi.mock('@/shared/hooks');
-vi.mock('@/shared/services', async (importActual) => {
-  const actual = await importActual<any>();
-  return {
-    ...actual,
-    lambdaApiService: {
-      getConnectionsByStatus: vi.fn(),
-      computeRelationshipScores: vi.fn().mockResolvedValue({}),
-    },
-  };
-});
+vi.mock('@/shared/services', () => ({
+  connectionsApiService: {
+    getConnectionsByStatus: vi.fn(),
+    computeRelationshipScores: vi.fn().mockResolvedValue({}),
+  },
+  ApiError: class ApiError extends Error {
+    status: number;
+    constructor(opts: { message: string; status: number }) {
+      super(opts.message);
+      this.status = opts.status;
+    }
+  },
+}));
 
 describe('useConnectionsManager', () => {
   const mockToast = vi.fn();
@@ -43,7 +46,10 @@ describe('useConnectionsManager', () => {
     );
     vi.mocked(useTier).mockReturnValue(buildMockTierReturn());
     vi.mocked(useToast).mockReturnValue(buildMockToastReturn(mockToast));
-    vi.mocked(dbConnector.getConnectionsByStatus).mockResolvedValue(mockConnections);
+    vi.mocked(connectionsApiService.getConnectionsByStatus).mockResolvedValue(mockConnections);
+    vi.mocked(connectionsApiService.computeRelationshipScores).mockResolvedValue(
+      {} as { scoresComputed: number }
+    );
   });
 
   const Wrapper = createWrapper();
@@ -75,7 +81,7 @@ describe('useConnectionsManager', () => {
 
     await waitFor(
       () => {
-        expect(dbConnector.computeRelationshipScores).toHaveBeenCalled();
+        expect(connectionsApiService.computeRelationshipScores).toHaveBeenCalled();
       },
       { timeout: 2000 }
     );
@@ -168,7 +174,7 @@ describe('useConnectionsManager', () => {
 
     // Instead of mocking internal fetchConnections, we'll test the wrapper's behavior
     // by making queryFn fail.
-    vi.mocked(dbConnector.getConnectionsByStatus).mockRejectedValueOnce(error);
+    vi.mocked(connectionsApiService.getConnectionsByStatus).mockRejectedValueOnce(error);
 
     const { result } = renderHook(() => useConnectionsManager(), { wrapper: Wrapper });
 
@@ -194,6 +200,6 @@ describe('useConnectionsManager', () => {
       await result.current.computeScores();
     });
 
-    expect(dbConnector.computeRelationshipScores).not.toHaveBeenCalled();
+    expect(connectionsApiService.computeRelationshipScores).not.toHaveBeenCalled();
   });
 });

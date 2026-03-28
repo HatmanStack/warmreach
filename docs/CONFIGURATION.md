@@ -94,12 +94,12 @@ These settings control the automation behavior and help prevent account flagging
 These variables are set by the SAM template at deploy time, not in `.env`.
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENAI_API_KEY` | OpenAI API key for LLM operations | |
+| `OPENAI_API_KEY_ARN` | SSM SecureString ARN for OpenAI API key. The LLM Lambda fetches the key at runtime via SSM `GetParameter` with decryption. | |
 | `OPENAI_TIMEOUT` | Timeout in seconds for OpenAI API calls. Used by `llm/lambda_function.py`. | `60` |
 | `BEDROCK_MODEL_ID` | AWS Bedrock model ID. SAM template default: `us.meta.llama3-2-90b-instruct-v1:0`. Code fallback in `llm_service.py`: `anthropic.claude-3-sonnet-20240229-v1:0` (used when env var is unset). The SAM-deployed value takes precedence at runtime. | `us.meta.llama3-2-90b-instruct-v1:0` |
 | `DYNAMODB_TABLE_NAME` | DynamoDB table name (SAM-managed, set by `!Ref ProfilesTable`) | |
 | `COMMAND_RATE_LIMIT_MAX` | Max commands per minute per user | `10` |
-| `DEV_MODE` | When `true`, enables test user ID fallback in edge-processing (bypasses JWT user extraction). Manually set if needed; not in template.yaml. Do not enable in production. | `false` |
+| `DEV_MODE` | When `true`, enables test user ID fallback in edge-crud, ragstack-ops, and analytics-insights (bypasses JWT user extraction via `handler_utils.get_user_id`). Manually set if needed; not in template.yaml. Do not enable in production. | `false` |
 | `COGNITO_USER_POOL_ID` | Cognito user pool ID for JWT validation | |
 | `COGNITO_REGION` | AWS region for Cognito | `us-east-1` |
 | `WEBSOCKET_ENDPOINT` | WebSocket API endpoint URL | |
@@ -121,6 +121,18 @@ These variables are used by the client Express backend.
 |----------|-------------|---------|
 | `REDIS_URL` | Optional Redis URL for distributed rate limiting. Falls back to in-memory rate limiting when unset. | _(in-memory)_ |
 | `ALLOW_DEV_AUTH_BYPASS` | When `true` (and `NODE_ENV=development`), enables dev auth bypass for testing. Do not enable in production. | `false` |
+| `ENABLE_HUMAN_BEHAVIOR` | Enable human-like behavior simulation (typing delays, scroll patterns). Set to `false` to disable. | `true` |
+| `ENABLE_SUSPICIOUS_ACTIVITY_DETECTION` | Enable suspicious activity detection and adaptive throttling. Set to `false` to disable. | `true` |
+
+### Admin Dashboard
+The admin dashboard (`admin/`) uses Vite environment variables for AWS service configuration.
+| Variable | Description |
+|----------|-------------|
+| `VITE_API_GATEWAY_URL` | Base URL of the deployed API Gateway (same as frontend) |
+| `VITE_COGNITO_USER_POOL_ID` | Cognito User Pool ID for admin authentication |
+| `VITE_COGNITO_USER_POOL_WEB_CLIENT_ID` | Cognito User Pool Client ID for admin authentication |
+
+Create `admin/.env` from `admin/.env.example` with deployment-specific values.
 
 This guide covers the most important variables. See `.env.example` for the complete list, including all interaction timing, retry, debugging, and feature toggle variables.
 

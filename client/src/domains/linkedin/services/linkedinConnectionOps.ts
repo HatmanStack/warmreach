@@ -1,3 +1,4 @@
+// @ts-nocheck -- migrated from .js; full type annotations pending
 /**
  * LinkedIn Connection Operations - Connection requests, status checks, follow operations
  *

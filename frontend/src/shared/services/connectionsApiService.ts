@@ -44,13 +44,13 @@ class ConnectionsApiService {
     const result = await httpClient.makeRequest<{
       success: boolean;
       updated: Record<string, unknown>;
-    }>('edges', 'update_metadata', {
+    }>('edges', 'upsert_status', {
       profileId: options?.profileId ?? connectionId,
       updates: { status: newStatus, updatedAt: new Date().toISOString() },
     });
 
     if (!result.success) {
-      logError(result.error, context, { connectionId, newStatus, operation: 'update_metadata' });
+      logError(result.error, context, { connectionId, newStatus, operation: 'upsert_status' });
       throw new ApiError(result.error);
     }
 

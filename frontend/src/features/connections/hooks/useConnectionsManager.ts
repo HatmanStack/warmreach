@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/features/auth';
 import { useTier } from '@/features/tier';
 import { useToast } from '@/shared/hooks';
-import { lambdaApiService as dbConnector, ApiError } from '@/shared/services';
+import { connectionsApiService, ApiError } from '@/shared/services';
 import { queryKeys } from '@/shared/lib/queryKeys';
 import type { Connection, StatusValue, ConnectionCounts, ConnectionStatus } from '@/types';
 import { createLogger } from '@/shared/utils/logger';
@@ -31,12 +31,12 @@ export function useConnectionsManager() {
   } = useQuery({
     queryKey: queryKeys.connections.byUser(user?.id ?? ''),
     queryFn: async () => {
-      const fetchedConnections = await dbConnector.getConnectionsByStatus();
+      const fetchedConnections = await connectionsApiService.getConnectionsByStatus();
       logger.info('Connections fetched successfully', { count: fetchedConnections.length });
       // Trigger scoring for pro users (fire-and-forget, non-blocking)
       if (isFeatureEnabled('relationship_strength_scoring') && !scoringTriggered.current) {
         scoringTriggered.current = true;
-        dbConnector
+        connectionsApiService
           .computeRelationshipScores()
           .then(() => new Promise((r) => setTimeout(r, 2000)))
           .then(() => {
@@ -163,7 +163,7 @@ export function useConnectionsManager() {
     if (scoringTriggered.current) return;
     scoringTriggered.current = true;
     try {
-      await dbConnector.computeRelationshipScores();
+      await connectionsApiService.computeRelationshipScores();
       // Brief delay to let DynamoDB writes propagate before re-fetching
       await new Promise((r) => setTimeout(r, 2000));
       queryClient.invalidateQueries({ queryKey: queryKeys.connections.byUser(user?.id ?? '') });

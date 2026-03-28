@@ -2,18 +2,54 @@ import { logger } from '#utils/logger.js';
 import { FileHelpers } from '#utils/fileHelpers.js';
 import fs from 'fs/promises';
 
+interface LinkCollectorConfig {
+  linkedin: { pageNumberStart: number; pageNumberEnd: number };
+  paths: { linksFile: string };
+}
+
+interface LinkedInServiceLike {
+  getLinksFromPeoplePage(
+    pageNumber: number,
+    companyNumber: string | null,
+    encodedRole: string | null,
+    geoNumber: string | null
+  ): Promise<{ links: string[]; pictureUrls: Record<string, string> }>;
+}
+
+interface CompanyData {
+  extractedCompanyNumber: string | null;
+  extractedGeoNumber: string | null;
+}
+
+interface WorkflowState {
+  companyRole?: string;
+  resumeIndex: number;
+}
+
+interface CollectResult {
+  links: string[];
+  pictureUrls: Record<string, string>;
+}
+
 export class LinkCollector {
-  constructor(linkedInService, config) {
+  private linkedInService: LinkedInServiceLike;
+  private config: LinkCollectorConfig;
+
+  constructor(linkedInService: LinkedInServiceLike, config: LinkCollectorConfig) {
     this.linkedInService = linkedInService;
     this.config = config;
   }
 
-  async collectAllLinks(state, companyData, onHealingNeeded) {
+  async collectAllLinks(
+    state: WorkflowState,
+    companyData: CompanyData,
+    onHealingNeeded: (pageNumber: number) => Promise<void>
+  ): Promise<CollectResult> {
     const { extractedCompanyNumber, extractedGeoNumber } = companyData;
     const encodedRole = state.companyRole ? encodeURIComponent(state.companyRole) : null;
 
-    let allLinks = await this._loadExistingLinks();
-    const allPictureUrls = {};
+    const allLinks: string[] = await this._loadExistingLinks();
+    const allPictureUrls: Record<string, string> = {};
     const { pageNumberStart, pageNumberEnd } = this.config.linkedin;
 
     let emptyPageCount = 0;
@@ -56,16 +92,16 @@ export class LinkCollector {
     return { links: allLinks, pictureUrls: allPictureUrls };
   }
 
-  async _loadExistingLinks() {
+  private async _loadExistingLinks(): Promise<string[]> {
     try {
       const fileContent = await fs.readFile(this.config.paths.linksFile);
-      return JSON.parse(fileContent);
+      return JSON.parse(fileContent.toString()) as string[];
     } catch {
       return [];
     }
   }
 
-  _calculateStartPage(resumeIndex, pageNumberStart) {
+  _calculateStartPage(resumeIndex: number, pageNumberStart: number): number {
     return resumeIndex !== 0 && resumeIndex > pageNumberStart ? resumeIndex : pageNumberStart;
   }
 }

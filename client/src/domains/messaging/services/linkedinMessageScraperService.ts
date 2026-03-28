@@ -7,47 +7,82 @@
 
 import { logger } from '#utils/logger.js';
 import { linkedinResolver, linkedinSelectors } from '../../linkedin/selectors/index.js';
+import type { Page } from 'puppeteer';
 
 const MAX_MESSAGES_PER_EDGE = 100;
 
+interface SessionManagerLike {
+  getInstance(opts: { reinitializeIfUnhealthy: boolean }): Promise<{
+    getPage(): Page | null;
+  }>;
+}
+
+interface ScraperOptions {
+  sessionManager?: SessionManagerLike;
+}
+
+interface ScrapeOptions {
+  maxConversations?: number;
+  maxScrolls?: number;
+}
+
+interface ConversationEntry {
+  profileId: string;
+  index: number;
+}
+
+interface ScrapedMessage {
+  id: string;
+  content: string;
+  timestamp: string | null;
+  timestampApproximate: boolean;
+  sender: string;
+}
+
 /**
  * Random delay helper (inline to avoid import complexity).
- * @param {number} minMs
- * @param {number} maxMs
  */
-function randomDelay(minMs, maxMs) {
+function randomDelay(minMs: number, maxMs: number): Promise<void> {
   const span = Math.max(0, maxMs - minMs);
   const delayMs = minMs + Math.floor(Math.random() * (span + 1));
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 /**
+ * Build a comma-separated CSS selector string from the selector registry,
+ * filtering out Puppeteer-specific pseudo selectors.
+ */
+function buildSelectorString(key: string): string {
+  const cascade = linkedinSelectors[key] ?? [];
+  return cascade
+    .filter((s) => !s.selector.includes('::-p-'))
+    .map((s) => s.selector)
+    .join(', ');
+}
+
+/**
  * Service dedicated to reading/extracting messages from LinkedIn's messaging UI.
  */
 export class LinkedInMessageScraperService {
-  /**
-   * @param {Object} options
-   * @param {Object} options.sessionManager - Browser session manager for page access
-   */
-  constructor(options = {}) {
-    this.sessionManager = options.sessionManager;
-    if (!this.sessionManager) {
+  private sessionManager: SessionManagerLike;
+
+  constructor(options: ScraperOptions = {}) {
+    if (!options.sessionManager) {
       throw new Error('LinkedInMessageScraperService requires sessionManager');
     }
+    this.sessionManager = options.sessionManager;
   }
 
   /**
-   * Main entry point for profile init — scrape all conversations matching known connection IDs.
-   * @param {string[]} connectionProfileIds - Known connection profile IDs
-   * @param {Object} [options]
-   * @param {number} [options.maxConversations=50] - Max conversations to process
-   * @param {number} [options.maxScrolls=20] - Max sidebar scrolls
-   * @returns {Promise<Map<string, Array>>} Map of profileId -> messages
+   * Main entry point for profile init: scrape all conversations matching known connection IDs.
    */
-  async scrapeAllConversations(connectionProfileIds, options = {}) {
+  async scrapeAllConversations(
+    connectionProfileIds: string[],
+    options: ScrapeOptions = {}
+  ): Promise<Map<string, ScrapedMessage[]>> {
     const maxConversations = options.maxConversations || 50;
     const maxScrolls = options.maxScrolls || 20;
-    const results = new Map();
+    const results = new Map<string, ScrapedMessage[]>();
 
     if (!connectionProfileIds || connectionProfileIds.length === 0) {
       logger.info('No connection profile IDs provided, skipping message scraping');
@@ -66,7 +101,7 @@ export class LinkedInMessageScraperService {
       logger.info(`Found ${conversationEntries.length} conversations in sidebar`);
 
       // Filter to only conversations matching known connections
-      const matchingEntries = conversationEntries.filter((entry) =>
+      const matchingEntries = conversationEntries.filter((entry: ConversationEntry) =>
         connectionSet.has(entry.profileId)
       );
       logger.info(
@@ -90,26 +125,26 @@ export class LinkedInMessageScraperService {
           }
 
           await this._delay(1000, 2000);
-        } catch (error) {
-          logger.warn(`Failed to scrape conversation for ${entry.profileId}: ${error.message}`);
+        } catch (error: unknown) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          logger.warn(`Failed to scrape conversation for ${entry.profileId}: ${errMsg}`);
           // Continue with remaining conversations
         }
       }
 
       logger.info(`Message scraping complete: ${results.size} conversations scraped`);
       return results;
-    } catch (error) {
-      logger.error(`Message scraping failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(`Message scraping failed: ${errMsg}`);
       return results; // Return partial results
     }
   }
 
   /**
    * Extract messages from a single open/navigated conversation thread.
-   * @param {string} profileId - Profile ID to scrape conversation for
-   * @returns {Promise<Array>} Array of message objects
    */
-  async scrapeConversationThread(profileId) {
+  async scrapeConversationThread(profileId: string): Promise<ScrapedMessage[]> {
     try {
       const page = await this._getPage();
 
@@ -122,7 +157,9 @@ export class LinkedInMessageScraperService {
 
       // Try to find and click the conversation for this profile in the sidebar
       const conversationEntries = await this._extractConversationEntries();
-      const targetEntry = conversationEntries.find((e) => e.profileId === profileId);
+      const targetEntry = conversationEntries.find(
+        (e: ConversationEntry) => e.profileId === profileId
+      );
 
       if (!targetEntry) {
         logger.warn(
@@ -139,8 +176,9 @@ export class LinkedInMessageScraperService {
 
       logger.info(`Scraped ${messages.length} messages from thread for ${profileId}`);
       return messages.slice(-MAX_MESSAGES_PER_EDGE);
-    } catch (error) {
-      logger.warn(`Failed to scrape conversation thread for ${profileId}: ${error.message}`);
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(`Failed to scrape conversation thread for ${profileId}: ${errMsg}`);
       return [];
     }
   }
@@ -148,7 +186,7 @@ export class LinkedInMessageScraperService {
   /**
    * Navigate to LinkedIn's /messaging/ page.
    */
-  async _navigateToMessaging() {
+  private async _navigateToMessaging(): Promise<void> {
     const page = await this._getPage();
 
     await page.goto('https://www.linkedin.com/messaging/', {
@@ -168,25 +206,20 @@ export class LinkedInMessageScraperService {
 
   /**
    * Scroll the conversation sidebar to load all conversations.
-   * Uses intelligent stop — halts when conversation count stabilizes.
-   * @param {number} maxScrolls
+   * Uses intelligent stop: halts when conversation count stabilizes.
    */
-  async _scrollConversationList(maxScrolls = 20) {
+  private async _scrollConversationList(maxScrolls = 20): Promise<void> {
     const page = await this._getPage();
     let previousCount = 0;
     let stableRounds = 0;
 
     for (let i = 0; i < maxScrolls; i++) {
-      const cascadeItem = linkedinSelectors['messaging:conversation-items'] || [];
-      const itemSel = cascadeItem
-        .filter((s) => !s.selector.includes('::-p-'))
-        .map((s) => s.selector)
-        .join(', ');
+      const itemSel = buildSelectorString('messaging:conversation-items');
 
-      const currentCount = await page.evaluate((selString) => {
+      const currentCount = await page.evaluate((selString: string) => {
         let max = 0;
         if (!selString) return 0;
-        selString.split(',').forEach((sel) => {
+        selString.split(',').forEach((sel: string) => {
           const items = document.querySelectorAll(sel.trim());
           if (items.length > max) max = items.length;
         });
@@ -206,14 +239,10 @@ export class LinkedInMessageScraperService {
       }
       previousCount = currentCount;
 
-      const cascadeContainer = linkedinSelectors['messaging:conversation-list'] || [];
-      const containerSel = cascadeContainer
-        .filter((s) => !s.selector.includes('::-p-'))
-        .map((s) => s.selector)
-        .join(', ');
+      const containerSel = buildSelectorString('messaging:conversation-list');
 
       // Scroll the conversation list container
-      await page.evaluate((selString) => {
+      await page.evaluate((selString: string) => {
         if (!selString) return;
         const selectors = selString.split(',');
         for (const sel of selectors) {
@@ -231,22 +260,16 @@ export class LinkedInMessageScraperService {
 
   /**
    * Extract conversation entries from the sidebar.
-   * @returns {Promise<Array<{profileId: string, index: number}>>}
    */
-  async _extractConversationEntries() {
+  private async _extractConversationEntries(): Promise<ConversationEntry[]> {
     const page = await this._getPage();
+    const itemSel = buildSelectorString('messaging:conversation-items');
 
-    const cascadeItem = linkedinSelectors['messaging:conversation-items'] || [];
-    const itemSel = cascadeItem
-      .filter((s) => !s.selector.includes('::-p-'))
-      .map((s) => s.selector)
-      .join(', ');
-
-    return await page.evaluate((selString) => {
-      const entries = [];
+    return await page.evaluate((selString: string) => {
+      const entries: { profileId: string; index: number }[] = [];
       if (!selString) return entries;
       const selectors = selString.split(',');
-      let items = [];
+      let items: Element[] = [];
       for (const sel of selectors) {
         items = Array.from(document.querySelectorAll(sel.trim()));
         if (items.length > 0) break;
@@ -258,7 +281,7 @@ export class LinkedInMessageScraperService {
         if (profileLink) {
           const href = profileLink.getAttribute('href') || '';
           const match = href.match(/\/in\/([^/?\s]+)/);
-          if (match && match[1]) {
+          if (match?.[1]) {
             entries.push({
               profileId: match[1].replace(/\/$/, ''),
               index,
@@ -273,27 +296,22 @@ export class LinkedInMessageScraperService {
 
   /**
    * Click a conversation in the sidebar and wait for thread to load.
-   * @param {{profileId: string, index: number}} entry
    */
-  async _clickConversation(entry) {
+  private async _clickConversation(entry: ConversationEntry): Promise<void> {
     const page = await this._getPage();
-
-    const cascadeItem = linkedinSelectors['messaging:conversation-items'] || [];
-    const itemSel = cascadeItem
-      .filter((s) => !s.selector.includes('::-p-'))
-      .map((s) => s.selector)
-      .join(', ');
+    const itemSel = buildSelectorString('messaging:conversation-items');
 
     await page.evaluate(
-      (idx, selString) => {
+      (idx: number, selString: string) => {
         if (!selString) return;
         const selectors = selString.split(',');
         for (const sel of selectors) {
           const items = document.querySelectorAll(sel.trim());
           if (items.length > idx) {
             // Click the item or its first clickable child
-            const clickable = items[idx].querySelector('a') || items[idx];
-            clickable.click();
+            const target = items[idx]!;
+            const clickable = target.querySelector('a') || target;
+            (clickable as HTMLElement).click();
             return;
           }
         }
@@ -313,24 +331,19 @@ export class LinkedInMessageScraperService {
 
   /**
    * Scroll up in the message thread to load older messages.
-   * @param {number} maxScrolls
    */
-  async _scrollThreadUp(maxScrolls = 10) {
+  private async _scrollThreadUp(maxScrolls = 10): Promise<void> {
     const page = await this._getPage();
     let previousCount = 0;
     let stableRounds = 0;
 
     for (let i = 0; i < maxScrolls; i++) {
-      const cascadeItem = linkedinSelectors['messaging:message-events'] || [];
-      const itemSel = cascadeItem
-        .filter((s) => !s.selector.includes('::-p-'))
-        .map((s) => s.selector)
-        .join(', ');
+      const itemSel = buildSelectorString('messaging:message-events');
 
-      const currentCount = await page.evaluate((selString) => {
+      const currentCount = await page.evaluate((selString: string) => {
         let max = 0;
         if (!selString) return 0;
-        selString.split(',').forEach((sel) => {
+        selString.split(',').forEach((sel: string) => {
           const items = document.querySelectorAll(sel.trim());
           if (items.length > max) max = items.length;
         });
@@ -345,14 +358,10 @@ export class LinkedInMessageScraperService {
       }
       previousCount = currentCount;
 
-      const cascadeContainer = linkedinSelectors['messaging:message-list'] || [];
-      const containerSel = cascadeContainer
-        .filter((s) => !s.selector.includes('::-p-'))
-        .map((s) => s.selector)
-        .join(', ');
+      const containerSel = buildSelectorString('messaging:message-list');
 
       // Scroll the thread container up
-      await page.evaluate((selString) => {
+      await page.evaluate((selString: string) => {
         if (!selString) return;
         const selectors = selString.split(',');
         for (const sel of selectors) {
@@ -370,36 +379,26 @@ export class LinkedInMessageScraperService {
 
   /**
    * Extract messages from the currently visible thread.
-   * @returns {Promise<Array<{id: string, content: string, timestamp: string, sender: string}>>}
    */
-  async _extractMessages() {
+  private async _extractMessages(): Promise<ScrapedMessage[]> {
     const page = await this._getPage();
-
-    const cascadeEvents = linkedinSelectors['messaging:message-events'] || [];
-    const eventsSel = cascadeEvents
-      .filter((s) => !s.selector.includes('::-p-'))
-      .map((s) => s.selector)
-      .join(', ');
-
-    const cascadeTime = linkedinSelectors['messaging:timestamp'] || [];
-    const timeSel = cascadeTime
-      .filter((s) => !s.selector.includes('::-p-'))
-      .map((s) => s.selector)
-      .join(', ');
-
-    const cascadeOther = linkedinSelectors['messaging:other-message'] || [];
-    const otherSel = cascadeOther
-      .filter((s) => !s.selector.includes('::-p-'))
-      .map((s) => s.selector)
-      .join(', ');
+    const eventsSel = buildSelectorString('messaging:message-events');
+    const timeSel = buildSelectorString('messaging:timestamp');
+    const otherSel = buildSelectorString('messaging:other-message');
 
     return await page.evaluate(
-      (eventsSel, timeSel, otherSel) => {
-        const messages = [];
-        if (!eventsSel) return messages;
+      (evtSel: string, tSel: string, oSel: string) => {
+        const messages: {
+          id: string;
+          content: string;
+          timestamp: string | null;
+          timestampApproximate: boolean;
+          sender: string;
+        }[] = [];
+        if (!evtSel) return messages;
 
-        let items = [];
-        for (const sel of eventsSel.split(',')) {
+        let items: Element[] = [];
+        for (const sel of evtSel.split(',')) {
           items = Array.from(document.querySelectorAll(sel.trim()));
           if (items.length > 0) break;
         }
@@ -414,7 +413,7 @@ export class LinkedInMessageScraperService {
           let content = '';
           for (const sel of contentSelectors) {
             const el = item.querySelector(sel);
-            if (el && el.textContent.trim()) {
+            if (el && el.textContent?.trim()) {
               content = el.textContent.trim();
               break;
             }
@@ -422,13 +421,13 @@ export class LinkedInMessageScraperService {
 
           if (!content) return; // Skip non-message events (e.g., connection requests)
 
-          // Extract timestamp — only use exact datetime, never synthesize scrape time
-          let timestamp = null;
+          // Extract timestamp: only use exact datetime, never synthesize scrape time
+          let timestamp: string | null = null;
           let timestampApproximate = false;
-          let timeEl = null;
+          let timeEl: Element | null = null;
 
-          if (timeSel) {
-            for (const sel of timeSel.split(',')) {
+          if (tSel) {
+            for (const sel of tSel.split(',')) {
               timeEl = item.querySelector(sel.trim());
               if (timeEl) break;
             }
@@ -439,7 +438,7 @@ export class LinkedInMessageScraperService {
             if (dt) {
               timestamp = dt;
             } else if (timeEl.textContent) {
-              // Relative text like "3 hours ago" — not a reliable ISO timestamp
+              // Relative text like "3 hours ago": not a reliable ISO timestamp
               timestamp = timeEl.textContent.trim();
               timestampApproximate = true;
             }
@@ -447,8 +446,8 @@ export class LinkedInMessageScraperService {
 
           // Determine sender: presence of "other" class indicates inbound
           let isInbound = false;
-          if (otherSel) {
-            for (const sel of otherSel.split(',')) {
+          if (oSel) {
+            for (const sel of oSel.split(',')) {
               if (
                 (item.matches && item.matches(sel.trim())) ||
                 item.querySelector(sel.trim()) !== null ||
@@ -479,21 +478,20 @@ export class LinkedInMessageScraperService {
 
   /**
    * Rate-limiting delay between actions. Extracted as a method for testability.
-   * @param {number} minMs
-   * @param {number} maxMs
    */
-  async _delay(minMs, maxMs) {
+  async _delay(minMs: number, maxMs: number): Promise<void> {
     await randomDelay(minMs, maxMs);
   }
 
   /**
    * Get the Puppeteer page from the session manager.
-   * @returns {Promise<Page>}
    */
-  async _getPage() {
+  private async _getPage(): Promise<Page> {
     const session = await this.sessionManager.getInstance({
       reinitializeIfUnhealthy: false,
     });
-    return session.getPage();
+    const page = session.getPage();
+    if (!page) throw new Error('No active page in browser session');
+    return page;
   }
 }

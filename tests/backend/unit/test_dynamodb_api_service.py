@@ -1,5 +1,6 @@
 """Unit tests for DynamoDBApiService class."""
 import base64
+import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -350,6 +351,28 @@ class TestValidateProfileField:
         service = DynamoDBApiService(table=MagicMock())
         assert service.validate_profile_field('summary', 'x' * 2600) is True
         assert service.validate_profile_field('summary', 'x' * 2601) is False
+
+
+class TestIsSafeUrl:
+    """Tests for _is_safe_url SSRF protection."""
+
+    @patch('socket.getaddrinfo', side_effect=socket.gaierror('DNS lookup failed'))
+    def test_dns_gaierror_returns_false(self, _mock_dns):
+        """socket.gaierror during DNS resolution returns False (no raise)."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://nonexistent.invalid') is False
+
+    @patch('socket.getaddrinfo', side_effect=OSError('Network unreachable'))
+    def test_os_error_returns_false(self, _mock_dns):
+        """OSError during DNS resolution returns False (no raise)."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://unreachable.example') is False
+
+    def test_malformed_url_returns_false(self):
+        """Completely malformed URL returns False (outer except catches parse error)."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('') is False
+        assert service._is_safe_url('not-a-url') is False
 
 
 class TestDailyScrapeCount:

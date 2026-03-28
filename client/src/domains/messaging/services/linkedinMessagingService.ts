@@ -7,38 +7,64 @@
 import { logger } from '#utils/logger.js';
 import { linkedinResolver } from '../../linkedin/selectors/index.js';
 
+interface SessionManagerLike {
+  getInstance(opts: { reinitializeIfUnhealthy: boolean }): Promise<{
+    getPage(): import('puppeteer').Page;
+  }>;
+}
+
+interface NavigationServiceLike {
+  navigateToProfile(profileId: string): Promise<void>;
+}
+
+interface DynamoDBServiceLike {
+  upsertEdge(data: Record<string, unknown>): Promise<void>;
+}
+
+interface MessagingServiceOptions {
+  sessionManager?: SessionManagerLike;
+  navigationService?: NavigationServiceLike;
+  dynamoDBService?: DynamoDBServiceLike;
+}
+
+interface MessageResult {
+  messageId: string;
+  recipientProfileId: string;
+  userId: string;
+  deliveryStatus: string;
+  sentAt: string;
+  messageLength: number;
+  error?: string;
+}
+
 /**
  * Messaging service for LinkedIn direct messages.
  */
 export class LinkedInMessagingService {
-  /**
-   * Create a new LinkedInMessagingService.
-   * @param {Object} options
-   * @param {Object} options.sessionManager - Browser session manager
-   * @param {Object} options.navigationService - Navigation service
-   * @param {Object} options.dynamoDBService - DynamoDB service for edge recording
-   */
-  constructor(options = {}) {
+  private sessionManager: SessionManagerLike;
+  private navigationService: NavigationServiceLike | undefined;
+  private dynamoDBService: DynamoDBServiceLike | undefined;
+
+  constructor(options: MessagingServiceOptions = {}) {
+    if (!options.sessionManager) {
+      throw new Error('LinkedInMessagingService requires sessionManager');
+    }
     this.sessionManager = options.sessionManager;
     this.navigationService = options.navigationService;
     this.dynamoDBService = options.dynamoDBService;
-
-    if (!this.sessionManager) {
-      throw new Error('LinkedInMessagingService requires sessionManager');
-    }
   }
 
   /**
    * Send a message to a LinkedIn connection.
-   * @param {string} recipientProfileId - Recipient's profile ID
-   * @param {string} messageContent - Message text
-   * @param {string} userId - Sender's user ID
-   * @returns {Promise<Object>} Message result
    */
-  async sendMessage(recipientProfileId, messageContent, userId) {
+  async sendMessage(
+    recipientProfileId: string,
+    messageContent: string,
+    userId: string
+  ): Promise<MessageResult> {
     logger.info(`Sending message to ${recipientProfileId}`);
 
-    const result = {
+    const result: MessageResult = {
       messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       recipientProfileId,
       userId,
@@ -73,26 +99,27 @@ export class LinkedInMessagingService {
             edgeType: 'message',
             metadata: { messageId: result.messageId },
           });
-        } catch (error) {
-          logger.warn('Failed to record message edge', { error: error.message });
+        } catch (error: unknown) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          logger.warn('Failed to record message edge', { error: errMsg });
         }
       }
 
       logger.info('Message sent successfully', { result });
       return result;
-    } catch (error) {
-      logger.error('Failed to send message', { error: error.message, recipientProfileId });
+    } catch (error: unknown) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error('Failed to send message', { error: err.message, recipientProfileId });
       result.deliveryStatus = 'failed';
-      result.error = error.message;
+      result.error = err.message;
       throw error;
     }
   }
 
   /**
    * Navigate to the messaging interface for current profile.
-   * @returns {Promise<void>}
    */
-  async navigateToMessaging() {
+  async navigateToMessaging(): Promise<void> {
     const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
     const page = session.getPage();
 
@@ -105,9 +132,8 @@ export class LinkedInMessagingService {
 
   /**
    * Wait for messaging interface to be ready.
-   * @returns {Promise<void>}
    */
-  async waitForMessagingInterface() {
+  async waitForMessagingInterface(): Promise<void> {
     const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
     const page = session.getPage();
 
@@ -116,10 +142,8 @@ export class LinkedInMessagingService {
 
   /**
    * Compose and send the message.
-   * @param {string} messageContent - Message text
-   * @returns {Promise<void>}
    */
-  async composeAndSendMessage(messageContent) {
+  async composeAndSendMessage(messageContent: string): Promise<void> {
     const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
     const page = session.getPage();
 
@@ -139,9 +163,8 @@ export class LinkedInMessagingService {
 
   /**
    * Wait for message sent confirmation.
-   * @returns {Promise<boolean>} True if sent indicator found, false otherwise
    */
-  async waitForMessageSent() {
+  async waitForMessageSent(): Promise<boolean> {
     try {
       const session = await this.sessionManager.getInstance({ reinitializeIfUnhealthy: false });
       const page = session.getPage();

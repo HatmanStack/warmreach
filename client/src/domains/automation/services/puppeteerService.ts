@@ -2,7 +2,9 @@ import puppeteer from 'puppeteer';
 import type {
   Browser,
   Page,
+  HTTPRequest,
   HTTPResponse,
+  ConsoleMessage,
   ElementHandle,
   ScreenshotOptions,
   WaitForSelectorOptions,
@@ -80,8 +82,8 @@ interface ExtractLinksOptions {
 export class PuppeteerService {
   private browser: Browser | null;
   private page: Page | null;
-  private _requestHandler: ((req: any) => void) | null = null;
-  private _consoleHandler: ((msg: any) => void) | null = null;
+  private _requestHandler: ((req: HTTPRequest) => void) | null = null;
+  private _consoleHandler: ((msg: ConsoleMessage) => void) | null = null;
   private _pageerrorHandler: ((err: unknown) => void) | null = null;
 
   constructor() {

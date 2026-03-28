@@ -1,5 +1,45 @@
 import { logger } from '#utils/logger.js';
 
+export interface ErrorCodeInfo {
+  category: string;
+  httpStatus: number;
+  message: string;
+  suggestions: string[];
+  retryAfter?: number;
+}
+
+interface ErrorPattern {
+  pattern: RegExp;
+  code: string;
+}
+
+interface ErrorContext {
+  operation?: string;
+  attemptCount?: number;
+  [key: string]: unknown;
+}
+
+interface ErrorResponsePayload {
+  success: false;
+  error: {
+    code: string;
+    category: string;
+    message: string;
+    details: string;
+    suggestions: string[];
+    timestamp: string;
+    requestId: string | null;
+    retryAfter?: number;
+    retryAt?: string;
+  };
+}
+
+interface RecoveryPlan {
+  shouldRecover: boolean;
+  delay: number;
+  actions: string[];
+}
+
 /**
  * LinkedIn Error Handler - Comprehensive error categorization and handling
  * Implements requirement 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
@@ -16,12 +56,12 @@ export class LinkedInErrorHandler {
     RATE_LIMIT: 'RATE_LIMIT',
     NETWORK: 'NETWORK',
     SYSTEM: 'SYSTEM',
-  };
+  } as const;
 
   /**
    * Error codes with detailed information
    */
-  static ERROR_CODES = {
+  static ERROR_CODES: Record<string, ErrorCodeInfo> = {
     // Authentication Errors
     JWT_INVALID: {
       category: 'AUTHENTICATION',
@@ -210,127 +250,90 @@ export class LinkedInErrorHandler {
   };
 
   /**
-   * Categorize error based on error message and context
+   * Registry of regex patterns mapped to ERROR_CODES keys.
+   * Order matters: more specific patterns must precede general ones
+   * (e.g., "session expired" before generic "auth").
    */
-  static categorizeError(error) {
+  static ERROR_PATTERNS: ErrorPattern[] = [
+    // Authentication (specific before general)
+    { pattern: /jwt|token|unauthorized/i, code: 'JWT_INVALID' },
+    { pattern: /session expired|logged out/i, code: 'LINKEDIN_SESSION_EXPIRED' },
+    { pattern: /authentication|login|auth/i, code: 'LINKEDIN_AUTH_REQUIRED' },
+
+    // Browser
+    { pattern: /browser.*(crash|closed)/i, code: 'BROWSER_CRASH' },
+    { pattern: /timeout|timed out/i, code: 'BROWSER_TIMEOUT' },
+    { pattern: /navigation|navigate/i, code: 'BROWSER_NAVIGATION_FAILED' },
+    { pattern: /element not found|selector/i, code: 'ELEMENT_NOT_FOUND' },
+
+    // Rate limiting and LinkedIn platform (specific before general)
+    { pattern: /rate.?limit|too many requests/i, code: 'LINKEDIN_RATE_LIMIT' },
+    { pattern: /profile not found|user not found/i, code: 'PROFILE_NOT_FOUND' },
+    { pattern: /already connected|connection exists/i, code: 'ALREADY_CONNECTED' },
+    { pattern: /message blocked|messaging not allowed/i, code: 'MESSAGE_BLOCKED' },
+    { pattern: /post.*(failed|error)/i, code: 'POST_CREATION_FAILED' },
+    { pattern: /suspicious|blocked|restricted/i, code: 'LINKEDIN_SUSPICIOUS_ACTIVITY' },
+
+    // Network
+    { pattern: /network|connection|enotfound/i, code: 'NETWORK_ERROR' },
+    { pattern: /dns|resolve/i, code: 'DNS_RESOLUTION_FAILED' },
+
+    // System
+    { pattern: /memory|heap/i, code: 'MEMORY_LIMIT_EXCEEDED' },
+    { pattern: /disk|space/i, code: 'DISK_SPACE_LOW' },
+  ];
+
+  /**
+   * Fallback error info returned when no pattern matches.
+   */
+  static FALLBACK_ERROR: ErrorCodeInfo = {
+    category: 'SYSTEM',
+    httpStatus: 500,
+    message: 'Internal system error',
+    suggestions: ['Try again later', 'Contact support if problem persists'],
+  };
+
+  /**
+   * Categorize error based on error message and context.
+   * Uses structured error codes first, then falls back to the
+   * ERROR_PATTERNS registry for unstructured errors.
+   */
+  static categorizeError(error: { message?: string; code?: string }): ErrorCodeInfo {
     // Fast path: structured error code from service layer
     if (error.code && this.ERROR_CODES[error.code]) {
-      return this.ERROR_CODES[error.code];
+      return this.ERROR_CODES[error.code]!;
     }
 
-    // Fallback: string matching for unstructured errors (Puppeteer, network, etc.)
-    const errorMessage = error.message.toLowerCase();
-
-    // Authentication errors
-    if (
-      errorMessage.includes('jwt') ||
-      errorMessage.includes('token') ||
-      errorMessage.includes('unauthorized')
-    ) {
-      return this.ERROR_CODES.JWT_INVALID;
-    }
-    if (
-      errorMessage.includes('authentication') ||
-      errorMessage.includes('login') ||
-      errorMessage.includes('auth')
-    ) {
-      return this.ERROR_CODES.LINKEDIN_AUTH_REQUIRED;
-    }
-    if (errorMessage.includes('session expired') || errorMessage.includes('logged out')) {
-      return this.ERROR_CODES.LINKEDIN_SESSION_EXPIRED;
+    // Walk the pattern registry and return the first match
+    const message = error.message || '';
+    for (const { pattern, code } of this.ERROR_PATTERNS) {
+      if (pattern.test(message)) {
+        return this.ERROR_CODES[code]!;
+      }
     }
 
-    // Browser errors
-    if (
-      errorMessage.includes('browser') &&
-      (errorMessage.includes('crash') || errorMessage.includes('closed'))
-    ) {
-      return this.ERROR_CODES.BROWSER_CRASH;
-    }
-    if (errorMessage.includes('timeout') || errorMessage.includes('timed out')) {
-      return this.ERROR_CODES.BROWSER_TIMEOUT;
-    }
-    if (errorMessage.includes('navigation') || errorMessage.includes('navigate')) {
-      return this.ERROR_CODES.BROWSER_NAVIGATION_FAILED;
-    }
-    if (errorMessage.includes('element not found') || errorMessage.includes('selector')) {
-      return this.ERROR_CODES.ELEMENT_NOT_FOUND;
-    }
-
-    // Rate limiting and LinkedIn platform errors
-    if (errorMessage.includes('rate limit') || errorMessage.includes('too many requests')) {
-      return this.ERROR_CODES.LINKEDIN_RATE_LIMIT;
-    }
-    if (
-      errorMessage.includes('suspicious') ||
-      errorMessage.includes('blocked') ||
-      errorMessage.includes('restricted')
-    ) {
-      return this.ERROR_CODES.LINKEDIN_SUSPICIOUS_ACTIVITY;
-    }
-    if (errorMessage.includes('profile not found') || errorMessage.includes('user not found')) {
-      return this.ERROR_CODES.PROFILE_NOT_FOUND;
-    }
-    if (errorMessage.includes('already connected') || errorMessage.includes('connection exists')) {
-      return this.ERROR_CODES.ALREADY_CONNECTED;
-    }
-    if (
-      errorMessage.includes('message blocked') ||
-      errorMessage.includes('messaging not allowed')
-    ) {
-      return this.ERROR_CODES.MESSAGE_BLOCKED;
-    }
-    if (
-      errorMessage.includes('post') &&
-      (errorMessage.includes('failed') || errorMessage.includes('error'))
-    ) {
-      return this.ERROR_CODES.POST_CREATION_FAILED;
-    }
-
-    // Network errors
-    if (
-      errorMessage.includes('network') ||
-      errorMessage.includes('connection') ||
-      errorMessage.includes('enotfound')
-    ) {
-      return this.ERROR_CODES.NETWORK_ERROR;
-    }
-    if (errorMessage.includes('dns') || errorMessage.includes('resolve')) {
-      return this.ERROR_CODES.DNS_RESOLUTION_FAILED;
-    }
-
-    // System errors
-    if (errorMessage.includes('memory') || errorMessage.includes('heap')) {
-      return this.ERROR_CODES.MEMORY_LIMIT_EXCEEDED;
-    }
-    if (errorMessage.includes('disk') || errorMessage.includes('space')) {
-      return this.ERROR_CODES.DISK_SPACE_LOW;
-    }
-
-    // Default to generic system error
-    return {
-      category: 'SYSTEM',
-      httpStatus: 500,
-      message: 'Internal system error',
-      suggestions: ['Try again later', 'Contact support if problem persists'],
-    };
+    return this.FALLBACK_ERROR;
   }
 
   /**
    * Create structured error response with actionable suggestions
    */
-  static createErrorResponse(error, context = {}, requestId = null) {
-    const categorizedError = this.categorizeError(error, context);
+  static createErrorResponse(
+    error: Error,
+    context: ErrorContext = {},
+    requestId: string | null = null
+  ): { response: ErrorResponsePayload; httpStatus: number } {
+    const categorizedError = this.categorizeError(error);
     const timestamp = new Date().toISOString();
 
     // Log the error with full context
     this.logError(error, categorizedError, context, requestId);
 
     // Create structured response
-    const errorResponse = {
+    const errorResponse: ErrorResponsePayload = {
       success: false,
       error: {
-        code: this.getErrorCode(categorizedError, error),
+        code: this.getErrorCode(categorizedError),
         category: categorizedError.category,
         message: categorizedError.message,
         details: this.getErrorDetails(error, context),
@@ -357,7 +360,7 @@ export class LinkedInErrorHandler {
   /**
    * Generate error code based on categorized error and original error
    */
-  static getErrorCode(categorizedError) {
+  static getErrorCode(categorizedError: ErrorCodeInfo): string {
     // Find matching error code
     for (const [code, errorInfo] of Object.entries(this.ERROR_CODES)) {
       if (errorInfo === categorizedError) {
@@ -372,7 +375,7 @@ export class LinkedInErrorHandler {
   /**
    * Get detailed error information for debugging
    */
-  static getErrorDetails(error, context) {
+  static getErrorDetails(error: Error, context: ErrorContext): string {
     if (process.env.NODE_ENV === 'development') {
       return error.message;
     }
@@ -388,11 +391,16 @@ export class LinkedInErrorHandler {
   /**
    * Log error with comprehensive information for audit trails
    */
-  static logError(error, categorizedError, context, requestId) {
+  static logError(
+    error: Error,
+    categorizedError: ErrorCodeInfo,
+    context: ErrorContext,
+    requestId: string | null
+  ): void {
     const logData = {
       requestId,
       errorCategory: categorizedError.category,
-      errorCode: this.getErrorCode(categorizedError, error),
+      errorCode: this.getErrorCode(categorizedError),
       errorMessage: error.message,
       errorStack: error.stack,
       context,
@@ -425,11 +433,11 @@ export class LinkedInErrorHandler {
   /**
    * Implement backoff strategy for rate limiting
    */
-  static calculateBackoffDelay(attemptCount, errorCategory) {
+  static calculateBackoffDelay(attemptCount: number, errorCategory: string): number {
     const baseDelay = 1000; // 1 second
     const maxDelay = 300000; // 5 minutes
 
-    let delay;
+    let delay: number;
     switch (errorCategory) {
       case 'RATE_LIMIT':
         // Exponential backoff for rate limiting
@@ -456,7 +464,7 @@ export class LinkedInErrorHandler {
   /**
    * Check if error is recoverable and should be retried
    */
-  static isRecoverable(categorizedError, attemptCount = 1) {
+  static isRecoverable(categorizedError: ErrorCodeInfo, attemptCount = 1): boolean {
     const maxAttempts = 3;
 
     if (attemptCount >= maxAttempts) {
@@ -477,10 +485,10 @@ export class LinkedInErrorHandler {
   /**
    * Create recovery mechanism for browser crashes
    */
-  static createRecoveryPlan(error, context) {
-    const categorizedError = this.categorizeError(error, context);
+  static createRecoveryPlan(error: Error, context: ErrorContext): RecoveryPlan {
+    const categorizedError = this.categorizeError(error);
 
-    const recoveryPlan = {
+    const recoveryPlan: RecoveryPlan = {
       shouldRecover: this.isRecoverable(categorizedError, context.attemptCount || 1),
       delay: this.calculateBackoffDelay(context.attemptCount || 1, categorizedError.category),
       actions: [],

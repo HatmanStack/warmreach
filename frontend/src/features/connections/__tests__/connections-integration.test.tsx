@@ -17,7 +17,7 @@ vi.mock('@/features/auth', () => ({
 // Mock services
 const mockGetConnections = vi.fn();
 vi.mock('@/shared/services', () => ({
-  lambdaApiService: {
+  connectionsApiService: {
     getConnectionsByStatus: (...args: unknown[]) => mockGetConnections(...args),
     updateConnectionStatus: vi.fn(),
   },
