@@ -1,6 +1,6 @@
 services:
-  localstack:
-    image: localstack/localstack
+  ministack:
+    image: ministack/ministack
     ports:
       - "4566:4566"
     environment:
@@ -8,21 +8,21 @@ services:
       - DEFAULT_REGION=us-east-1
       - DEBUG=0
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_ministack/health"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  localstack-init:
+  ministack-init:
     image: amazon/aws-cli
     depends_on:
-      localstack:
+      ministack:
         condition: service_healthy
     environment:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
-      - LOCALSTACK_ENDPOINT=http://localstack:4566
+      - MINISTACK_ENDPOINT=http://ministack:4566
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -53,7 +53,7 @@ services:
     ports:
       - "3001:3001"
     depends_on:
-      localstack-init:
+      ministack-init:
         condition: service_completed_successfully
       mock-linkedin:
         condition: service_healthy
@@ -61,7 +61,7 @@ services:
       - .env.docker
     environment:
       - LINKEDIN_BASE_URL=http://mock-linkedin:3333
-      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ENDPOINT_URL=http://ministack:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
