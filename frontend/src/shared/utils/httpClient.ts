@@ -1,4 +1,3 @@
-import axios, { type AxiosInstance, type AxiosResponse, type AxiosError } from 'axios';
 import { type ZodType } from 'zod';
 import { CognitoAuthService } from '@/features/auth';
 import { createLogger } from '@/shared/utils/logger';
@@ -12,7 +11,8 @@ const logger = createLogger('HttpClient');
  * Returns ApiResult<T> for consistent and safe error handling.
  */
 class HttpClient {
-  public apiClient: AxiosInstance;
+  private readonly baseURL: string;
+  private readonly timeout: number = 60000;
   private readonly maxRetries: number = 3;
   private readonly retryDelay: number = 1000;
 
@@ -25,41 +25,7 @@ class HttpClient {
       );
     }
 
-    const normalizedBaseUrl = apiBaseUrl
-      ? apiBaseUrl.endsWith('/')
-        ? apiBaseUrl
-        : `${apiBaseUrl}/`
-      : undefined;
-
-    this.apiClient = axios.create({
-      baseURL: normalizedBaseUrl,
-      timeout: 60000,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-
-    this.apiClient.interceptors.request.use(
-      async (config) => {
-        const token = await this.getAuthToken();
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
-        return config;
-      },
-      (error) => {
-        return Promise.reject(this.transformError(error));
-      }
-    );
-
-    this.apiClient.interceptors.response.use(
-      (response: AxiosResponse) => {
-        return response;
-      },
-      (error: AxiosError) => {
-        return Promise.reject(this.transformError(error));
-      }
-    );
+    this.baseURL = apiBaseUrl ? (apiBaseUrl.endsWith('/') ? apiBaseUrl : `${apiBaseUrl}/`) : '';
   }
 
   private async getAuthToken(): Promise<string | null> {
@@ -72,28 +38,102 @@ class HttpClient {
     }
   }
 
-  private transformError(error: AxiosError): ApiError {
-    if (error.response) {
-      const status = error.response.status;
-      const responseData = error.response.data as Record<string, unknown> | null;
-      const message =
-        (responseData?.message as string) ||
-        (responseData?.error as string) ||
-        `HTTP ${status} error`;
-      const code = (responseData?.code as string) || error.code;
+  private async buildHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const token = await this.getAuthToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  }
 
-      return new ApiError({ message, status, code });
-    } else if (error.request) {
+  private transformError(error: unknown): ApiError {
+    if (error instanceof ApiError) return error;
+
+    if (error instanceof TypeError) {
       return new ApiError({
         message: 'Network error - unable to reach server',
-        code: error.code,
-      });
-    } else {
-      return new ApiError({
-        message: error.message || 'An unexpected error occurred',
-        code: error.code,
+        code: 'ERR_NETWORK',
       });
     }
+
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return new ApiError({
+        message: 'Request was cancelled',
+        code: 'ERR_CANCELED',
+      });
+    }
+
+    const message = error instanceof Error ? error.message : 'An unexpected error occurred';
+    return new ApiError({ message });
+  }
+
+  private async parseResponseError(response: Response): Promise<ApiError> {
+    const status = response.status;
+    let message = `HTTP ${status} error`;
+    let code: string | undefined;
+
+    try {
+      const body = await response.json();
+      message = body?.message || body?.error || message;
+      code = body?.code;
+    } catch {
+      // Response body not JSON, use status text
+    }
+
+    return new ApiError({ message, status, code });
+  }
+
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const existingSignal = init.signal;
+
+    // Combine user-provided signal with timeout signal
+    if (existingSignal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
+
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    const onExternalAbort = () => controller.abort();
+    existingSignal?.addEventListener('abort', onExternalAbort);
+
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+      existingSignal?.removeEventListener('abort', onExternalAbort);
+    }
+  }
+
+  private async fetchJSON<T>(
+    method: 'GET' | 'POST',
+    endpoint: string,
+    options?: { body?: unknown; signal?: AbortSignal }
+  ): Promise<{ data: T }> {
+    const headers = await this.buildHeaders();
+    const url = `${this.baseURL}${endpoint}`;
+
+    const init: RequestInit = {
+      method,
+      headers,
+      signal: options?.signal,
+    };
+
+    if (options?.body !== undefined) {
+      init.body = JSON.stringify(options.body);
+    }
+
+    const response = await this.fetchWithTimeout(url, init);
+
+    if (!response.ok) {
+      throw await this.parseResponseError(response);
+    }
+
+    const data = await response.json();
+    return { data };
   }
 
   private unwrapLambdaResponse<T>(responseData: unknown, schema?: ZodType<T>): T {
@@ -149,7 +189,7 @@ class HttpClient {
   }
 
   private async executeWithRetry<T>(
-    requestFn: () => Promise<AxiosResponse<ApiResponse<T>>>,
+    requestFn: () => Promise<{ data: ApiResponse<T> }>,
     logDetails: { endpoint: string; operation?: string; params?: unknown },
     signal?: AbortSignal,
     schema?: ZodType<T>
@@ -160,7 +200,7 @@ class HttpClient {
       if (signal?.aborted) {
         return {
           success: false,
-          error: { message: 'Request was cancelled', code: 'ABORT_ERR' },
+          error: { message: 'Request was cancelled', code: 'ERR_CANCELED' },
         };
       }
 
@@ -169,15 +209,14 @@ class HttpClient {
         const data = this.unwrapLambdaResponse<T>(response.data, schema);
         return { success: true, data };
       } catch (error) {
-        if (error instanceof Error && error.name === 'CanceledError') {
+        if (error instanceof DOMException && error.name === 'AbortError') {
           return {
             success: false,
-            error: { message: 'Request was cancelled', code: 'ABORT_ERR' },
+            error: { message: 'Request was cancelled', code: 'ERR_CANCELED' },
           };
         }
 
-        const apiError =
-          error instanceof ApiError ? error : this.transformError(error as AxiosError);
+        const apiError = this.transformError(error);
         lastApiError = apiError;
 
         if (!apiError.retryable || attempt === this.maxRetries) {
@@ -227,11 +266,10 @@ class HttpClient {
   ): Promise<ApiResult<T>> {
     return this.executeWithRetry<T>(
       () =>
-        this.apiClient.post<ApiResponse<T>>(
-          endpoint,
-          { operation, ...params },
-          { signal: options.signal }
-        ),
+        this.fetchJSON<ApiResponse<T>>('POST', endpoint, {
+          body: { operation, ...params },
+          signal: options.signal,
+        }),
       { endpoint, operation, params: Object.keys(params) },
       options.signal,
       options.schema
@@ -243,7 +281,7 @@ class HttpClient {
     options: { signal?: AbortSignal; schema?: ZodType<T> } = {}
   ): Promise<ApiResult<T>> {
     return this.executeWithRetry<T>(
-      () => this.apiClient.get<ApiResponse<T>>(endpoint, { signal: options.signal }),
+      () => this.fetchJSON<ApiResponse<T>>('GET', endpoint, { signal: options.signal }),
       { endpoint, operation: 'GET' },
       options.signal,
       options.schema
@@ -256,11 +294,34 @@ class HttpClient {
     options: { signal?: AbortSignal; schema?: ZodType<T> } = {}
   ): Promise<ApiResult<T>> {
     return this.executeWithRetry<T>(
-      () => this.apiClient.post<ApiResponse<T>>(endpoint, data, { signal: options.signal }),
+      () =>
+        this.fetchJSON<ApiResponse<T>>('POST', endpoint, {
+          body: data,
+          signal: options.signal,
+        }),
       { endpoint, operation: 'POST' },
       options.signal,
       options.schema
     );
+  }
+
+  /**
+   * Raw fetch client for callers that need direct { data } responses
+   * without the ApiResult wrapper or retry logic.
+   */
+  public apiClient = {
+    post: <T>(endpoint: string, data?: unknown, options?: { signal?: AbortSignal }) =>
+      this.rawFetch<T>('POST', endpoint, { body: data, signal: options?.signal }),
+    get: <T>(endpoint: string, options?: { signal?: AbortSignal }) =>
+      this.rawFetch<T>('GET', endpoint, { signal: options?.signal }),
+  };
+
+  private async rawFetch<T>(
+    method: 'GET' | 'POST',
+    endpoint: string,
+    options?: { body?: unknown; signal?: AbortSignal }
+  ): Promise<{ data: T }> {
+    return this.fetchJSON<T>(method, endpoint, options);
   }
 }
 

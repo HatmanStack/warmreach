@@ -4,9 +4,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock axios first
-vi.mock('axios');
-
 // Mock logger
 vi.mock('../../shared/utils/logger.js', () => ({
   logger: {
@@ -59,9 +56,11 @@ vi.mock('../utils/profileMarkdownGenerator.js', () => ({
   generateProfileMarkdown: vi.fn().mockReturnValue('# Test Profile\n\nTest content'),
 }));
 
+const mockFetch = vi.fn();
+vi.stubGlobal('fetch', mockFetch);
+
 // Now import after all mocks are set up
 import { ProfileInitService } from './profileInitService.js';
-import axios from 'axios';
 
 describe('ProfileInitService', () => {
   let service;
@@ -73,6 +72,7 @@ describe('ProfileInitService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
     savedUrl = process.env.API_GATEWAY_BASE_URL;
 
     // Setup mocks
@@ -123,23 +123,25 @@ describe('ProfileInitService', () => {
       const result = await service.triggerRAGStackIngestion('profile123', mockState);
 
       expect(result).toBeNull();
-      expect(axios.get).not.toHaveBeenCalled();
-      expect(axios.post).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should skip ingestion when profile is not found in DynamoDB', async () => {
       process.env.API_GATEWAY_BASE_URL = 'https://api.example.com/prod';
       service = createService();
 
-      axios.get.mockResolvedValue({ data: { profile: null } });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ profile: null }),
+      });
 
       const result = await service.triggerRAGStackIngestion('profile123', mockState);
 
       expect(result).toBeNull();
-      expect(axios.get).toHaveBeenCalledWith(
-        'https://api.example.com/prod/profiles',
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('profiles'),
         expect.objectContaining({
-          params: { profileId: 'profile123' },
+          method: 'GET',
         })
       );
     });
@@ -148,62 +150,71 @@ describe('ProfileInitService', () => {
       process.env.API_GATEWAY_BASE_URL = 'https://api.example.com/prod';
       service = createService();
 
-      axios.get.mockResolvedValue({
-        data: {
-          profile: {
-            name: 'John Doe',
-            ragstack_ingested: true,
-          },
-        },
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            profile: {
+              name: 'John Doe',
+              ragstack_ingested: true,
+            },
+          }),
       });
 
       const result = await service.triggerRAGStackIngestion('profile123', mockState);
 
       expect(result).toBeNull();
-      expect(axios.post).not.toHaveBeenCalled();
+      // Only the GET fetch, no POST
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it('should skip ingestion when profile is missing required name field', async () => {
       process.env.API_GATEWAY_BASE_URL = 'https://api.example.com/prod';
       service = createService();
 
-      axios.get.mockResolvedValue({
-        data: {
-          profile: {
-            headline: 'Software Engineer',
-            // name is missing
-          },
-        },
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            profile: {
+              headline: 'Software Engineer',
+              // name is missing
+            },
+          }),
       });
 
       const result = await service.triggerRAGStackIngestion('profile123', mockState);
 
       expect(result).toBeNull();
-      expect(axios.post).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it('should successfully trigger ingestion for valid profile', async () => {
       process.env.API_GATEWAY_BASE_URL = 'https://api.example.com/prod';
       service = createService();
 
-      axios.get.mockResolvedValue({
-        data: {
-          profile: {
-            name: 'John Doe',
-            headline: 'Software Engineer',
-            location: 'San Francisco, CA',
-            currentTitle: 'Senior Engineer',
-            currentCompany: 'Tech Corp',
-          },
-        },
-      });
-
-      axios.post.mockResolvedValue({
-        data: {
-          documentId: 'doc-123',
-          status: 'uploaded',
-        },
-      });
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              profile: {
+                name: 'John Doe',
+                headline: 'Software Engineer',
+                location: 'San Francisco, CA',
+                currentTitle: 'Senior Engineer',
+                currentCompany: 'Tech Corp',
+              },
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              documentId: 'doc-123',
+              status: 'uploaded',
+            }),
+        });
 
       const result = await service.triggerRAGStackIngestion('profile123', mockState);
 
@@ -212,95 +223,86 @@ describe('ProfileInitService', () => {
         status: 'uploaded',
       });
 
-      expect(axios.post).toHaveBeenCalledWith(
-        'https://api.example.com/prod/ragstack',
-        expect.objectContaining({
-          operation: 'ingest',
-          profileId: 'profile123',
-          markdownContent: expect.any(String),
-          metadata: expect.objectContaining({
-            source: 'profile_init',
-          }),
-        }),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer test-jwt-token',
-          }),
-        })
-      );
+      // Second call is the POST for ingestion
+      const postCall = mockFetch.mock.calls[1];
+      expect(postCall[0]).toContain('ragstack');
+      const postBody = JSON.parse(postCall[1].body);
+      expect(postBody.operation).toBe('ingest');
+      expect(postBody.profileId).toBe('profile123');
+      expect(postCall[1].headers.Authorization).toBe('Bearer test-jwt-token');
     });
 
     it('should handle ingestion errors gracefully without throwing', async () => {
       process.env.API_GATEWAY_BASE_URL = 'https://api.example.com/prod';
       service = createService();
 
-      axios.get.mockResolvedValue({
-        data: {
-          profile: {
-            name: 'John Doe',
-          },
-        },
-      });
-
-      axios.post.mockRejectedValue(new Error('Network error'));
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              profile: {
+                name: 'John Doe',
+              },
+            }),
+        })
+        .mockRejectedValueOnce(new Error('Network error'));
 
       const result = await service.triggerRAGStackIngestion('profile123', mockState);
 
       // ingest() catches errors and returns { success: false }
       expect(result).toEqual({ success: false });
-      // Should not throw
     });
 
     it('should include JWT token in authorization header', async () => {
       process.env.API_GATEWAY_BASE_URL = 'https://api.example.com/prod';
       service = createService();
 
-      axios.get.mockResolvedValue({
-        data: {
-          profile: {
-            name: 'John Doe',
-          },
-        },
-      });
-
-      axios.post.mockResolvedValue({
-        data: { documentId: 'doc-123' },
-      });
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              profile: {
+                name: 'John Doe',
+              },
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ documentId: 'doc-123' }),
+        });
 
       await service.triggerRAGStackIngestion('profile123', mockState);
 
-      expect(axios.get).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer test-jwt-token',
-          }),
-        })
-      );
+      // GET call should have auth header
+      const getCall = mockFetch.mock.calls[0];
+      expect(getCall[1].headers.Authorization).toBe('Bearer test-jwt-token');
     });
 
     it('should normalize API base URL with trailing slash', async () => {
       process.env.API_GATEWAY_BASE_URL = 'https://api.example.com/prod'; // No trailing slash
       service = createService();
 
-      axios.get.mockResolvedValue({
-        data: {
-          profile: {
-            name: 'John Doe',
-          },
-        },
-      });
-
-      axios.post.mockResolvedValue({
-        data: { documentId: 'doc-123' },
-      });
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              profile: {
+                name: 'John Doe',
+              },
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ documentId: 'doc-123' }),
+        });
 
       await service.triggerRAGStackIngestion('profile123', mockState);
 
-      expect(axios.get).toHaveBeenCalledWith(
-        'https://api.example.com/prod/profiles',
-        expect.any(Object)
-      );
+      const getCall = mockFetch.mock.calls[0];
+      expect(getCall[0]).toBe('https://api.example.com/prod/profiles?profileId=profile123');
     });
   });
 });

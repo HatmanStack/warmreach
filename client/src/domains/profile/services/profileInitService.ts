@@ -1,7 +1,6 @@
 import { logger } from '#utils/logger.js';
 import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { LinkedInErrorHandler } from '../../linkedin/utils/linkedinErrorHandler.js';
-import axios from 'axios';
 import type { PuppeteerService } from '../../automation/services/puppeteerService.js';
 import type { LinkedInService, ConnectionType } from '../../linkedin/services/linkedinService.js';
 import { LinkedInMessageScraperService } from '../../messaging/services/linkedinMessageScraperService.js';
@@ -273,7 +272,35 @@ export class ProfileInitService {
     });
     this.ragstackProxy = new RagstackProxyService({
       apiBaseUrl: getApiBaseUrl(),
-      httpClient: axios,
+      httpClient: {
+        async get(url: string, config: Record<string, unknown>) {
+          const params = config.params as Record<string, string> | undefined;
+          let fullUrl = url;
+          if (params) {
+            const qs = new URLSearchParams(params).toString();
+            if (qs) fullUrl += `?${qs}`;
+          }
+          const response = await fetch(fullUrl, {
+            method: 'GET',
+            headers: config.headers as Record<string, string>,
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          return { data: await response.json() };
+        },
+        async post(url: string, data: Record<string, unknown>, config: Record<string, unknown>) {
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: config.headers as Record<string, string>,
+            body: JSON.stringify(data),
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          return { data: await response.json() };
+        },
+      },
     });
     this.batchSize = 100;
   }

@@ -2,28 +2,20 @@ import { vi } from 'vitest';
 import { buildPuppeteerPage } from './factories.js';
 
 /**
- * Shared mock for axios.
+ * Shared mock for fetch.
  */
-export function mockAxios() {
-  const mockPost = vi.fn();
-  const mockGet = vi.fn();
+export function mockFetchClient() {
+  const mockFn = vi.fn(() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({}),
+    })
+  );
 
-  vi.mock('axios', () => ({
-    default: {
-      post: mockPost,
-      get: mockGet,
-      create: vi.fn(() => ({
-        post: mockPost,
-        get: mockGet,
-        interceptors: {
-          request: { use: vi.fn() },
-          response: { use: vi.fn() },
-        },
-      })),
-    },
-  }));
+  vi.stubGlobal('fetch', mockFn);
 
-  return { mockPost, mockGet };
+  return mockFn;
 }
 
 /**
@@ -37,20 +29,41 @@ export function mockPuppeteerPage(overrides = {}) {
  * Shared mock for DynamoDB service.
  */
 export function mockDynamoDBService() {
-  const mockPut = vi.fn().mockResolvedValue(true);
-  const mockGet = vi.fn().mockResolvedValue({ Item: {} });
-  const mockQuery = vi.fn().mockResolvedValue({ Items: [] });
+  const mockSetAuthToken = vi.fn();
+  const mockGetProfileDetails = vi.fn().mockResolvedValue(true);
+  const mockUpsertEdgeStatus = vi.fn().mockResolvedValue({ success: true });
+  const mockCheckEdgeExists = vi.fn().mockResolvedValue(false);
+  const mockUpdateMessages = vi.fn().mockResolvedValue({ success: true });
+  const mockMarkBadContact = vi.fn().mockResolvedValue(true);
+  const mockCreateProfileMetadata = vi.fn().mockResolvedValue({});
 
   vi.mock('../domains/storage/services/dynamoDBService.js', () => ({
-    dynamoDBService: {
-      put: mockPut,
-      get: mockGet,
-      query: mockQuery,
-      delete: vi.fn().mockResolvedValue(true),
-    },
+    default: vi.fn().mockImplementation(() => ({
+      setAuthToken: mockSetAuthToken,
+      getProfileDetails: mockGetProfileDetails,
+      upsertEdgeStatus: mockUpsertEdgeStatus,
+      checkEdgeExists: mockCheckEdgeExists,
+      updateMessages: mockUpdateMessages,
+      markBadContact: mockMarkBadContact,
+      createProfileMetadata: mockCreateProfileMetadata,
+      canScrapeToday: vi.fn().mockResolvedValue(true),
+      incrementDailyScrapeCount: vi.fn().mockResolvedValue({ count: 1 }),
+      saveImportCheckpoint: vi.fn().mockResolvedValue({}),
+      getImportCheckpoint: vi.fn().mockResolvedValue(null),
+      clearImportCheckpoint: vi.fn().mockResolvedValue({}),
+      getHeaders: vi.fn().mockReturnValue({ 'Content-Type': 'application/json' }),
+    })),
   }));
 
-  return { mockPut, mockGet, mockQuery };
+  return {
+    mockSetAuthToken,
+    mockGetProfileDetails,
+    mockUpsertEdgeStatus,
+    mockCheckEdgeExists,
+    mockUpdateMessages,
+    mockMarkBadContact,
+    mockCreateProfileMetadata,
+  };
 }
 
 /**

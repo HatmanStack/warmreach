@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { logger } from '#utils/logger.js';
 import config from '#config';
 
@@ -29,14 +28,11 @@ class ControlPlaneService {
     this._apiKey = cp.apiKey;
 
     if (this._url) {
-      this._client = axios.create({
-        baseURL: this._url.endsWith('/') ? this._url : `${this._url}/`,
-        timeout: REQUEST_TIMEOUT_MS,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this._apiKey ? { 'x-api-key': this._apiKey } : {}),
-        },
-      });
+      this._baseURL = this._url.endsWith('/') ? this._url : `${this._url}/`;
+      this._defaultHeaders = {
+        'Content-Type': 'application/json',
+        ...(this._apiKey ? { 'x-api-key': this._apiKey } : {}),
+      };
     }
   }
 
@@ -45,6 +41,50 @@ class ControlPlaneService {
    */
   get isConfigured() {
     return Boolean(this._url);
+  }
+
+  // ─── Internal fetch helpers ────────────────────────────────────────
+
+  async _fetch(method, path, { params, body } = {}) {
+    let url = `${this._baseURL}${path}`;
+    if (params) {
+      const qs = new URLSearchParams(params).toString();
+      if (qs) url += `?${qs}`;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const init = {
+        method,
+        headers: this._defaultHeaders,
+        signal: controller.signal,
+      };
+      if (body !== undefined) {
+        init.body = JSON.stringify(body);
+      }
+
+      const response = await fetch(url, init);
+
+      if (!response.ok) {
+        const err = new Error(`HTTP ${response.status}`);
+        err.response = { status: response.status, data: await response.json().catch(() => ({})) };
+        throw err;
+      }
+
+      return { data: await response.json() };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async _get(path, options) {
+    return this._fetch('GET', path, options);
+  }
+
+  async _post(path, body) {
+    return this._fetch('POST', path, { body });
   }
 
   // ─── Circuit Breaker ───────────────────────────────────────────────
@@ -101,7 +141,7 @@ class ControlPlaneService {
 
     try {
       const params = this._deploymentId ? { deploymentId: this._deploymentId } : {};
-      const response = await this._client.get('rate-limits', { params });
+      const response = await this._get('rate-limits', { params });
       this._recordSuccess();
 
       _rateLimitCache = response.data;
@@ -130,7 +170,7 @@ class ControlPlaneService {
     };
 
     // Fire and forget — do not await
-    this._client.post('report-interaction', payload).then(
+    this._post('report-interaction', payload).then(
       () => this._recordSuccess(),
       (error) => {
         this._recordFailure(error);
@@ -147,7 +187,7 @@ class ControlPlaneService {
     if (!this.isConfigured) return null;
 
     try {
-      const response = await this._client.post('register', stackInfo);
+      const response = await this._post('register', stackInfo);
       this._recordSuccess();
       return response.data;
     } catch (error) {
@@ -172,7 +212,7 @@ class ControlPlaneService {
     if (this._isCircuitOpen()) return { allowed: true };
 
     try {
-      const response = await this._client.post('report-usage', {
+      const response = await this._post('report-usage', {
         deploymentId: this._deploymentId,
         operation,
         count,
@@ -206,7 +246,7 @@ class ControlPlaneService {
     if (this._isCircuitOpen()) return { allowed: true, remaining: -1 };
 
     try {
-      const response = await this._client.post('quota-status', {
+      const response = await this._post('quota-status', {
         deploymentId: this._deploymentId,
         operation,
       });
@@ -234,7 +274,7 @@ class ControlPlaneService {
 
     try {
       const params = this._deploymentId ? { deploymentId: this._deploymentId } : {};
-      const response = await this._client.get('feature-flags', { params });
+      const response = await this._get('feature-flags', { params });
       this._recordSuccess();
 
       _featureFlagCache = response.data;

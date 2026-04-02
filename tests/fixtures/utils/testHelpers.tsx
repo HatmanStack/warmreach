@@ -81,33 +81,23 @@ export const createMockFile = (
 };
 
 /**
- * Mock axios response helper
+ * Mock fetch response helper
  */
-export const createMockAxiosResponse = <T = any>(data: T, status = 200) => ({
-  data,
+export const createMockFetchResponse = <T = any>(data: T, status = 200) => ({
+  ok: status >= 200 && status < 300,
   status,
   statusText: 'OK',
-  headers: {},
-  config: {} as any,
+  json: () => Promise.resolve(data),
 });
 
 /**
- * Mock axios error helper
+ * Mock fetch error response helper
  */
-export const createMockAxiosError = (
-  message: string,
-  status = 500,
-  data?: any
-) => ({
-  message,
-  response: {
-    data: data || { error: message },
-    status,
-    statusText: 'Error',
-    headers: {},
-    config: {} as any,
-  },
-  isAxiosError: true,
+export const createMockFetchError = (message: string, status = 500, data?: any) => ({
+  ok: false,
+  status,
+  statusText: 'Error',
+  json: () => Promise.resolve(data || { error: message }),
 });
 
 // Re-export everything from @testing-library/react for convenience

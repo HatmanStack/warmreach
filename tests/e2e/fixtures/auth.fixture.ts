@@ -1,14 +1,14 @@
 import { test as base, type Page } from '@playwright/test';
 
 /**
- * Fixture that provides an authenticated page via LocalStack Cognito.
+ * Fixture that provides an authenticated page via MiniStack Cognito.
  */
 export const test = base.extend<{ authenticatedPage: Page }>({
   authenticatedPage: async ({ page }, use) => {
     // Navigate to app and sign in
     await page.goto('/');
 
-    // Fill in credentials (LocalStack test user)
+    // Fill in credentials (MiniStack test user)
     await page.getByTestId('email-input').fill('testuser@example.com');
     await page.getByTestId('password-input').fill('TestPass123!');
     await page.getByTestId('sign-in-button').click();

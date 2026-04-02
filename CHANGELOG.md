@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **CI:** `test-backend-integration` job with LocalStack service container, running in parallel with unit tests
+- **CI:** `test-backend-integration` job with MiniStack service container, running in parallel with unit tests
 - **E2E:** Playwright smoke tests for admin dashboard, billing/tier, network graph, and opportunities pages
 
 ### Docs

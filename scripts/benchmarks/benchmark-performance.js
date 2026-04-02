@@ -16,7 +16,6 @@
  *   node scripts/benchmark-performance.js --test search-api
  */
 
-import axios from 'axios';
 import { performance } from 'perf_hooks';
 import fs from 'fs/promises';
 
@@ -26,21 +25,21 @@ const config = {
   jwtToken: process.env.JWT_TOKEN || '',
   s3Bucket: process.env.S3_PROFILE_TEXT_BUCKET_NAME || 'linkedin-adv-search-screenshots',
   iterations: parseInt(process.env.BENCHMARK_ITERATIONS || '10'),
-  outputFile: 'Migration/docs/performance-benchmark-results.md'
+  outputFile: 'Migration/docs/performance-benchmark-results.md',
 };
 
 // Test queries for search API benchmarking
 const testQueries = [
-  "software engineer",
-  "product manager machine learning",
-  "data scientist python",
-  "frontend developer react",
-  "backend engineer aws",
-  "devops kubernetes",
-  "mobile developer ios",
-  "full stack javascript",
-  "ai researcher nlp",
-  "security engineer cloud"
+  'software engineer',
+  'product manager machine learning',
+  'data scientist python',
+  'frontend developer react',
+  'backend engineer aws',
+  'devops kubernetes',
+  'mobile developer ios',
+  'full stack javascript',
+  'ai researcher nlp',
+  'security engineer cloud',
 ];
 
 /**
@@ -55,7 +54,7 @@ async function measureTime(fn, label) {
 
   return {
     duration,
-    result
+    result,
   };
 }
 
@@ -70,8 +69,36 @@ function calculateStats(measurements) {
     avg: measurements.reduce((a, b) => a + b, 0) / measurements.length,
     median: sorted[Math.floor(sorted.length / 2)],
     p95: sorted[Math.floor(sorted.length * 0.95)],
-    p99: sorted[Math.floor(sorted.length * 0.99)]
+    p99: sorted[Math.floor(sorted.length * 0.99)],
   };
+}
+
+/**
+ * Helper: fetch JSON with timeout and auth
+ */
+async function fetchJSON(url, { method = 'POST', body, timeout = 5000 } = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${config.jwtToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**
@@ -81,7 +108,7 @@ async function benchmarkSearchApi() {
   console.log('\n=== Benchmarking Search API ===\n');
 
   if (!config.jwtToken) {
-    console.warn('⚠️  JWT_TOKEN not set. Skipping search API benchmark.');
+    console.warn('JWT_TOKEN not set. Skipping search API benchmark.');
     console.warn('   Set JWT_TOKEN environment variable to test with authentication.');
     return null;
   }
@@ -94,18 +121,10 @@ async function benchmarkSearchApi() {
 
     try {
       const { duration, result } = await measureTime(async () => {
-        const response = await axios.post(
-          `${config.apiGatewayUrl}/search`,
-          { query, limit: 10, offset: 0 },
-          {
-            headers: {
-              'Authorization': `Bearer ${config.jwtToken}`,
-              'Content-Type': 'application/json'
-            },
-            timeout: 5000
-          }
-        );
-        return response.data;
+        return await fetchJSON(`${config.apiGatewayUrl}/search`, {
+          body: { query, limit: 10, offset: 0 },
+          timeout: 5000,
+        });
       }, `Query ${i + 1}: "${query}"`);
 
       measurements.push(duration);
@@ -113,43 +132,42 @@ async function benchmarkSearchApi() {
         query,
         duration,
         success: true,
-        statusCode: 200
+        statusCode: 200,
       });
-
     } catch (error) {
-      console.error(`❌ Query ${i + 1} failed:`, error.message);
+      console.error(`Query ${i + 1} failed:`, error.message);
       results.push({
         query,
         duration: null,
         success: false,
-        error: error.message
+        error: error.message,
       });
     }
 
     // Small delay between requests
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   const stats = calculateStats(measurements);
 
-  console.log('\n📊 Search API Statistics:');
+  console.log('\nSearch API Statistics:');
   console.log(`   Average: ${stats.avg.toFixed(2)}ms`);
   console.log(`   Median:  ${stats.median.toFixed(2)}ms`);
   console.log(`   Min:     ${stats.min.toFixed(2)}ms`);
   console.log(`   Max:     ${stats.max.toFixed(2)}ms`);
   console.log(`   P95:     ${stats.p95.toFixed(2)}ms`);
   console.log(`   P99:     ${stats.p99.toFixed(2)}ms`);
-  console.log(`   Success: ${results.filter(r => r.success).length}/${results.length}`);
+  console.log(`   Success: ${results.filter((r) => r.success).length}/${results.length}`);
 
   const targetMet = stats.avg < 500;
-  console.log(`   Target (<500ms): ${targetMet ? '✅ MET' : '❌ NOT MET'}`);
+  console.log(`   Target (<500ms): ${targetMet ? 'MET' : 'NOT MET'}`);
 
   return {
     type: 'search-api',
     stats,
     results,
     targetMet,
-    target: 500
+    target: 500,
   };
 }
 
@@ -160,69 +178,55 @@ async function benchmarkLambdaColdStart() {
   console.log('\n=== Benchmarking Lambda Cold Start ===\n');
 
   if (!config.jwtToken) {
-    console.warn('⚠️  JWT_TOKEN not set. Skipping Lambda cold start benchmark.');
+    console.warn('JWT_TOKEN not set. Skipping Lambda cold start benchmark.');
     return null;
   }
 
-  console.log('ℹ️  This test requires Lambda to be idle for 10+ minutes.');
-  console.log('   First request will measure cold start, subsequent requests measure warm execution.');
+  console.log('This test requires Lambda to be idle for 10+ minutes.');
+  console.log(
+    '   First request will measure cold start, subsequent requests measure warm execution.'
+  );
 
   const measurements = {
     coldStart: null,
-    warmExecutions: []
+    warmExecutions: [],
   };
 
   try {
     // First request (potentially cold start)
     const { duration: coldDuration } = await measureTime(async () => {
-      const response = await axios.post(
-        `${config.apiGatewayUrl}/search`,
-        { query: 'cold start test', limit: 1 },
-        {
-          headers: {
-            'Authorization': `Bearer ${config.jwtToken}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 10000
-        }
-      );
-      return response.data;
+      return await fetchJSON(`${config.apiGatewayUrl}/search`, {
+        body: { query: 'cold start test', limit: 1 },
+        timeout: 10000,
+      });
     }, 'Cold Start Request');
 
     measurements.coldStart = coldDuration;
 
     // Wait a bit
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // Warm execution requests
     for (let i = 0; i < 5; i++) {
       const { duration } = await measureTime(async () => {
-        const response = await axios.post(
-          `${config.apiGatewayUrl}/search`,
-          { query: `warm test ${i}`, limit: 1 },
-          {
-            headers: {
-              'Authorization': `Bearer ${config.jwtToken}`,
-              'Content-Type': 'application/json'
-            },
-            timeout: 5000
-          }
-        );
-        return response.data;
+        return await fetchJSON(`${config.apiGatewayUrl}/search`, {
+          body: { query: `warm test ${i}`, limit: 1 },
+          timeout: 5000,
+        });
       }, `Warm Request ${i + 1}`);
 
       measurements.warmExecutions.push(duration);
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
 
     const warmStats = calculateStats(measurements.warmExecutions);
     const overhead = measurements.coldStart - warmStats.avg;
 
-    console.log('\n📊 Lambda Cold Start Statistics:');
+    console.log('\nLambda Cold Start Statistics:');
     console.log(`   Cold Start: ${measurements.coldStart.toFixed(2)}ms`);
     console.log(`   Warm Avg:   ${warmStats.avg.toFixed(2)}ms`);
     console.log(`   Overhead:   ${overhead.toFixed(2)}ms`);
-    console.log(`   Target (<3000ms): ${measurements.coldStart < 3000 ? '✅ MET' : '❌ NOT MET'}`);
+    console.log(`   Target (<3000ms): ${measurements.coldStart < 3000 ? 'MET' : 'NOT MET'}`);
 
     return {
       type: 'lambda-cold-start',
@@ -230,11 +234,10 @@ async function benchmarkLambdaColdStart() {
       warmStats,
       overhead,
       targetMet: measurements.coldStart < 3000,
-      target: 3000
+      target: 3000,
     };
-
   } catch (error) {
-    console.error('❌ Lambda cold start test failed:', error.message);
+    console.error('Lambda cold start test failed:', error.message);
     return null;
   }
 }
@@ -244,18 +247,15 @@ async function benchmarkLambdaColdStart() {
  */
 async function benchmarkTextExtraction() {
   console.log('\n=== Benchmarking Text Extraction (Simulated) ===\n');
-  console.log('ℹ️  This is a simulated test. Run actual test with Puppeteer backend running.');
+  console.log('This is a simulated test. Run actual test with Puppeteer backend running.');
   console.log('   Expected range: 2000-5000ms per profile');
-
-  // This would require Puppeteer backend to be running
-  // For now, we'll document the expected performance
 
   return {
     type: 'text-extraction',
     simulated: true,
     expectedRange: '2000-5000ms',
     target: 5000,
-    note: 'Requires Puppeteer backend and LinkedIn credentials. Run manually with e2e tests.'
+    note: 'Requires Puppeteer backend and LinkedIn credentials. Run manually with e2e tests.',
   };
 }
 
@@ -264,18 +264,15 @@ async function benchmarkTextExtraction() {
  */
 async function benchmarkS3Upload() {
   console.log('\n=== Benchmarking S3 Upload (Simulated) ===\n');
-  console.log('ℹ️  This is a simulated test. Run actual test with profile scraping workflow.');
+  console.log('This is a simulated test. Run actual test with profile scraping workflow.');
   console.log('   Expected range: 500-2000ms per file');
-
-  // This would require AWS credentials and profile data
-  // For now, we'll document the expected performance
 
   return {
     type: 's3-upload',
     simulated: true,
     expectedRange: '500-2000ms',
     target: 2000,
-    note: 'Requires AWS credentials and profile data. Run manually with e2e tests.'
+    note: 'Requires AWS credentials and profile data. Run manually with e2e tests.',
   };
 }
 
@@ -284,7 +281,7 @@ async function benchmarkS3Upload() {
  */
 function generateSummaryReport(results) {
   console.log('\n' + '='.repeat(60));
-  console.log('📊 PERFORMANCE BENCHMARK SUMMARY');
+  console.log('PERFORMANCE BENCHMARK SUMMARY');
   console.log('='.repeat(60) + '\n');
 
   const timestamp = new Date().toISOString();
@@ -299,17 +296,17 @@ function generateSummaryReport(results) {
     console.log(`\n${index + 1}. ${result.type.toUpperCase()}`);
 
     if (result.simulated) {
-      console.log(`   Status: ⏳ Simulated (${result.expectedRange})`);
+      console.log(`   Status: Simulated (${result.expectedRange})`);
       console.log(`   Note: ${result.note}`);
     } else if (result.stats) {
       console.log(`   Average: ${result.stats.avg.toFixed(2)}ms`);
       console.log(`   Target: <${result.target}ms`);
-      console.log(`   Status: ${result.targetMet ? '✅ MET' : '❌ NOT MET'}`);
+      console.log(`   Status: ${result.targetMet ? 'MET' : 'NOT MET'}`);
     } else if (result.coldStart) {
       console.log(`   Cold Start: ${result.coldStart.toFixed(2)}ms`);
       console.log(`   Warm Avg: ${result.warmStats.avg.toFixed(2)}ms`);
       console.log(`   Target: <${result.target}ms`);
-      console.log(`   Status: ${result.targetMet ? '✅ MET' : '❌ NOT MET'}`);
+      console.log(`   Status: ${result.targetMet ? 'MET' : 'NOT MET'}`);
     }
   });
 
@@ -319,9 +316,9 @@ function generateSummaryReport(results) {
     timestamp,
     config: {
       apiGatewayUrl: config.apiGatewayUrl,
-      iterations: config.iterations
+      iterations: config.iterations,
     },
-    results: results.filter(r => r !== null)
+    results: results.filter((r) => r !== null),
   };
 }
 
@@ -329,21 +326,17 @@ function generateSummaryReport(results) {
  * Update markdown documentation with results
  */
 async function updateDocumentation(summary) {
-  console.log('📝 Updating documentation with benchmark results...');
+  console.log('Updating documentation with benchmark results...');
 
   try {
     const doc = await fs.readFile(config.outputFile, 'utf-8');
 
     // Update the test date
-    let updated = doc.replace(
-      /\*\*Test Date:\*\* .*/,
-      `**Test Date:** ${summary.timestamp}`
-    );
+    let updated = doc.replace(/\*\*Test Date:\*\* .*/, `**Test Date:** ${summary.timestamp}`);
 
     // Update search API results if available
-    const searchResult = summary.results.find(r => r.type === 'search-api');
+    const searchResult = summary.results.find((r) => r.type === 'search-api');
     if (searchResult && searchResult.stats) {
-      // Update average response time
       updated = updated.replace(
         /- \*\*Average Response Time:\*\* _TBD_/,
         `- **Average Response Time:** ${searchResult.stats.avg.toFixed(2)}ms`
@@ -357,13 +350,13 @@ async function updateDocumentation(summary) {
         `- **Max Response Time:** ${searchResult.stats.max.toFixed(2)}ms`
       );
       updated = updated.replace(
-        /- \*\*Target Met:\*\* ⏳ Pending/,
-        `- **Target Met:** ${searchResult.targetMet ? '✅ Yes' : '❌ No'} (Target: < 500ms)`
+        /- \*\*Target Met:\*\* Pending/,
+        `- **Target Met:** ${searchResult.targetMet ? 'Yes' : 'No'} (Target: < 500ms)`
       );
     }
 
     // Update Lambda cold start results if available
-    const lambdaResult = summary.results.find(r => r.type === 'lambda-cold-start');
+    const lambdaResult = summary.results.find((r) => r.type === 'lambda-cold-start');
     if (lambdaResult && lambdaResult.coldStart) {
       updated = updated.replace(
         /- \*\*Cold Start Time:\*\* _TBD_/,
@@ -381,15 +374,14 @@ async function updateDocumentation(summary) {
 
     // Update overall status
     updated = updated.replace(
-      /\*\*Status:\*\* ⏳ Ready for live testing after deployment/,
-      `**Status:** ✅ Benchmark completed on ${new Date(summary.timestamp).toLocaleDateString()}`
+      /\*\*Status:\*\* Ready for live testing after deployment/,
+      `**Status:** Benchmark completed on ${new Date(summary.timestamp).toLocaleDateString()}`
     );
 
     await fs.writeFile(config.outputFile, updated);
-    console.log(`✅ Updated ${config.outputFile}`);
-
+    console.log(`Updated ${config.outputFile}`);
   } catch (error) {
-    console.error('❌ Failed to update documentation:', error.message);
+    console.error('Failed to update documentation:', error.message);
   }
 }
 
@@ -398,14 +390,14 @@ async function updateDocumentation(summary) {
  */
 async function main() {
   const args = process.argv.slice(2);
-  const testFilter = args.find(arg => arg.startsWith('--test='))?.split('=')[1];
+  const testFilter = args.find((arg) => arg.startsWith('--test='))?.split('=')[1];
 
-  console.log('🚀 WarmReach - Performance Benchmark');
+  console.log('WarmReach - Performance Benchmark');
   console.log('='.repeat(60));
 
   // Check configuration
   if (!config.apiGatewayUrl || config.apiGatewayUrl.includes('your-api-gateway')) {
-    console.warn('\n⚠️  VITE_API_GATEWAY_URL not configured.');
+    console.warn('\nVITE_API_GATEWAY_URL not configured.');
     console.warn('   Set this environment variable to test against deployed infrastructure.\n');
   }
 
@@ -437,15 +429,15 @@ async function main() {
   // Save JSON results
   const jsonOutput = 'Migration/docs/performance-benchmark-data.json';
   await fs.writeFile(jsonOutput, JSON.stringify(summary, null, 2));
-  console.log(`📊 Detailed results saved to ${jsonOutput}`);
+  console.log(`Detailed results saved to ${jsonOutput}`);
 
-  console.log('\n✅ Benchmark complete!\n');
+  console.log('\nBenchmark complete.\n');
 }
 
 // Run if executed directly
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch(error => {
-    console.error('❌ Benchmark failed:', error);
+  main().catch((error) => {
+    console.error('Benchmark failed:', error);
     process.exit(1);
   });
 }

@@ -9,25 +9,19 @@ import { type UseCommandReturn } from '@/shared/hooks/useCommand';
 import { buildUserProfile } from './factories';
 
 /**
- * Shared mock setup for axios.
+ * Shared mock setup for fetch.
  * NOTE: This is rarely used now that we have MSW for integration testing.
- * If used, call it BEFORE importing modules that use httpClient.
  */
-export function mockAxiosPost() {
-  const mockPost = vi.fn();
-  vi.doMock('axios', () => ({
-    default: {
-      create: vi.fn(() => ({
-        post: mockPost,
-        get: vi.fn(),
-        interceptors: {
-          request: { use: vi.fn() },
-          response: { use: vi.fn() },
-        },
-      })),
-    },
-  }));
-  return mockPost;
+export function mockFetchPost() {
+  const mockFn = vi.fn(() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({}),
+    })
+  );
+  vi.stubGlobal('fetch', mockFn);
+  return mockFn;
 }
 
 /**

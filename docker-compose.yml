@@ -1,6 +1,6 @@
 services:
   ministack:
-    image: ministack/ministack
+    image: nahuelnucera/ministack
     ports:
       - "4566:4566"
     environment:
@@ -29,7 +29,7 @@ services:
         apk add --no-cache bash
         bash /scripts/init-aws.sh
     volumes:
-      - ./scripts/localstack:/scripts:ro
+      - ./scripts/ministack:/scripts:ro
 
   mock-linkedin:
     build:

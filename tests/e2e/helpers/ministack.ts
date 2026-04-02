@@ -8,12 +8,12 @@ import {
   AdminInitiateAuthCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 
-const LOCALSTACK_ENDPOINT = process.env.LOCALSTACK_ENDPOINT || 'http://localhost:4566';
+const MINISTACK_ENDPOINT = process.env.MINISTACK_ENDPOINT || 'http://localhost:4566';
 const REGION = process.env.AWS_DEFAULT_REGION || 'us-east-1';
 const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || 'warmreach-test';
 
 const awsConfig = {
-  endpoint: LOCALSTACK_ENDPOINT,
+  endpoint: MINISTACK_ENDPOINT,
   region: REGION,
   credentials: {
     accessKeyId: 'test',
@@ -25,7 +25,7 @@ const dynamodb = new DynamoDBClient(awsConfig);
 const cognito = new CognitoIdentityProviderClient(awsConfig);
 
 /**
- * Seed test data into LocalStack DynamoDB for E2E tests.
+ * Seed test data into MiniStack DynamoDB for E2E tests.
  */
 export async function seedTestData(userId: string) {
   // Seed a test edge/connection
@@ -71,7 +71,7 @@ export async function seedTestData(userId: string) {
 }
 
 /**
- * Authenticate with LocalStack Cognito and return tokens.
+ * Authenticate with MiniStack Cognito and return tokens.
  */
 export async function authenticateWithCognito(
   userPoolId: string,

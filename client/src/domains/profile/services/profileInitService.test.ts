@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProfileInitService } from './profileInitService';
 import { LinkedInErrorHandler } from '../../linkedin/utils/linkedinErrorHandler.js';
-import axios from 'axios';
 
 // Mock dependencies
 vi.mock('#utils/logger.js', () => ({
@@ -49,7 +48,8 @@ vi.mock('fs/promises', () => ({
   },
 }));
 
-vi.mock('axios');
+const mockFetch = vi.fn();
+vi.stubGlobal('fetch', mockFetch);
 
 describe('ProfileInitService', () => {
   let service: ProfileInitService;
@@ -64,6 +64,7 @@ describe('ProfileInitService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
 
     mockPuppeteer = { extractProfilePictures: vi.fn().mockResolvedValue({}) };
     mockLinkedIn = {
@@ -298,15 +299,21 @@ describe('ProfileInitService', () => {
         mockBackoffController
       );
 
-      (axios.get as any).mockResolvedValue({
-        data: { profile: { name: 'John Doe', headline: 'Engineer' } },
-      });
-      (axios.post as any).mockResolvedValue({ data: { documentId: 'doc1' } });
+      // Mock fetch for GET (profile fetch) and POST (ingest)
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ profile: { name: 'John Doe', headline: 'Engineer' } }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ documentId: 'doc1' }),
+        });
 
       const result = await freshService.triggerRAGStackIngestion('p1', { jwtToken: 't' });
 
       expect(result).toEqual({ documentId: 'doc1' });
-      expect(axios.post).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 });

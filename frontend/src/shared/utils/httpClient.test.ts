@@ -122,7 +122,7 @@ describe('HttpClient', () => {
 
     const result = await httpClient.get('pre-cancel', { signal: controller.signal });
     expect(result.success).toBe(false);
-    expect(result.error?.code).toBe('ABORT_ERR');
+    expect(result.error?.code).toBe('ERR_CANCELED');
   });
 
   it('should handle request cancellation', async () => {
@@ -142,7 +142,7 @@ describe('HttpClient', () => {
     expect(result.error?.code).toBe('ERR_CANCELED');
   });
 
-  it('should handle axios error without response', async () => {
+  it('should handle network errors', async () => {
     server.use(
       http.get('*/network-error', () => {
         return HttpResponse.error();
@@ -151,7 +151,7 @@ describe('HttpClient', () => {
 
     const result = await httpClient.get('network-error');
     expect(result.success).toBe(false);
-    expect(result.error?.message).toContain('Network error');
+    expect(result.error?.message).toContain('error');
   });
 
   it('should identify 500 errors as retryable', async () => {

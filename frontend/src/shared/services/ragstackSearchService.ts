@@ -4,7 +4,6 @@
  * Provides semantic search functionality for LinkedIn profiles
  * via the RAGStack proxy Lambda.
  */
-import axios, { type AxiosInstance, type AxiosError } from 'axios';
 import { CognitoAuthService } from '@/features/auth';
 import { createLogger } from '@/shared/utils/logger';
 
@@ -74,38 +73,14 @@ interface RAGStackResult {
  * RAGStack Search Service class
  */
 class RAGStackSearchService {
-  private apiClient: AxiosInstance;
+  private readonly baseURL: string;
   private readonly timeout = 30000; // 30 second timeout for search operations
 
   constructor() {
     const apiBaseUrl = import.meta.env.VITE_API_GATEWAY_URL || '';
 
     // Normalize base URL to ensure trailing slash
-    const normalizedBaseUrl = apiBaseUrl
-      ? apiBaseUrl.endsWith('/')
-        ? apiBaseUrl
-        : `${apiBaseUrl}/`
-      : undefined;
-
-    this.apiClient = axios.create({
-      baseURL: normalizedBaseUrl,
-      timeout: this.timeout,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-
-    // Add request interceptor for authentication
-    this.apiClient.interceptors.request.use(
-      async (config) => {
-        const token = await this.getAuthToken();
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
-        return config;
-      },
-      (error) => Promise.reject(error)
-    );
+    this.baseURL = apiBaseUrl ? (apiBaseUrl.endsWith('/') ? apiBaseUrl : `${apiBaseUrl}/`) : '';
   }
 
   /**
@@ -158,20 +133,38 @@ class RAGStackSearchService {
     try {
       logger.debug('Executing profile search', { queryLength: query.length, maxResults });
 
-      const response = await this.apiClient.post(
-        'ragstack',
-        {
-          operation: 'search',
-          query,
-          maxResults,
-        },
-        {
-          timeout: this.timeout,
-        }
-      );
+      const token = await this.getAuthToken();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+      let response: Response;
+      try {
+        response = await fetch(`${this.baseURL}ragstack`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ operation: 'search', query, maxResults }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!response.ok) {
+        throw new SearchError(`Search failed with status ${response.status}`, {
+          status: response.status,
+        });
+      }
+
+      const responseData = await response.json();
 
       // Handle Lambda proxy response format
-      const responseData = response.data;
       let parsedBody: { results: RAGStackResult[]; totalResults: number };
 
       if (responseData && typeof responseData === 'object' && 'statusCode' in responseData) {
@@ -210,19 +203,15 @@ class RAGStackSearchService {
         throw error;
       }
 
-      const axiosError = error as AxiosError;
-      const message = axiosError.message || 'Profile search failed';
-      const status = axiosError.response?.status;
+      const message = error instanceof Error ? error.message : 'Profile search failed';
 
       logger.error('Search failed', {
         error: message,
-        status,
         queryLength: query.length,
       });
 
       throw new SearchError(message, {
-        status,
-        code: axiosError.code,
+        code: error instanceof DOMException ? 'ABORT_ERR' : undefined,
         cause: error as Error,
       });
     }

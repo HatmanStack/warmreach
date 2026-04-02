@@ -6,7 +6,7 @@ This guide provides instructions for setting up your development environment and
 
 -   **Node.js**: v24 LTS (managed via nvm)
 -   **Python**: 3.13+ (for backend Lambdas)
--   **Docker**: For docker-compose local development and LocalStack
+-   **Docker**: For docker-compose local development and MiniStack
 -   **Chrome/Chromium**: For Puppeteer automation
 -   **jq**: For JSON processing in scripts (optional)
 -   **libsodium-dev**: For Sealbox encryption in client
@@ -69,23 +69,23 @@ docker compose up --build
 ```
 
 This starts:
-- **LocalStack** (port 4566) — DynamoDB, S3, SQS, Cognito
-- **localstack-init** — Provisions all AWS resources on startup
+- **MiniStack** (port 4566) — DynamoDB, S3, SQS, Cognito
+- **ministack-init** — Provisions all AWS resources on startup
 - **mock-linkedin** (port 3333) — Simulated LinkedIn pages
 - **client-backend** (port 3001) — Automation backend
 - **frontend** (port 5173) — Vite dev server
 
-### LocalStack
+### MiniStack
 
-LocalStack provides local AWS services. The init script (`scripts/localstack/init-aws.sh`) creates:
+MiniStack provides local AWS services. The init script (`scripts/ministack/init-aws.sh`) creates:
 - DynamoDB table with PK/SK + GSI1 (matching SAM template)
 - S3 bucket for screenshots
 - SQS queues with DLQ redrive policy
 - Cognito user pool with test user (`testuser@example.com` / `TestPass123!`)
 
-Run integration tests against LocalStack:
+Run integration tests against MiniStack:
 ```bash
-docker compose up localstack -d
+docker compose up ministack -d
 cd tests/backend && . .venv/bin/activate && pytest integration/ -v -m integration
 ```
 

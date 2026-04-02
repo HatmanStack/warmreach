@@ -1,8 +1,8 @@
-import axios, { type AxiosInstance, type AxiosError } from 'axios';
 import { logger } from '#utils/logger.js';
 
 const API_BASE_URL = process.env.API_GATEWAY_BASE_URL;
 const DAILY_SCRAPE_CAP = 200;
+const REQUEST_TIMEOUT_MS = 30_000; // 30 seconds
 
 interface MessageObject {
   content: string;
@@ -21,58 +21,95 @@ interface ImportCheckpoint {
 
 class DynamoDBService {
   private authToken: string | null;
-  private apiClient: AxiosInstance;
+  private baseURL: string | undefined;
 
   constructor() {
     this.authToken = null;
     // Ensure trailing slash so relative endpoint paths join correctly (preserve stage path)
-    const normalizedBaseUrl = API_BASE_URL
+    this.baseURL = API_BASE_URL
       ? API_BASE_URL.endsWith('/')
         ? API_BASE_URL
         : `${API_BASE_URL}/`
       : API_BASE_URL;
-
-    this.apiClient = axios.create({
-      baseURL: normalizedBaseUrl,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
   }
 
   /**
    * Internal POST helper with unified headers and error handling
    */
-  // Returns parsed JSON from the API (shape varies per endpoint)
   private async _post(
     path: string,
     body: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const response = await this.apiClient.post(path, body, { headers: this.getHeaders() });
-      return response?.data;
+      const response = await fetch(`${this.baseURL}${path}`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw await this._buildError(response);
+      }
+
+      return await response.json();
     } catch (error) {
+      if (error instanceof Error && 'statusCode' in error) throw error;
       throw this.handleError(error);
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
   /**
    * Internal GET helper with unified headers and error handling
    */
-  // Returns parsed JSON from the API (shape varies per endpoint)
   private async _get(
     path: string,
     params: Record<string, string> = {}
   ): Promise<Record<string, unknown>> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const response = await this.apiClient.get(path, {
+      let url = `${this.baseURL}${path}`;
+      const qs = new URLSearchParams(params).toString();
+      if (qs) url += `?${qs}`;
+
+      const response = await fetch(url, {
+        method: 'GET',
         headers: this.getHeaders(),
-        params,
+        signal: controller.signal,
       });
-      return response?.data;
+
+      if (!response.ok) {
+        throw await this._buildError(response);
+      }
+
+      return await response.json();
     } catch (error) {
+      if (error instanceof Error && 'statusCode' in error) throw error;
       throw this.handleError(error);
+    } finally {
+      clearTimeout(timeoutId);
     }
+  }
+
+  /**
+   * Build a typed error from a non-ok Response
+   */
+  private async _buildError(response: Response): Promise<Error> {
+    let errorMessage: string | undefined;
+    try {
+      const body = await response.json();
+      errorMessage = body?.error || body?.message;
+    } catch {
+      // Response body not JSON
+    }
+    const err = new Error(errorMessage || response.statusText) as Error & { statusCode: number };
+    err.statusCode = response.status;
+    return err;
   }
 
   /**
@@ -306,11 +343,11 @@ class DynamoDBService {
    * Handle API errors consistently
    */
   handleError(error: unknown): Error {
-    const axiosErr = error as AxiosError<{ error?: string }>;
-    if (axiosErr.response) {
-      // API responded with error status
-      const message = axiosErr.response.data?.error || axiosErr.response.statusText;
-      const statusCode = axiosErr.response.status;
+    // Check for errors with statusCode from _buildError
+    const errWithStatus = error as { statusCode?: number; message?: string };
+    if (errWithStatus.statusCode) {
+      const statusCode = errWithStatus.statusCode;
+      const message = errWithStatus.message || 'Unknown error';
 
       if (statusCode === 401) {
         return new Error('Authentication required. Please log in again.');
@@ -323,14 +360,15 @@ class DynamoDBService {
       }
 
       return new Error(`API Error (${statusCode}): ${message}`);
-    } else if (axiosErr.request) {
-      // Network error
-      return new Error('Network error. Please check your connection.');
-    } else {
-      // Other error
-      const errMsg = error instanceof Error ? error.message : 'An unexpected error occurred.';
-      return new Error(errMsg);
     }
+
+    // Network/fetch errors (TypeError for network failures)
+    if (error instanceof TypeError) {
+      return new Error('Network error. Please check your connection.');
+    }
+
+    const errMsg = error instanceof Error ? error.message : 'An unexpected error occurred.';
+    return new Error(errMsg);
   }
 }
 

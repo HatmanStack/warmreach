@@ -15,25 +15,17 @@ vi.mock('./shared/utils/logger.js', () => {
   return { default: logger, logger };
 });
 
-// Mock axios for HTTP calls
-vi.mock('axios', () => ({
-  default: {
-    get: vi.fn(),
-    post: vi.fn(),
-    put: vi.fn(),
-    delete: vi.fn(),
-    create: vi.fn(() => ({
-      get: vi.fn(),
-      post: vi.fn(),
-      put: vi.fn(),
-      delete: vi.fn(),
-      interceptors: {
-        request: { use: vi.fn() },
-        response: { use: vi.fn() },
-      },
-    })),
-  },
-}));
+// Mock fetch for HTTP calls
+vi.stubGlobal(
+  'fetch',
+  vi.fn(() =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({}),
+    })
+  )
+);
 
 // Helper to create mock Puppeteer page object
 export function createMockPage(options = {}) {

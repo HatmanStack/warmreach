@@ -1,4 +1,4 @@
-"""LocalStack fixtures for integration tests."""
+"""MiniStack fixtures for integration tests."""
 
 import os
 
@@ -7,13 +7,13 @@ import pytest
 
 
 @pytest.fixture
-def localstack_dynamodb_table():
-    """Create a DynamoDB table on LocalStack matching SAM template schema.
+def ministack_dynamodb_table():
+    """Create a DynamoDB table on MiniStack matching SAM template schema.
 
-    Connects to LOCALSTACK_ENDPOINT (default http://localhost:4566).
+    Connects to MINISTACK_ENDPOINT (default http://localhost:4566).
     Creates the table, yields it, then deletes on teardown.
     """
-    endpoint = os.environ.get('LOCALSTACK_ENDPOINT', 'http://localhost:4566')
+    endpoint = os.environ.get('MINISTACK_ENDPOINT', 'http://localhost:4566')
     region = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
 
     dynamodb = boto3.resource(

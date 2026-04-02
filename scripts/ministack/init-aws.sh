@@ -1,10 +1,10 @@
 #!/bin/bash
-# LocalStack initialization script
+# MiniStack initialization script
 # Provisions AWS resources matching the SAM template for local development
 
 set -euo pipefail
 
-ENDPOINT="${LOCALSTACK_ENDPOINT:-http://localhost:4566}"
+ENDPOINT="${MINISTACK_ENDPOINT:-http://localhost:4566}"
 REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 TABLE_NAME="warmreach-test"
 BUCKET_NAME="warmreach-screenshots-test"
@@ -74,17 +74,17 @@ if [ -n "$POOL_ID" ]; then
     --permanent \
     --no-cli-pager 2>/dev/null || true
 
-  echo "==> Writing outputs to /tmp/localstack-outputs.env"
-  cat > /tmp/localstack-outputs.env <<EOF
+  echo "==> Writing outputs to /tmp/ministack-outputs.env"
+  cat > /tmp/ministack-outputs.env <<EOF
 COGNITO_USER_POOL_ID=$POOL_ID
 COGNITO_CLIENT_ID=$CLIENT_ID
 DYNAMODB_TABLE_NAME=$TABLE_NAME
 S3_BUCKET_NAME=$BUCKET_NAME
 SQS_QUEUE_NAME=$QUEUE_NAME
-LOCALSTACK_ENDPOINT=$ENDPOINT
+MINISTACK_ENDPOINT=$ENDPOINT
 EOF
 else
   echo "    User Pool already exists (skipping client + user creation)"
 fi
 
-echo "==> LocalStack initialization complete"
+echo "==> MiniStack initialization complete"

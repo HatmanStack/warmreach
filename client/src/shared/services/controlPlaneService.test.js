@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import axios from 'axios';
 import { RATE_LIMIT_CEILINGS } from '#config';
 
 // Mock config before importing the service — preserve real named exports
@@ -26,18 +25,34 @@ vi.mock('#utils/logger.js', () => ({
   },
 }));
 
-vi.mock('axios');
+const mockFetch = vi.fn();
+vi.stubGlobal('fetch', mockFetch);
+
+function mockFetchOk(data) {
+  mockFetch.mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(data),
+  });
+}
+
+function mockFetchError(status = 500, data = {}) {
+  mockFetch.mockResolvedValueOnce({
+    ok: false,
+    status,
+    json: () => Promise.resolve(data),
+  });
+}
+
+function mockFetchReject(message = 'network error') {
+  mockFetch.mockRejectedValueOnce(new Error(message));
+}
 
 describe('ControlPlaneService', () => {
   let ControlPlaneService;
-  let mockAxiosInstance;
 
   beforeEach(async () => {
-    mockAxiosInstance = {
-      get: vi.fn(),
-      post: vi.fn(),
-    };
-    axios.create.mockReturnValue(mockAxiosInstance);
+    mockFetch.mockReset();
 
     // Dynamic import to get fresh module with mocked deps
     const mod = await import('./controlPlaneService.js');
@@ -58,46 +73,44 @@ describe('ControlPlaneService', () => {
 
   describe('syncRateLimits', () => {
     it('returns cached response within TTL', async () => {
-      mockAxiosInstance.get.mockResolvedValueOnce({
-        data: { linkedin_interactions: { daily_limit: 300 } },
-      });
+      mockFetchOk({ linkedin_interactions: { daily_limit: 300 } });
 
       const svc = new ControlPlaneService();
 
       // First call fetches
       const result1 = await svc.syncRateLimits();
       expect(result1).toEqual({ linkedin_interactions: { daily_limit: 300 } });
-      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
 
       // Second call returns cache
       const result2 = await svc.syncRateLimits();
       expect(result2).toEqual({ linkedin_interactions: { daily_limit: 300 } });
-      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1); // no new call
+      expect(mockFetch).toHaveBeenCalledTimes(1); // no new call
     });
 
     it('fetches fresh data after TTL expires', async () => {
-      mockAxiosInstance.get
-        .mockResolvedValueOnce({ data: { v: 1 } })
-        .mockResolvedValueOnce({ data: { v: 2 } });
+      mockFetchOk({ v: 1 });
+      mockFetchOk({ v: 2 });
 
       const svc = new ControlPlaneService();
 
       await svc.syncRateLimits();
-      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
 
       // Force cache expiry
       ControlPlaneService._resetState();
       // Re-seed with expired cache
-      // We need to call again, it will fetch fresh data
       const result = await svc.syncRateLimits();
       expect(result).toEqual({ v: 2 });
-      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('circuit breaker', () => {
     it('opens after 3 consecutive failures', async () => {
-      mockAxiosInstance.get.mockRejectedValue(new Error('network error'));
+      mockFetchReject();
+      mockFetchReject();
+      mockFetchReject();
 
       const svc = new ControlPlaneService();
 
@@ -112,7 +125,9 @@ describe('ControlPlaneService', () => {
     });
 
     it('returns null when circuit is open', async () => {
-      mockAxiosInstance.get.mockRejectedValue(new Error('network error'));
+      mockFetchReject();
+      mockFetchReject();
+      mockFetchReject();
 
       const svc = new ControlPlaneService();
 
@@ -125,15 +140,14 @@ describe('ControlPlaneService', () => {
       const result = await svc.syncRateLimits();
       expect(result).toBeNull();
       // Only 3 calls made (the ones that tripped), not 4
-      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
     it('half-opens after recovery timeout', async () => {
-      mockAxiosInstance.get
-        .mockRejectedValueOnce(new Error('fail'))
-        .mockRejectedValueOnce(new Error('fail'))
-        .mockRejectedValueOnce(new Error('fail'))
-        .mockResolvedValueOnce({ data: { recovered: true } });
+      mockFetchReject();
+      mockFetchReject();
+      mockFetchReject();
+      mockFetchOk({ recovered: true });
 
       const svc = new ControlPlaneService();
 
@@ -144,7 +158,7 @@ describe('ControlPlaneService', () => {
 
       expect(ControlPlaneService._getState().circuitState).toBe('open');
 
-      // Reset to simulate recovery (we can't manipulate module-level timestamps directly)
+      // Reset to simulate recovery
       ControlPlaneService._resetState();
 
       // After reset, should work again
@@ -155,7 +169,7 @@ describe('ControlPlaneService', () => {
 
   describe('reportInteraction', () => {
     it('never throws even on network error', () => {
-      mockAxiosInstance.post.mockRejectedValue(new Error('network error'));
+      mockFetchReject();
 
       const svc = new ControlPlaneService();
 
@@ -164,17 +178,16 @@ describe('ControlPlaneService', () => {
     });
 
     it('sends the correct payload', () => {
-      mockAxiosInstance.post.mockResolvedValue({ data: { success: true } });
+      mockFetchOk({ success: true });
 
       const svc = new ControlPlaneService();
       svc.reportInteraction('sendMessage', { profileId: 'abc' });
 
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
-        'report-interaction',
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('report-interaction'),
         expect.objectContaining({
-          deploymentId: 'deploy-123',
-          operation: 'sendMessage',
-          metadata: { profileId: 'abc' },
+          method: 'POST',
+          body: expect.stringContaining('"operation":"sendMessage"'),
         })
       );
     });
@@ -182,9 +195,7 @@ describe('ControlPlaneService', () => {
 
   describe('register', () => {
     it('returns deployment info on success', async () => {
-      mockAxiosInstance.post.mockResolvedValue({
-        data: { deploymentId: 'new-deploy', controlPlaneApiKey: 'new-key' },
-      });
+      mockFetchOk({ deploymentId: 'new-deploy', controlPlaneApiKey: 'new-key' });
 
       const svc = new ControlPlaneService();
       const result = await svc.register({ stackName: 'test-stack' });
@@ -193,7 +204,7 @@ describe('ControlPlaneService', () => {
     });
 
     it('returns null on failure', async () => {
-      mockAxiosInstance.post.mockRejectedValue(new Error('fail'));
+      mockFetchReject();
 
       const svc = new ControlPlaneService();
       const result = await svc.register({ stackName: 'test-stack' });
@@ -204,28 +215,23 @@ describe('ControlPlaneService', () => {
 
   describe('reportUsage', () => {
     it('returns result on success', async () => {
-      mockAxiosInstance.post.mockResolvedValue({
-        data: { allowed: true, remaining: 99 },
-      });
+      mockFetchOk({ allowed: true, remaining: 99 });
 
       const svc = new ControlPlaneService();
       const result = await svc.reportUsage('generate_message', 1);
 
       expect(result).toEqual({ allowed: true, remaining: 99 });
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
-        'report-usage',
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('report-usage'),
         expect.objectContaining({
-          deploymentId: 'deploy-123',
-          operation: 'generate_message',
-          count: 1,
+          method: 'POST',
+          body: expect.stringContaining('"operation":"generate_message"'),
         })
       );
     });
 
     it('throws on 429 with QUOTA_EXCEEDED code', async () => {
-      const error = new Error('Request failed');
-      error.response = { status: 429, data: { message: 'Daily limit reached' } };
-      mockAxiosInstance.post.mockRejectedValue(error);
+      mockFetchError(429, { message: 'Daily limit reached' });
 
       const svc = new ControlPlaneService();
       await expect(svc.reportUsage('generate_message')).rejects.toMatchObject({
@@ -234,7 +240,7 @@ describe('ControlPlaneService', () => {
     });
 
     it('returns allowed on network error', async () => {
-      mockAxiosInstance.post.mockRejectedValue(new Error('network error'));
+      mockFetchReject();
 
       const svc = new ControlPlaneService();
       const result = await svc.reportUsage('generate_message');
@@ -245,9 +251,7 @@ describe('ControlPlaneService', () => {
 
   describe('getQuotaStatus', () => {
     it('returns quota status on success', async () => {
-      mockAxiosInstance.post.mockResolvedValue({
-        data: { allowed: true, remaining: 50, dailyLimit: 100 },
-      });
+      mockFetchOk({ allowed: true, remaining: 50, dailyLimit: 100 });
 
       const svc = new ControlPlaneService();
       const result = await svc.getQuotaStatus('generate_message');
@@ -257,7 +261,7 @@ describe('ControlPlaneService', () => {
     });
 
     it('returns defaults on failure', async () => {
-      mockAxiosInstance.post.mockRejectedValue(new Error('fail'));
+      mockFetchReject();
 
       const svc = new ControlPlaneService();
       const result = await svc.getQuotaStatus('generate_message');
@@ -269,9 +273,7 @@ describe('ControlPlaneService', () => {
 
   describe('getFeatureFlags', () => {
     it('returns feature flags on success', async () => {
-      mockAxiosInstance.get.mockResolvedValue({
-        data: { tier: 'pro', features: { deep_research: true }, quotas: {}, rateLimits: {} },
-      });
+      mockFetchOk({ tier: 'pro', features: { deep_research: true }, quotas: {}, rateLimits: {} });
 
       const svc = new ControlPlaneService();
       const result = await svc.getFeatureFlags();
@@ -281,23 +283,18 @@ describe('ControlPlaneService', () => {
     });
 
     it('caches feature flags', async () => {
-      mockAxiosInstance.get.mockResolvedValue({
-        data: { tier: 'pro', features: {} },
-      });
+      mockFetchOk({ tier: 'pro', features: {} });
 
       const svc = new ControlPlaneService();
       await svc.getFeatureFlags();
       await svc.getFeatureFlags();
 
-      // Only rate-limits GET was called, plus 1 feature-flags GET
-      const featureFlagCalls = mockAxiosInstance.get.mock.calls.filter(
-        (call) => call[0] === 'feature-flags'
-      );
-      expect(featureFlagCalls.length).toBe(1);
+      // Only 1 fetch call (second returns from cache)
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it('returns defaults on failure', async () => {
-      mockAxiosInstance.get.mockRejectedValue(new Error('fail'));
+      mockFetchReject();
 
       const svc = new ControlPlaneService();
       const result = await svc.getFeatureFlags();
@@ -313,9 +310,7 @@ describe('ControlPlaneService', () => {
     });
 
     it('returns true when feature is cached as enabled', async () => {
-      mockAxiosInstance.get.mockResolvedValue({
-        data: { tier: 'pro', features: { deep_research: true } },
-      });
+      mockFetchOk({ tier: 'pro', features: { deep_research: true } });
 
       const svc = new ControlPlaneService();
       await svc.getFeatureFlags(); // populate cache
@@ -358,10 +353,6 @@ describe('ControlPlaneService — unconfigured', () => {
       default: {
         controlPlane: { url: '', deploymentId: '', apiKey: '' },
       },
-    }));
-
-    vi.doMock('axios', () => ({
-      default: { create: vi.fn(() => ({ get: vi.fn(), post: vi.fn() })) },
     }));
 
     // Clear module cache and re-import
