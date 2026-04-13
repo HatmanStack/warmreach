@@ -5,6 +5,65 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-04-12
+
+### Added
+
+- **Goal Intelligence:** Opportunities support rich goal context, evidence logs (manual + auto-detected + external APIs), and LLM-cached assessments with on-write pattern. Feature flag: `goal_intelligence`
+- **Requirement Checklists:** LLM generates evolving checklists on goal creation with boolean/counter types, evidence linking, and `addedBy` tracking. Assessment returns `checklistUpdates` to mark items complete, add, modify, or remove requirements. User-added items protected from LLM removal
+- **Notification System:** Generic `NOTIFICATION#` entity with severity levels (`info`/`warning`/`urgent`), WebSocket push, notification bell + drawer UI. Severity-based user preferences on Profile page
+- **Cadence Alerts:** Agent-driven, goal-scoped alerts for tagged connections. Urgent pushes via WebSocket; warning/info surface in digest and in-app
+- **Portfolio Metrics:** GitHub stars/forks/contributors/PRs via Electron polling with BrowserWindow OAuth. Token stored locally via `electron-store` — never leaves user's machine. New `client/src/domains/github/` domain
+- **Digest Expansion:** "Goal Progress" and "Attention Needed" sections from cached assessments, no LLM calls at digest time
+- **Evidence Summarization:** Capacity warning at 150+ entries, LLM-assisted "Summarize & Archive" with user preview dialog
+- **Tabbed Opportunity Detail:** Connections | Evidence | Requirements | Assessment | Metrics tabs with modular Radix UI components
+- **Domain-Aware Assessment Prompt:** Checklist output schema, evidence-to-requirement linking, reasoning guidance for certifications, career transitions, skill development, speaking/content goals
+
+### Changed
+
+- **Architecture:** GitHub OAuth moved from server-side Lambda to Electron BrowserWindow with localhost redirect interception, eliminating server-side token storage entirely
+- **Architecture:** Portfolio metrics polling moved from EventBridge-triggered Lambda to Electron client WebSocket commands
+- **Backend:** Assessment prompt includes `checklistUpdates` schema and domain-aware reasoning guidelines
+- **Backend:** `NotificationService` checks user severity preference before WebSocket push
+- **Backend:** `OpportunityService` extended with evidence, assessment, requirements, goal context, and capacity monitoring methods
+- **Backend:** `GoalIntelligenceService` orchestrates evidence processing, checklist generation/mutation, and LLM assessment
+- **Backend:** `GoalEvidenceDetector` auto-creates evidence from activity on opportunity-tagged connections (fire-and-forget)
+- **Backend:** `mark_all_read` paginates across DynamoDB pages via `LastEvaluatedKey` loop
+- **Backend:** `urlopen` in `GitHubClient` uses 30s timeout with `HTTPError`/`URLError` handling
+- **Frontend:** `ConnectedAccounts` uses WebSocket commands to Electron instead of server-side OAuth URLs
+- **Frontend:** Evidence links rendered as clickable anchors in timeline
+- **Frontend:** Shared `_strip_fences()` helper extracts duplicated markdown fence-stripping logic
+
+### Removed
+
+- `backend/lambdas/oauth-callback/` — server-side OAuth callback Lambda (replaced by Electron BrowserWindow flow)
+- `backend/lambdas/portfolio-metrics/` — server-side polling Lambda (replaced by Electron-side polling)
+- `backend/lambdas/shared/python/shared_services/oauth_token_service.py` — server-side token storage (tokens now local-only)
+- `axios` dependency from client (unused, critical vulnerability)
+
+### Fixed
+
+- GitHub OAuth token exchange includes `client_secret` (required by GitHub OAuth Apps)
+- CSRF state nonce generated and verified in GitHub OAuth flow
+- `event.preventDefault()` in OAuth redirect handler prevents `ERR_CONNECTION_REFUSED` flash
+- `notificationSk` prefix validated before DynamoDB write to prevent arbitrary SK overwrites
+- `GitHubApiService` cached on controller to preserve rate-limit state across polls
+- Duplicate requirements data removed from LLM assessment prompt (was in both system prompt and user message)
+- `import json` moved to module level in `opportunity_service.py`
+- GitHub contributor count uses Link header pagination trick for accuracy (was always returning 0 or 1)
+
+### Security
+
+- `cryptography` upgraded 46.0.5 → 46.0.7 (CVE-2026-34073, CVE-2026-39892)
+- Vite, lodash, path-to-regexp vulnerabilities resolved via `npm audit fix`
+- Bandit `# nosec B310` added alongside Ruff `# noqa: S310` for `urlopen`
+- Server-side OAuth token storage eliminated — GitHub tokens never leave user's machine
+
+### Docs
+
+- `PRO_FEATURES_ROADMAP.md` condensed: completed features summarized, follow-ups and scale-dependent items documented
+- Plan documents: `docs/plans/2026-04-12-agentic-goal-intelligence/` and `docs/plans/2026-04-12-goal-intelligence-hardening/`
+
 ## [1.10.3] - 2026-03-27
 
 ### Changed
