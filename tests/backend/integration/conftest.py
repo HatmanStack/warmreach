@@ -53,6 +53,15 @@ def ministack_dynamodb_table():
 
     table.meta.client.get_waiter('table_exists').wait(TableName=table_name)
 
+    # Attach low-level client for services that use transact_write_items
+    table._ministack_client = boto3.client(
+        'dynamodb',
+        endpoint_url=endpoint,
+        region_name=region,
+        aws_access_key_id='test',
+        aws_secret_access_key='test',
+    )
+
     yield table
 
     table.delete()

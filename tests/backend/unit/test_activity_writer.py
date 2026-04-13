@@ -36,6 +36,9 @@ class TestActivityEventType:
             'onboarding_skipped',
             'subscription_cancelled',
             'subscription_resubscribed',
+            'goal_evidence_added',
+            'goal_assessment_updated',
+            'goal_cadence_alert',
         }
         actual = {e.value for e in ActivityEventType}
         assert actual == expected

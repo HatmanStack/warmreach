@@ -115,5 +115,27 @@
     "date": "2026-03-27",
     "plan": "2026-03-27-audit-debt-cleanup",
     "verdict": "GO"
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-04-12",
+    "plan": "2026-04-12-agentic-goal-intelligence"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-04-12",
+    "plan": "2026-04-12-agentic-goal-intelligence",
+    "verdict": "GO"
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-04-12",
+    "plan": "2026-04-12-goal-intelligence-hardening"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-04-12",
+    "plan": "2026-04-12-goal-intelligence-hardening",
+    "verdict": "GO"
   }
 ]

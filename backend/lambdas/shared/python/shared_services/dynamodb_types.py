@@ -37,6 +37,7 @@ class SettingsItem(TypedDict, total=False):
 
     PK: str
     SK: str
+    notificationPreference: str  # "urgent" | "warning" | "all"
 
 
 class ProfileMetadataItem(TypedDict, total=False):
@@ -370,3 +371,83 @@ class BatchScoreEntry(TypedDict):
     profileId: str
     score: int
     breakdown: ScoreBreakdown
+
+
+# --- Goal intelligence types ---
+
+
+class EvidenceEntry(TypedDict, total=False):
+    """Single evidence entry within an opportunity's evidence log."""
+
+    id: str
+    source: str  # one of: manual, activity, github, blog, external
+    title: str
+    description: str
+    date: str  # ISO 8601
+    links: list[str]
+    metadata: dict[str, Any]
+    addedAt: str  # ISO 8601
+
+
+class CadenceAlert(TypedDict, total=False):
+    """A cadence alert for a tagged connection needing follow-up."""
+
+    profileId: str
+    reason: str
+    severity: str  # one of: info, warning, urgent
+    lastInteraction: str  # ISO 8601
+
+
+class NotificationItem(TypedDict, total=False):
+    """USER#{sub} | NOTIFICATION#{timestamp}#{id}"""
+
+    PK: str
+    SK: str
+    type: str
+    severity: str  # one of: info, warning, urgent
+    title: str
+    body: str
+    payload: dict[str, Any]
+    read: bool
+    readAt: str
+    createdAt: str
+    ttl: int
+
+
+class GoalAssessment(TypedDict, total=False):
+    """LLM-cached assessment of goal progress."""
+
+    summary: str
+    gaps: list[str]
+    recommendations: list[str]
+    cadenceAlerts: list[CadenceAlert]
+    nextSteps: list[str]
+    checklistUpdates: list['ChecklistUpdate']
+    updatedAt: str  # ISO 8601
+    modelVersion: str
+
+
+class RequirementItem(TypedDict, total=False):
+    """Single requirement within an opportunity's checklist."""
+
+    id: str  # UUID
+    title: str
+    type: str  # "boolean" or "counter"
+    target: int  # For counter: target count; 1 for boolean
+    current: int  # For counter: current count; 0 or 1 for boolean
+    completed: bool
+    completedAt: str  # ISO 8601, None when not completed
+    addedBy: str  # "llm" or "user"
+    linkedEvidence: list[str]  # Evidence entry IDs
+
+
+class ChecklistUpdate(TypedDict, total=False):
+    """A single checklist mutation from LLM assessment output."""
+
+    action: str  # "complete" | "add" | "modify" | "remove"
+    id: str  # Existing requirement ID (for complete/modify/remove)
+    title: str  # For add/modify
+    type: str  # For add: "boolean" or "counter"
+    target: int  # For add/modify
+    current: int  # For modify
+    linkedEvidence: list[str]  # Evidence IDs

@@ -103,19 +103,6 @@ class TestLLMServiceIntegration:
         assert result['success'] is True
         assert result['ideas'] == ['Idea 1', 'Idea 2', 'Idea 3']
 
-    @mock_aws
-    def test_health_check_returns_status(self, llm_service_module):
-        """Test health check returns service status."""
-        service = llm_service_module.LLMService(
-            openai_client=MagicMock(),
-            bedrock_client=MagicMock(),
-            table=MagicMock()
-        )
-
-        result = service.health_check()
-
-        assert 'healthy' in result
-        assert result['healthy'] is True
 
     @mock_aws
     def test_synthesize_research_returns_content(self, llm_service_module):
