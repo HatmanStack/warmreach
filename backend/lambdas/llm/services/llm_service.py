@@ -10,7 +10,6 @@ from typing import Any
 
 # Shared layer imports (from /opt/python via Lambda Layer)
 import openai
-from errors.exceptions import ExternalServiceError, ServiceError, ValidationError
 from shared_services.base_service import BaseService
 
 try:
@@ -132,12 +131,10 @@ class LLMService(BaseService):
 
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in generate_ideas: {e}')
-            raise ExternalServiceError(
-                message='Failed to generate ideas', service='OpenAI', original_error=str(e)
-            ) from e
+            return {'success': False, 'error': 'Failed to generate ideas'}
         except Exception as e:
             logger.error(f'Error in generate_ideas: {e}')
-            raise ServiceError(message='Failed to generate ideas') from e
+            return {'success': False, 'error': 'Failed to generate ideas'}
 
     def _parse_ideas(self, content: str) -> list[str]:
         """Parse ideas from LLM response text."""
@@ -165,7 +162,7 @@ class LLMService(BaseService):
         """
         try:
             if not selected_ideas:
-                raise ValidationError(message='No ideas selected for research')
+                return {'success': False, 'error': 'No ideas selected for research'}
 
             job_id = str(uuid.uuid4())
 
@@ -208,16 +205,12 @@ class LLMService(BaseService):
                 'job_id': job_id,
             }
 
-        except (ValidationError, ExternalServiceError, ServiceError):
-            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in research_selected_ideas: {e}')
-            raise ExternalServiceError(
-                message='Failed to research selected ideas', service='OpenAI', original_error=str(e)
-            ) from e
+            return {'success': False, 'error': 'Failed to research selected ideas'}
         except Exception as e:
             logger.error(f'Error in research_selected_ideas: {e}')
-            raise ServiceError(message='Failed to research selected ideas') from e
+            return {'success': False, 'error': 'Failed to research selected ideas'}
 
     def get_research_result(self, user_id: str, job_id: str, kind: str | None = None) -> dict[str, Any]:
         """
@@ -353,7 +346,7 @@ class LLMService(BaseService):
         """
         try:
             if not job_id:
-                raise ValidationError(message='Missing required field: job_id')
+                return {'success': False, 'error': 'Missing required field: job_id'}
 
             user_data = ''
             if isinstance(user_profile, dict) and user_profile.get('name') != PROFILE_PLACEHOLDER_NAME:
@@ -379,20 +372,16 @@ class LLMService(BaseService):
 
             if not content or not content.strip():
                 logger.error('synthesize_research returned empty content from OpenAI')
-                raise ExternalServiceError(message='OpenAI returned empty content', service='OpenAI')
+                return {'success': False, 'error': 'OpenAI returned empty content'}
 
             return {'success': True, 'content': content.strip()}
 
-        except (ValidationError, ExternalServiceError, ServiceError):
-            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in synthesize_research: {e}')
-            raise ExternalServiceError(
-                message='Failed to synthesize research into post', service='OpenAI', original_error=str(e)
-            ) from e
+            return {'success': False, 'error': 'Failed to synthesize research into post'}
         except Exception as e:
             logger.error(f'Error in synthesize_research: {e}')
-            raise ServiceError(message='Failed to synthesize research into post') from e
+            return {'success': False, 'error': 'Failed to synthesize research into post'}
 
     def generate_message(
         self,
@@ -487,20 +476,16 @@ class LLMService(BaseService):
 
             if not content or not content.strip():
                 logger.error('generate_message returned empty content from OpenAI')
-                return {'generatedMessage': '', 'error': 'Empty response from AI'}
+                return {'generatedMessage': '', 'confidence': 0, 'error': 'Empty response from AI'}
 
-            return {'generatedMessage': content.strip()}
+            return {'generatedMessage': content.strip(), 'confidence': 0.85}
 
-        except (ValidationError, ExternalServiceError, ServiceError):
-            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in generate_message: {e}')
-            raise ExternalServiceError(
-                message='Failed to generate message', service='OpenAI', original_error=str(e)
-            ) from e
+            return {'generatedMessage': '', 'confidence': 0, 'error': 'Failed to generate message'}
         except Exception as e:
             logger.error(f'Error in generate_message: {e}')
-            raise ServiceError(message='Failed to generate message') from e
+            return {'generatedMessage': '', 'confidence': 0, 'error': 'Failed to generate message'}
 
     def _generate_icebreaker(
         self,
@@ -555,16 +540,12 @@ class LLMService(BaseService):
 
             return {'icebreakers': icebreakers}
 
-        except (ValidationError, ExternalServiceError, ServiceError):
-            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in generate_icebreaker: {e}')
-            raise ExternalServiceError(
-                message='Failed to generate icebreakers', service='OpenAI', original_error=str(e)
-            ) from e
+            return {'icebreakers': [], 'error': 'Failed to generate icebreakers'}
         except Exception as e:
             logger.error(f'Error in generate_icebreaker: {e}')
-            raise ServiceError(message='Failed to generate icebreakers') from e
+            return {'icebreakers': [], 'error': 'Failed to generate icebreakers'}
 
     @staticmethod
     def _parse_icebreakers(content: str) -> list[str]:
@@ -633,16 +614,12 @@ class LLMService(BaseService):
                 'analyzedAt': datetime.now(UTC).isoformat(),
             }
 
-        except (ValidationError, ExternalServiceError, ServiceError):
-            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in analyze_message_patterns: {e}')
-            raise ExternalServiceError(
-                message='Failed to analyze message patterns', service='OpenAI', original_error=str(e)
-            ) from e
+            return {'insights': [], 'analyzedAt': datetime.now(UTC).isoformat(), 'error': str(e)}
         except Exception as e:
             logger.error(f'Error in analyze_message_patterns: {e}')
-            raise ServiceError(message='Failed to analyze message patterns') from e
+            return {'insights': [], 'analyzedAt': datetime.now(UTC).isoformat(), 'error': str(e)}
 
     def analyze_tone(self, draft_text, recipient_name='', recipient_position='', relationship_status=''):
         """Analyze the tone of a draft LinkedIn message.
@@ -676,10 +653,10 @@ class LLMService(BaseService):
 
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in analyze_tone: {e}')
-            raise ExternalServiceError(message='Tone analysis failed', service='OpenAI', original_error=str(e)) from e
+            return {'error': 'Tone analysis failed'}
         except Exception as e:
             logger.error(f'Error in analyze_tone: {e}')
-            raise ServiceError(message='Tone analysis failed') from e
+            return {'error': 'Tone analysis failed'}
 
     def _parse_tone_response(self, response_text: str) -> dict[str, Any]:
         """Parse structured tone analysis response into a dict."""

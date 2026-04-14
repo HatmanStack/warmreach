@@ -5,7 +5,6 @@ import logging
 import os
 
 import boto3
-from errors.exceptions import ServiceError, ValidationError
 from openai import OpenAI
 from services.llm_service import LLMService
 from shared_services.activity_writer import write_activity
@@ -190,11 +189,6 @@ def lambda_handler(event, _context):
                 event,
             )
 
-        # Lazy-init LLMService with SSM-fetched OpenAI key
-        if _llm_service is None:
-            openai_client = _get_openai_client()
-            _llm_service = LLMService(openai_client=openai_client, bedrock_client=bedrock_client, table=table)
-
         # Auto-provision tier on first call (non-blocking)
         if table:
             from botocore.exceptions import ClientError
@@ -206,7 +200,7 @@ def lambda_handler(event, _context):
             except Exception:
                 logger.exception('Tier auto-provision failed')
 
-        # Feature gate checks
+        # Feature gate checks (before lazy-init to avoid SSM calls for gated ops)
         if _feature_flag_service:
             feature_to_check = None
             if op in DEEP_RESEARCH_OPS:
@@ -232,6 +226,11 @@ def lambda_handler(event, _context):
                 except Exception:
                     logger.exception('Feature flag check failed for %s, denying request', feature_to_check)
                     return api_response(503, {'error': 'Feature availability check failed'}, event)
+
+        # Lazy-init LLMService with SSM-fetched OpenAI key
+        if _llm_service is None:
+            openai_client = _get_openai_client()
+            _llm_service = LLMService(openai_client=openai_client, bedrock_client=bedrock_client, table=table)
 
         # Dispatch via routing table
         handler = HANDLERS[op]
@@ -278,12 +277,6 @@ def lambda_handler(event, _context):
             {'error': e.message, 'code': e.code, 'operation': e.details.get('operation'), 'details': e.details},
             event,
         )
-    except ValidationError as e:
-        logger.warning(f'Validation error: {e.message}', extra={'details': e.details})
-        return api_response(400, {'error': e.message, 'code': e.code, 'details': e.details}, event)
-    except ServiceError as e:
-        logger.exception('Service error: %s', e.message)
-        return api_response(500, {'error': e.message, 'code': e.code}, event)
     except Exception as e:
         logger.exception('Unexpected error in LLM handler: %s', e)
         return api_response(500, {'error': 'Internal server error'}, event)
