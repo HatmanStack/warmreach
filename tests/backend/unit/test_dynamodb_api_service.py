@@ -221,6 +221,90 @@ class TestCreateBadContactProfile:
         expected_b64 = base64.urlsafe_b64encode(profile_url.encode()).decode()
         assert result['profileId'] == expected_b64
 
+    def test_source_field_persisted(self):
+        """Source field is written to the PROFILE#metadata item."""
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.create_bad_contact_profile('user-123', {
+            'profileId': 'manual://john-doe-123',
+            'source': 'manual',
+            'updates': {'name': 'John Doe'},
+        })
+
+        assert 'error' not in result
+        put_item = mock_table.put_item.call_args[1]['Item']
+        assert put_item['source'] == 'manual'
+
+    def test_source_defaults_to_linkedin(self):
+        """When source is not provided, defaults to 'linkedin'."""
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.create_bad_contact_profile('user-123', {
+            'profileId': 'https://linkedin.com/in/someone',
+            'updates': {'name': 'Someone'},
+        })
+
+        assert 'error' not in result
+        put_item = mock_table.put_item.call_args[1]['Item']
+        assert put_item['source'] == 'linkedin'
+
+    def test_invalid_source_returns_error(self):
+        """Invalid source value returns an error."""
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.create_bad_contact_profile('user-123', {
+            'profileId': 'manual://test-123',
+            'source': 'invalid',
+        })
+
+        assert 'error' in result
+        assert 'source' in result['error'].lower() or 'Invalid' in result['error']
+        mock_table.put_item.assert_not_called()
+
+    def test_status_parameter_used(self):
+        """When status is passed, the return reflects it (no edge item in current impl)."""
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.create_bad_contact_profile('user-123', {
+            'profileId': 'manual://ally-contact-123',
+            'status': 'ally',
+            'source': 'manual',
+            'updates': {'name': 'Ally Contact'},
+        })
+
+        assert 'error' not in result
+        assert result.get('status') == 'ally'
+
+    def test_status_defaults_to_processed(self):
+        """When status is not provided, defaults to 'processed'."""
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.create_bad_contact_profile('user-123', {
+            'profileId': 'https://linkedin.com/in/contact',
+            'updates': {'name': 'Contact'},
+        })
+
+        assert 'error' not in result
+        assert result.get('status') == 'processed'
+
+    def test_invalid_status_returns_error(self):
+        """Invalid status value returns an error."""
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        result = service.create_bad_contact_profile('user-123', {
+            'profileId': 'manual://test-123',
+            'status': 'bogus',
+        })
+
+        assert 'error' in result
+        mock_table.put_item.assert_not_called()
+
 
 class TestGetUserSettings:
     """Tests for get_user_settings method."""

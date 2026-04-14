@@ -8,7 +8,7 @@ import boto3
 from errors.exceptions import AuthorizationError, ExternalServiceError, NotFoundError, ServiceError, ValidationError
 from shared_services.edge_data_service import EdgeDataService
 from shared_services.handler_utils import get_user_id, report_telemetry, sanitize_request_context
-from shared_services.monetization import QuotaService
+from shared_services.monetization import FeatureFlagService, QuotaService
 from shared_services.observability import setup_correlation_context
 from shared_services.ragstack_proxy_service import RAGStackProxyService
 from shared_services.request_utils import api_response
@@ -28,6 +28,7 @@ RAGSTACK_API_KEY = os.environ.get('RAGSTACK_API_KEY', '')
 _ragstack_client = None
 _ingestion_service = None
 _quota_service = QuotaService(table) if table else None
+_feature_flag_service = FeatureFlagService(table) if table else None
 
 if RAGSTACK_GRAPHQL_ENDPOINT and RAGSTACK_API_KEY:
     from shared_services.ingestion_service import IngestionService
@@ -82,6 +83,38 @@ def _handle_ragstack(body, user_id, event=None):
             return api_response(400, {'error': 'markdownContent is required'}, event)
         result = _ragstack_proxy_service.ragstack_ingest(profile_id, markdown_content, metadata, user_id)
         report_telemetry(_quota_service, table, user_id, 'ragstack_ingest')
+        return api_response(200, result, event)
+
+    elif operation == 'ingest_content':
+        # Feature-gated behind blog_link_following
+        if _feature_flag_service:
+            try:
+                flags = _feature_flag_service.get_feature_flags(user_id)
+                if not flags.get('features', {}).get('blog_link_following', False):
+                    return api_response(
+                        403,
+                        {
+                            'error': 'Feature not available on current plan',
+                            'code': 'FEATURE_GATED',
+                            'feature': 'blog_link_following',
+                        },
+                        event,
+                    )
+            except Exception:
+                logger.exception('Feature flag check failed for blog_link_following')
+                return api_response(503, {'error': 'Feature availability check failed'}, event)
+
+        content_id = body.get('contentId')
+        content = body.get('content')
+        metadata = body.get('metadata') or {}
+        if not isinstance(metadata, dict):
+            return api_response(400, {'error': 'metadata must be an object'}, event)
+        if not content_id:
+            return api_response(400, {'error': 'contentId is required'}, event)
+        if not content:
+            return api_response(400, {'error': 'content is required'}, event)
+        result = _ragstack_proxy_service.ragstack_ingest_content(content_id, content, metadata, user_id)
+        report_telemetry(_quota_service, table, user_id, 'ragstack_ingest_content')
         return api_response(200, result, event)
 
     elif operation == 'status':

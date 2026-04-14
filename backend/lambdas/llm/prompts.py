@@ -177,6 +177,80 @@ Provide 3-5 actionable insights about:
 
 Format each insight as a single concise sentence. Return only the insights, one per line, numbered."""
 
+ANALYZE_TONE_PROMPT = """Evaluate the tone of the following draft LinkedIn message.
+
+Draft message:
+{draft_text}
+
+Recipient context:
+- Name: {recipient_name}
+- Position: {recipient_position}
+- Relationship status: {relationship_status}
+
+Rate the message on these four dimensions (1-10 scale):
+
+1. PROFESSIONALISM: Is the tone appropriate for a LinkedIn message? Consider formality, grammar, and professional language. 10 = perfectly polished, 1 = completely unprofessional.
+
+2. WARMTH: Does the message feel personal and genuine vs. generic or templated? 10 = deeply personal, 1 = obvious mass template.
+
+3. CLARITY: Is the purpose of the message clear and concise? 10 = crystal clear intent, 1 = rambling or confusing.
+
+4. SALES_PRESSURE: Does the message feel pushy or salesy? 10 = extremely pushy hard-sell, 1 = no sales pressure at all. Lower scores are better.
+
+Then provide:
+- ASSESSMENT: A brief 1-2 sentence overall assessment of the message tone.
+- SUGGESTION: One concrete, actionable suggestion to improve the message.
+
+You MUST respond in exactly this format with no other text:
+
+PROFESSIONALISM: <score>
+WARMTH: <score>
+CLARITY: <score>
+SALES_PRESSURE: <score>
+ASSESSMENT: <text>
+SUGGESTION: <text>"""
+
+GENERATE_ICEBREAKER_PROMPT = """
+You are crafting first-contact icebreaker messages for LinkedIn. The sender has never messaged this person before and wants to start a genuine connection.
+
+## About the sender:
+{sender_data}
+
+## About the recipient:
+Name: {recipient_name}
+Position: {recipient_position}
+Company: {recipient_company}
+Headline: {recipient_headline}
+Tags/Skills: {recipient_tags}
+
+## Additional recipient context (if available):
+{recipient_context}
+
+## User's notes about this connection:
+{connection_notes}
+
+## Rules:
+- Generate 1-3 contextual icebreaker options for first contact
+- Each icebreaker should be a standalone message ready to send (2-4 sentences)
+- Reference shared connections, interests, or professional context when available
+- No follow-up assumptions — each message should work as a cold open
+- Each icebreaker should take a different approach:
+  1. Shared interest or experience angle
+  2. Mutual connection or professional admiration angle
+  3. Industry insight or value-offering angle
+- Sound like a real person, not a template
+- No generic openers like "I hope this message finds you well"
+- No hard sells or pitches
+- Keep each message under 100 words
+
+## Output format (you MUST follow this exactly):
+1. [First icebreaker message]
+
+2. [Second icebreaker message]
+
+3. [Third icebreaker message]
+"""
+
 GENERATE_MESSAGE_PROMPT = """
 You are crafting a personalized LinkedIn message from one professional to another. The goal is to start a genuine conversation about a specific topic, not to sell or pitch.
 

@@ -54,6 +54,7 @@ class ProfileMetadataItem(TypedDict, total=False):
     skills: list[str]
     originalUrl: str
     profilePictureUrl: str
+    source: str  # one of: linkedin, github, twitter, meetup, email, manual
 
 
 class UserProfileEdgeItem(TypedDict, total=False):
@@ -211,6 +212,17 @@ class RateLimitCounterItem(TypedDict, total=False):
     SK: str
     count: int
     ttl: int
+
+
+class AssessmentFeedbackItem(TypedDict, total=False):
+    """USER#{sub} | FEEDBACK#{assessmentTimestamp}"""
+
+    PK: str
+    SK: str
+    opportunityId: str
+    rating: str  # "positive" or "negative"
+    comment: str  # optional freetext on negative
+    createdAt: str
 
 
 # --- Service method return types ---
@@ -439,6 +451,21 @@ class RequirementItem(TypedDict, total=False):
     completedAt: str  # ISO 8601, None when not completed
     addedBy: str  # "llm" or "user"
     linkedEvidence: list[str]  # Evidence entry IDs
+
+
+class CommentDraftItem(TypedDict, total=False):
+    """USER#{sub} | COMMENT_DRAFT#{postId}#{draftIndex}"""
+
+    PK: str
+    SK: str
+    postContent: str  # truncated post text
+    authorName: str
+    authorProfileUrl: str
+    postUrl: str  # original LinkedIn post URL
+    commentText: str
+    status: str  # pending, approved, dismissed
+    createdAt: str
+    ttl: int  # 72h from creation
 
 
 class ChecklistUpdate(TypedDict, total=False):

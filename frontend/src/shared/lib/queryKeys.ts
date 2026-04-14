@@ -32,6 +32,7 @@ export const queryKeys = {
     assessment: (opportunityId: string) => ['opportunities', 'assessment', opportunityId] as const,
     requirements: (opportunityId: string) =>
       ['opportunities', 'requirements', opportunityId] as const,
+    feedback: (opportunityId: string) => ['opportunities', 'feedback', opportunityId] as const,
   },
   notifications: {
     all: ['notifications'] as const,

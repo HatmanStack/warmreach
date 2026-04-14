@@ -112,6 +112,7 @@ class DynamoDBApiService(BaseService):
             'digest_opted_out',
             'onboarding_completed',
             'onboarding_step',
+            'comment_concierge_mode',
         ]
         for field in allowed_profile_fields:
             if field in body and body[field] is not None:
@@ -150,11 +151,26 @@ class DynamoDBApiService(BaseService):
 
         return {'success': True}
 
+    VALID_SOURCES = frozenset({'linkedin', 'github', 'twitter', 'meetup', 'email', 'manual'})
+    VALID_CONTACT_STATUSES = frozenset({'processed', 'ally', 'possible'})
+
     def create_bad_contact_profile(self, user_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Create a bad contact profile with processed status."""
+        """Create a bad contact profile with processed status.
+
+        Also supports manual contact creation when source/status are provided.
+        """
         profile_id = body.get('profileId')
         if not profile_id:
             return {'error': 'profileId is required'}
+
+        source = body.get('source', 'linkedin')
+        if source not in self.VALID_SOURCES:
+            return {'error': 'Invalid source value'}
+
+        status = body.get('status', 'processed')
+        if status not in self.VALID_CONTACT_STATUSES:
+            return {'error': 'Invalid status value'}
+
         profile_id_b64 = encode_profile_id(profile_id)
 
         updates = body.get('updates', {})
@@ -179,6 +195,7 @@ class DynamoDBApiService(BaseService):
             'skills': updates.get('skills', []),
             'fulltext': updates.get('fulltext', ''),
             'evaluated': True,
+            'source': source,
         }
 
         self.table.put_item(Item=profile_metadata)
@@ -191,6 +208,7 @@ class DynamoDBApiService(BaseService):
             'message': 'Bad contact profile metadata updated successfully',
             'profileId': profile_id_b64,
             'evaluated': True,
+            'status': status,
         }
 
     def update_profile_picture(self, user_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -254,6 +272,7 @@ class DynamoDBApiService(BaseService):
             'ai_generated_post_reasoning': lambda v: isinstance(v, str) and len(v) <= 2000,
             'timezone': lambda v: isinstance(v, str) and len(v) <= 50,
             'digest_opted_out': lambda v: isinstance(v, bool),
+            'comment_concierge_mode': lambda v: isinstance(v, str) and v in {'automated', 'manual', 'off'},
         }
         validator = validators.get(field)
         if not validator:

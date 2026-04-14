@@ -3,16 +3,21 @@
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 # Shared layer imports (from /opt/python via Lambda Layer)
+import openai
+from errors.exceptions import ExternalServiceError, ServiceError, ValidationError
 from shared_services.base_service import BaseService
 
 try:
     from prompts import (
         ANALYZE_MESSAGE_PATTERNS_PROMPT,
+        ANALYZE_TONE_PROMPT,
+        GENERATE_ICEBREAKER_PROMPT,
         GENERATE_MESSAGE_PROMPT,
         LINKEDIN_IDEAS_PROMPT,
         LINKEDIN_RESEARCH_PROMPT,
@@ -23,14 +28,31 @@ except ImportError:
     LINKEDIN_RESEARCH_PROMPT = '{topics}\n{user_data}'
     SYNTHESIZE_RESEARCH_PROMPT = '{user_data}\n{research_content}\n{post_content}\n{ideas_content}'
     GENERATE_MESSAGE_PROMPT = '{sender_data}\n{recipient_name}\n{recipient_position}\n{recipient_company}\n{recipient_headline}\n{recipient_tags}\n{recipient_context}\n{conversation_topic}\n{message_history}'
+    GENERATE_ICEBREAKER_PROMPT = '{sender_data}\n{recipient_name}\n{recipient_position}\n{recipient_company}\n{recipient_headline}\n{recipient_tags}\n{recipient_context}\n{connection_notes}'
     ANALYZE_MESSAGE_PATTERNS_PROMPT = (
         '{total_outbound}\n{total_inbound}\n{response_rate}\n{avg_response_time}\n{sample_messages}'
     )
+    ANALYZE_TONE_PROMPT = '{draft_text}\n{recipient_name}\n{recipient_position}\n{relationship_status}'
 
 logger = logging.getLogger(__name__)
 
 # Placeholder name used for demo/test profiles that should be skipped
 PROFILE_PLACEHOLDER_NAME = 'Tom, Dick, And Harry'
+
+# Per-operation timeout overrides (seconds) for OpenAI responses.create() calls.
+# Default client timeout (60s) is used as fallback via .get(name, 60).
+#
+# Timeout budget: Lambda timeout is 120s. Every OpenAI timeout must leave at
+# least 30s of margin for SSM parameter fetch, DynamoDB operations, quota
+# checks, and response serialization. Max allowed value = 120 - 30 = 90s.
+OPERATION_TIMEOUTS: dict[str, int] = {
+    'generate_ideas': 30,
+    'generate_message': 25,
+    'analyze_tone': 20,
+    'analyze_message_patterns': 30,
+    'research_selected_ideas': 90,
+    'synthesize_research': 60,
+}
 
 
 class LLMService(BaseService):
@@ -75,9 +97,7 @@ class LLMService(BaseService):
         try:
             user_data = ''
             if user_profile and user_profile.get('name') != PROFILE_PLACEHOLDER_NAME:
-                for key, value in user_profile.items():
-                    if key != 'linkedin_credentials':
-                        user_data += f'{key}: {value}\n'
+                user_data = self._format_user_profile_context(user_profile)
 
             llm_prompt = LINKEDIN_IDEAS_PROMPT.format(
                 user_data=user_data, raw_ideas=self._sanitize_prompt(prompt or '')
@@ -86,6 +106,7 @@ class LLMService(BaseService):
             response = self.openai_client.responses.create(
                 model='gpt-5.2',
                 input=llm_prompt,
+                timeout=OPERATION_TIMEOUTS.get('generate_ideas', 60),
             )
 
             # Parse ideas from response
@@ -109,13 +130,17 @@ class LLMService(BaseService):
 
             return {'success': True, 'ideas': ideas}
 
+        except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
+            logger.error(f'OpenAI API error in generate_ideas: {e}')
+            raise ExternalServiceError(
+                message='Failed to generate ideas', service='OpenAI', original_error=str(e)
+            ) from e
         except Exception as e:
             logger.error(f'Error in generate_ideas: {e}')
-            return {'success': False, 'error': 'Failed to generate ideas'}
+            raise ServiceError(message='Failed to generate ideas') from e
 
     def _parse_ideas(self, content: str) -> list[str]:
         """Parse ideas from LLM response text."""
-        import re
 
         if not content:
             return []
@@ -140,15 +165,13 @@ class LLMService(BaseService):
         """
         try:
             if not selected_ideas:
-                return {'success': False, 'error': 'No ideas selected for research'}
+                raise ValidationError(message='No ideas selected for research')
 
             job_id = str(uuid.uuid4())
 
             formatted_user_data = ''
             if user_data and user_data.get('name') != PROFILE_PLACEHOLDER_NAME:
-                for key, value in user_data.items():
-                    if key != 'linkedin_credentials':
-                        formatted_user_data += f'{key}: {value}\n'
+                formatted_user_data = self._format_user_profile_context(user_data)
 
             formatted_topics = '\n'.join([f'- {self._sanitize_prompt(idea, 500)}' for idea in selected_ideas])
 
@@ -157,6 +180,7 @@ class LLMService(BaseService):
             response = self.openai_client.responses.create(
                 model='o4-mini-deep-research',
                 input=research_prompt,
+                timeout=OPERATION_TIMEOUTS.get('research_selected_ideas', 60),
                 background=True,
                 metadata={'job_id': job_id, 'user_id': user_id, 'kind': 'RESEARCH'},
                 tools=[
@@ -184,9 +208,16 @@ class LLMService(BaseService):
                 'job_id': job_id,
             }
 
+        except (ValidationError, ExternalServiceError, ServiceError):
+            raise
+        except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
+            logger.error(f'OpenAI API error in research_selected_ideas: {e}')
+            raise ExternalServiceError(
+                message='Failed to research selected ideas', service='OpenAI', original_error=str(e)
+            ) from e
         except Exception as e:
             logger.error(f'Error in research_selected_ideas: {e}')
-            return {'success': False, 'error': 'Failed to research selected ideas'}
+            raise ServiceError(message='Failed to research selected ideas') from e
 
     def get_research_result(self, user_id: str, job_id: str, kind: str | None = None) -> dict[str, Any]:
         """
@@ -322,13 +353,11 @@ class LLMService(BaseService):
         """
         try:
             if not job_id:
-                return {'success': False, 'error': 'Missing required field: job_id'}
+                raise ValidationError(message='Missing required field: job_id')
 
             user_data = ''
             if isinstance(user_profile, dict) and user_profile.get('name') != PROFILE_PLACEHOLDER_NAME:
-                for key, value in user_profile.items():
-                    if key != 'linkedin_credentials':
-                        user_data += f'{key}: {value}\n'
+                user_data = self._format_user_profile_context(user_profile)
 
             research_text = self._normalize_content(research_content)
             post_text = self._normalize_content(post_content)
@@ -343,19 +372,27 @@ class LLMService(BaseService):
             response = self.openai_client.responses.create(
                 model='gpt-5.2',
                 input=llm_prompt,
+                timeout=OPERATION_TIMEOUTS.get('synthesize_research', 60),
             )
 
             content = self._extract_response_content(response)
 
             if not content or not content.strip():
                 logger.error('synthesize_research returned empty content from OpenAI')
-                return {'success': False, 'error': 'OpenAI returned empty content'}
+                raise ExternalServiceError(message='OpenAI returned empty content', service='OpenAI')
 
             return {'success': True, 'content': content.strip()}
 
+        except (ValidationError, ExternalServiceError, ServiceError):
+            raise
+        except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
+            logger.error(f'OpenAI API error in synthesize_research: {e}')
+            raise ExternalServiceError(
+                message='Failed to synthesize research into post', service='OpenAI', original_error=str(e)
+            ) from e
         except Exception as e:
             logger.error(f'Error in synthesize_research: {e}')
-            return {'success': False, 'error': 'Failed to synthesize research into post'}
+            raise ServiceError(message='Failed to synthesize research into post') from e
 
     def generate_message(
         self,
@@ -364,6 +401,8 @@ class LLMService(BaseService):
         user_profile: dict | None = None,
         message_history: list | None = None,
         connection_id: str | None = None,
+        mode: str = 'standard',
+        connection_notes: list | None = None,
     ) -> dict[str, Any]:
         """
         Generate a personalized LinkedIn message for a connection.
@@ -374,17 +413,17 @@ class LLMService(BaseService):
             user_profile: Sender's profile data for context
             message_history: Previous messages with this connection
             connection_id: Raw profile slug for optional DynamoDB enrichment
+            mode: "standard" for regular message, "icebreaker" for first-contact suggestions
+            connection_notes: List of note objects with 'content' field (for icebreaker mode)
 
         Returns:
-            dict with generatedMessage and confidence
+            dict with generatedMessage (standard) or icebreakers (icebreaker)
         """
         try:
             # Build sender context
             sender_data = ''
             if user_profile:
-                for key, value in user_profile.items():
-                    if value and key != 'linkedin_credentials':
-                        sender_data += f'{key}: {value}\n'
+                sender_data = self._format_user_profile_context(user_profile, skip_empty_values=True)
 
             # Build recipient context from request
             first_name = connection_profile.get('firstName', '')
@@ -403,6 +442,19 @@ class LLMService(BaseService):
             if connection_id and self.table:
                 recipient_context = self._fetch_profile_context(connection_id)
 
+            if mode == 'icebreaker':
+                return self._generate_icebreaker(
+                    sender_data=sender_data,
+                    recipient_name=recipient_name,
+                    recipient_position=recipient_position,
+                    recipient_company=recipient_company,
+                    recipient_headline=recipient_headline,
+                    recipient_tags=recipient_tags,
+                    recipient_context=recipient_context,
+                    connection_notes=connection_notes,
+                )
+
+            # Standard mode
             # Format message history
             history_text = ''
             if message_history:
@@ -428,19 +480,103 @@ class LLMService(BaseService):
             response = self.openai_client.responses.create(
                 model='gpt-5.2',
                 input=llm_prompt,
+                timeout=OPERATION_TIMEOUTS.get('generate_message', 60),
             )
 
             content = self._extract_response_content(response)
 
             if not content or not content.strip():
                 logger.error('generate_message returned empty content from OpenAI')
-                return {'generatedMessage': '', 'confidence': 0, 'error': 'Empty response from AI'}
+                return {'generatedMessage': '', 'error': 'Empty response from AI'}
 
-            return {'generatedMessage': content.strip(), 'confidence': 0.85}
+            return {'generatedMessage': content.strip()}
 
+        except (ValidationError, ExternalServiceError, ServiceError):
+            raise
+        except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
+            logger.error(f'OpenAI API error in generate_message: {e}')
+            raise ExternalServiceError(
+                message='Failed to generate message', service='OpenAI', original_error=str(e)
+            ) from e
         except Exception as e:
             logger.error(f'Error in generate_message: {e}')
-            return {'generatedMessage': '', 'confidence': 0, 'error': 'Failed to generate message'}
+            raise ServiceError(message='Failed to generate message') from e
+
+    def _generate_icebreaker(
+        self,
+        sender_data: str,
+        recipient_name: str,
+        recipient_position: str,
+        recipient_company: str,
+        recipient_headline: str,
+        recipient_tags: str,
+        recipient_context: str,
+        connection_notes: list | None = None,
+    ) -> dict[str, Any]:
+        """Generate first-contact icebreaker suggestions using dedicated prompt."""
+
+        try:
+            # Format connection notes
+            notes_text = 'No notes available.'
+            if connection_notes:
+                note_lines = []
+                for note in connection_notes:
+                    content = note.get('content', '') if isinstance(note, dict) else str(note)
+                    if content:
+                        note_lines.append(f'- {self._sanitize_prompt(content, 500)}')
+                if note_lines:
+                    notes_text = '\n'.join(note_lines)
+
+            llm_prompt = GENERATE_ICEBREAKER_PROMPT.format(
+                sender_data=sender_data or 'No sender profile provided.',
+                recipient_name=recipient_name or 'Unknown',
+                recipient_position=self._sanitize_prompt(recipient_position, 200),
+                recipient_company=self._sanitize_prompt(recipient_company, 200),
+                recipient_headline=self._sanitize_prompt(recipient_headline, 300),
+                recipient_tags=self._sanitize_prompt(recipient_tags, 500),
+                recipient_context=recipient_context or 'No additional context available.',
+                connection_notes=notes_text,
+            )
+
+            response = self.openai_client.responses.create(
+                model='gpt-5.2',
+                input=llm_prompt,
+                timeout=OPERATION_TIMEOUTS.get('generate_message', 60),
+            )
+
+            content = self._extract_response_content(response)
+
+            if not content or not content.strip():
+                logger.error('generate_icebreaker returned empty content from OpenAI')
+                return {'icebreakers': [], 'error': 'Empty response from AI'}
+
+            # Parse numbered list into individual icebreakers
+            icebreakers = self._parse_icebreakers(content)
+
+            return {'icebreakers': icebreakers}
+
+        except (ValidationError, ExternalServiceError, ServiceError):
+            raise
+        except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
+            logger.error(f'OpenAI API error in generate_icebreaker: {e}')
+            raise ExternalServiceError(
+                message='Failed to generate icebreakers', service='OpenAI', original_error=str(e)
+            ) from e
+        except Exception as e:
+            logger.error(f'Error in generate_icebreaker: {e}')
+            raise ServiceError(message='Failed to generate icebreakers') from e
+
+    @staticmethod
+    def _parse_icebreakers(content: str) -> list[str]:
+        """Parse numbered list response into individual icebreaker messages."""
+        if not content:
+            return []
+
+        # Split by numbered list pattern (1. or 1) at line start)
+        parts = re.split(r'^\s*\d+[\.\)]\s*', content, flags=re.MULTILINE)
+        icebreakers = [part.strip() for part in parts if part.strip()]
+
+        return icebreakers
 
     def analyze_message_patterns(self, stats: dict, sample_messages: list) -> dict[str, Any]:
         """Analyze message patterns via LLM and return actionable insights.
@@ -477,13 +613,12 @@ class LLMService(BaseService):
             response = self.openai_client.responses.create(
                 model='gpt-4.1',
                 input=prompt,
+                timeout=OPERATION_TIMEOUTS.get('analyze_message_patterns', 60),
             )
 
             content = self._extract_response_content(response)
 
             # Parse numbered insights from response
-            import re
-
             insights = []
             for line in content.strip().split('\n'):
                 line = line.strip()
@@ -498,16 +633,105 @@ class LLMService(BaseService):
                 'analyzedAt': datetime.now(UTC).isoformat(),
             }
 
+        except (ValidationError, ExternalServiceError, ServiceError):
+            raise
+        except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
+            logger.error(f'OpenAI API error in analyze_message_patterns: {e}')
+            raise ExternalServiceError(
+                message='Failed to analyze message patterns', service='OpenAI', original_error=str(e)
+            ) from e
         except Exception as e:
             logger.error(f'Error in analyze_message_patterns: {e}')
-            return {'insights': [], 'analyzedAt': datetime.now(UTC).isoformat(), 'error': str(e)}
+            raise ServiceError(message='Failed to analyze message patterns') from e
+
+    def analyze_tone(self, draft_text, recipient_name='', recipient_position='', relationship_status=''):
+        """Analyze the tone of a draft LinkedIn message.
+
+        Args:
+            draft_text: The draft message text to analyze.
+            recipient_name: Name of the message recipient.
+            recipient_position: Job title of the recipient.
+            relationship_status: Connection status (e.g. ally, outgoing).
+
+        Returns:
+            Dict with professionalism, warmth, clarity, salesPressure (int 1-10),
+            assessment and suggestion (str).
+        """
+        try:
+            prompt = ANALYZE_TONE_PROMPT.format(
+                draft_text=self._sanitize_prompt(draft_text),
+                recipient_name=self._sanitize_prompt(recipient_name, 200),
+                recipient_position=self._sanitize_prompt(recipient_position, 200),
+                relationship_status=self._sanitize_prompt(relationship_status, 100),
+            )
+
+            response = self.openai_client.responses.create(
+                model='gpt-4.1',
+                input=prompt,
+                timeout=OPERATION_TIMEOUTS.get('analyze_tone', 60),
+            )
+
+            content = self._extract_response_content(response)
+            return self._parse_tone_response(content)
+
+        except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
+            logger.error(f'OpenAI API error in analyze_tone: {e}')
+            raise ExternalServiceError(message='Tone analysis failed', service='OpenAI', original_error=str(e)) from e
+        except Exception as e:
+            logger.error(f'Error in analyze_tone: {e}')
+            raise ServiceError(message='Tone analysis failed') from e
+
+    def _parse_tone_response(self, response_text: str) -> dict[str, Any]:
+        """Parse structured tone analysis response into a dict."""
+        defaults = {
+            'professionalism': 5,
+            'warmth': 5,
+            'clarity': 5,
+            'salesPressure': 5,
+            'assessment': '',
+            'suggestion': '',
+        }
+
+        if not response_text:
+            return defaults
+
+        result = {}
+
+        score_fields = {
+            'PROFESSIONALISM': 'professionalism',
+            'WARMTH': 'warmth',
+            'CLARITY': 'clarity',
+            'SALES_PRESSURE': 'salesPressure',
+        }
+
+        for label, key in score_fields.items():
+            match = re.search(rf'{label}:\s*(\d+)', response_text)
+            if match:
+                score = int(match.group(1))
+                result[key] = max(1, min(10, score))
+            else:
+                result[key] = defaults[key]
+
+        text_fields = {
+            'ASSESSMENT': 'assessment',
+            'SUGGESTION': 'suggestion',
+        }
+
+        for label, key in text_fields.items():
+            match = re.search(rf'{label}:\s*(.+?)(?=\n[A-Z_]+:|$)', response_text, re.DOTALL)
+            if match:
+                result[key] = match.group(1).strip()
+            else:
+                result[key] = defaults[key]
+
+        return result
 
     def _fetch_profile_context(self, connection_id: str) -> str:
         """Fetch enriched profile context from DynamoDB metadata."""
-        import base64
+        from shared_services.edge_data_service import encode_profile_id
 
         try:
-            profile_id_b64 = base64.urlsafe_b64encode(connection_id.encode()).decode()
+            profile_id_b64 = encode_profile_id(connection_id)
             response = self.table.get_item(Key={'PK': f'PROFILE#{profile_id_b64}', 'SK': '#METADATA'})
             item = response.get('Item')
             if not item:
@@ -537,6 +761,24 @@ class LLMService(BaseService):
 
     # Private helpers
 
+    @staticmethod
+    def _format_user_profile_context(profile: dict, skip_empty_values: bool = False) -> str:
+        """Format a user profile dict into a key: value text block for LLM prompts.
+
+        Excludes linkedin_credentials. When skip_empty_values is True, also
+        excludes keys whose values are falsy.
+        """
+        if not profile:
+            return ''
+        parts = []
+        for key, value in profile.items():
+            if key == 'linkedin_credentials':
+                continue
+            if skip_empty_values and not value:
+                continue
+            parts.append(f'{key}: {value}')
+        return '\n'.join(parts) + ('\n' if parts else '')
+
     def _sanitize_prompt(self, text: str, max_length: int = 2000) -> str:
         """Sanitize user-provided prompt text to prevent injection attacks."""
         if not text:
@@ -556,6 +798,6 @@ class LLMService(BaseService):
         if isinstance(value, (dict, list)):
             try:
                 return json.dumps(value, indent=2, ensure_ascii=False)
-            except Exception:
+            except (TypeError, ValueError):
                 return str(value)
         return str(value)

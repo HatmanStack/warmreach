@@ -137,5 +137,16 @@
     "date": "2026-04-12",
     "plan": "2026-04-12-goal-intelligence-hardening",
     "verdict": "GO"
+  },
+  {
+    "skill": "brainstorm",
+    "date": "2026-04-13",
+    "plan": "2026-04-13-planned-backlog"
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-04-13",
+    "plan": "2026-04-13-planned-backlog",
+    "verdict": "GO"
   }
 ]

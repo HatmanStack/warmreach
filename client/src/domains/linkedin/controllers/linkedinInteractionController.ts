@@ -814,4 +814,38 @@ export class LinkedInInteractionController {
       requestId,
     };
   }
+
+  /**
+   * Transport-agnostic: post a comment on a LinkedIn post.
+   */
+  async postCommentDirect(
+    payload: { postUrl?: string; commentText?: string },
+    _onProgress?: (...args: unknown[]) => void
+  ) {
+    const { postComment } = await import('../services/linkedinCommentOps.js');
+
+    const postUrl = payload.postUrl;
+    const commentText = payload.commentText;
+
+    if (!postUrl || !commentText) {
+      throw Object.assign(new Error('postUrl and commentText are required'), {
+        code: 'POST_COMMENT_ERROR',
+      });
+    }
+
+    const linkedinService = new LinkedInInteractionService({
+      controlPlaneService: _controlPlaneService,
+    });
+    const result = await postComment(
+      linkedinService as unknown as import('../services/linkedinCommentOps.js').CommentOpsContext,
+      postUrl,
+      commentText
+    );
+
+    return {
+      success: true,
+      data: result,
+      timestamp: new Date().toISOString(),
+    };
+  }
 }

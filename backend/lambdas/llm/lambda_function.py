@@ -8,29 +8,41 @@ import boto3
 from errors.exceptions import ServiceError, ValidationError
 from openai import OpenAI
 from services.llm_service import LLMService
+from shared_services.activity_writer import write_activity
 from shared_services.monetization import (
     FeatureFlagService,
     QuotaExceededError,
     QuotaService,
     ensure_tier_exists,
 )
-from shared_services.activity_writer import write_activity
+from shared_services.observability import setup_correlation_context
 from shared_services.request_utils import api_response, extract_user_id
+from shared_services.ssm_cache import SSMCachedSecret
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# ---------------------------------------------------------------------------
+# SSM-backed OpenAI API key with TTL cache (ADR-3)
+# ---------------------------------------------------------------------------
+_openai_secret = SSMCachedSecret(os.environ.get('OPENAI_API_KEY_ARN', ''))
+
+
+def _get_openai_client():
+    """Return an OpenAI client using the SSM-fetched API key."""
+    return OpenAI(api_key=_openai_secret.get_value(), timeout=OPENAI_TIMEOUT)
+
+
 # Clients
 OPENAI_TIMEOUT = int(os.environ.get('OPENAI_TIMEOUT', '60'))  # Optional: defaults to 60s
-openai_client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'), timeout=OPENAI_TIMEOUT)
 bedrock_client = boto3.client('bedrock-runtime')
 # Optional: LLM Lambda can serve AI-only operations (generate, research) without DynamoDB.
 # Quota enforcement and usage tracking require DynamoDB but are skipped when table is None.
 table_name = os.environ.get('DYNAMODB_TABLE_NAME')
 table = boto3.resource('dynamodb').Table(table_name) if table_name else None
 
-# Module-level LLMService for warm container reuse
-_llm_service = LLMService(openai_client=openai_client, bedrock_client=bedrock_client, table=table)
+# LLMService initialized lazily on first invocation
+_llm_service = None
 
 OPS = {
     'generate_ideas',
@@ -41,6 +53,10 @@ OPS = {
     'analyze_message_patterns',
     'analyze_tone',
 }
+# Maximum total character count for request body fields that flow into LLM prompts.
+# ~50k chars is roughly 12.5k tokens; larger inputs waste tokens and risk timeouts.
+MAX_INPUT_SIZE = 50_000
+
 METERED_OPS = {
     'generate_ideas',
     'research_selected_ideas',
@@ -92,16 +108,20 @@ def _handle_synthesize_research(body, user_id, svc):
 
 
 def _handle_generate_message(body, user_id, svc):
-    if not body.get('conversationTopic'):
+    mode = body.get('mode', 'standard')
+    # Icebreaker mode does not require conversationTopic
+    if mode != 'icebreaker' and not body.get('conversationTopic'):
         return api_response(400, {'error': 'conversationTopic required'}, None)
     if not body.get('connectionProfile'):
         return api_response(400, {'error': 'connectionProfile required'}, None)
     return svc.generate_message(
         connection_profile=body['connectionProfile'],
-        conversation_topic=body['conversationTopic'],
+        conversation_topic=body.get('conversationTopic', ''),
         user_profile=body.get('userProfile'),
         message_history=body.get('messageHistory'),
         connection_id=body.get('connectionId'),
+        mode=mode,
+        connection_notes=body.get('connectionNotes'),
     )
 
 
@@ -141,9 +161,8 @@ HANDLERS = {
 
 def lambda_handler(event, _context):
     """Route LLM operations to LLMService."""
+    global _llm_service
     try:
-        from shared_services.observability import setup_correlation_context
-
         setup_correlation_context(event, _context)
         method = event.get('requestContext', {}).get('http', {}).get('method', '')
         if method == 'OPTIONS' or event.get('httpMethod') == 'OPTIONS':
@@ -158,16 +177,34 @@ def lambda_handler(event, _context):
         if not op or op not in OPS:
             return api_response(400, {'error': 'Invalid operation'}, event)
 
+        # Validate total input size to prevent token waste and timeouts
+        body_str = event.get('body', '{}') if isinstance(event.get('body'), str) else json.dumps(body)
+        if len(body_str) > MAX_INPUT_SIZE:
+            logger.warning('Input size %d exceeds limit %d for op=%s', len(body_str), MAX_INPUT_SIZE, op)
+            return api_response(
+                400,
+                {
+                    'error': f'Input size exceeds maximum allowed ({MAX_INPUT_SIZE} characters)',
+                    'code': 'INPUT_TOO_LARGE',
+                },
+                event,
+            )
+
+        # Lazy-init LLMService with SSM-fetched OpenAI key
+        if _llm_service is None:
+            openai_client = _get_openai_client()
+            _llm_service = LLMService(openai_client=openai_client, bedrock_client=bedrock_client, table=table)
+
         # Auto-provision tier on first call (non-blocking)
         if table:
             from botocore.exceptions import ClientError
 
             try:
                 ensure_tier_exists(table, user_id)
-            except ClientError as e:
-                logger.error(f'Tier auto-provision failed due to DynamoDB error: {e}')
-            except Exception as e:
-                logger.error(f'Tier auto-provision failed: {e}')
+            except ClientError:
+                logger.exception('Tier auto-provision failed due to DynamoDB error')
+            except Exception:
+                logger.exception('Tier auto-provision failed')
 
         # Feature gate checks
         if _feature_flag_service:
@@ -193,7 +230,7 @@ def lambda_handler(event, _context):
                             event,
                         )
                 except Exception:
-                    logger.error(f'Feature flag check failed for {feature_to_check}, denying request')
+                    logger.exception('Feature flag check failed for %s, denying request', feature_to_check)
                     return api_response(503, {'error': 'Feature availability check failed'}, event)
 
         # Dispatch via routing table
@@ -207,9 +244,14 @@ def lambda_handler(event, _context):
         # Emit activity events for successful operations
         if table:
             if op == 'generate_message':
-                write_activity(
-                    table, user_id, 'ai_message_generated', metadata={'connectionId': body.get('connectionId')}
-                )
+                if body.get('mode') == 'icebreaker':
+                    write_activity(
+                        table, user_id, 'icebreaker_generated', metadata={'connectionId': body.get('connectionId')}
+                    )
+                else:
+                    write_activity(
+                        table, user_id, 'ai_message_generated', metadata={'connectionId': body.get('connectionId')}
+                    )
             elif op == 'analyze_tone':
                 write_activity(table, user_id, 'ai_tone_analysis')
             elif op in DEEP_RESEARCH_OPS:
@@ -225,7 +267,7 @@ def lambda_handler(event, _context):
             except QuotaExceededError:
                 raise
             except Exception:
-                logger.warning(f'Usage reporting failed for {op}, allowing request')
+                logger.exception('Usage reporting failed for %s, allowing request', op)
 
         return api_response(200, result, event)
 
@@ -240,8 +282,8 @@ def lambda_handler(event, _context):
         logger.warning(f'Validation error: {e.message}', extra={'details': e.details})
         return api_response(400, {'error': e.message, 'code': e.code, 'details': e.details}, event)
     except ServiceError as e:
-        logger.error(f'Service error: {e.message}', extra={'code': e.code, 'details': e.details})
+        logger.exception('Service error: %s', e.message)
         return api_response(500, {'error': e.message, 'code': e.code}, event)
     except Exception as e:
-        logger.exception(f'Unexpected error in LLM handler: {e}')
+        logger.exception('Unexpected error in LLM handler: %s', e)
         return api_response(500, {'error': 'Internal server error'}, event)

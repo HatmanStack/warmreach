@@ -5,6 +5,36 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-04-14
+
+### Added
+
+- **Comment Concierge:** Electron scrapes LinkedIn feed, filters Tier-1 posts (automated: score 70+ or opportunity-linked, manual: user-tagged, off), LLM generates 3 draft comments per post, user reviews and approves in frontend, Electron posts via Puppeteer. Three-mode setting in profile settings. Feature flag: `comment_concierge`
+- **Proactive Follow-up:** Cold connection detection (high overall score, low recency sub-score) integrated into weekly digest. Multi-action suggestions (comment on post, react, send message, engage with content) — action type selected based on connection context. Feature flag: `proactive_followup`
+- **Network Pulse:** Cluster-seeded RAGStack queries surface trending topics from the user's network. 7-day DynamoDB cache. New "Trending in Your Network" section in weekly digest email. Feature flag: `network_pulse`
+- **Enrichment Export:** Frontend-only JSON export alongside existing CSV. Pro fields include engagement tiers (score buckets), cluster tags, and interaction dates — computed at export time. Feature flag: `enrichment_export`
+- **Multi-platform Contacts:** Manual "Add Contact" form with `source` field (linkedin/github/twitter/meetup/email/manual) on profile model. Backend support via `create_bad_contact_profile()`. Feature flag: `multi_platform_contacts`
+- **Blog/Link Following:** During Comment Concierge feed scraping, external links are extracted, content is fetched with markdown conversion, and ingested into RAGStack. Feature flag: `blog_link_following`
+- **Prompt Quality Feedback:** Thumbs up/down on goal assessments with optional "what was wrong?" text on thumbs down. `FeedbackService` stores ratings in DynamoDB with per-opportunity SK pattern. Feature flag: `prompt_quality_feedback`
+- **Content Extractor:** Puppeteer-based HTML-to-markdown converter with article/main/density-based fallback for blog content extraction
+
+### Changed
+
+- **Architecture:** Feed scraper uses `waitForNetworkIdle` after scrolling for reliable infinite scroll loading
+- **Architecture:** Tier-1 filtering matches by profile URL only (not display name) to prevent false positives
+- **Backend:** `_handle_generate_comment` stores drafts in DynamoDB after LLM generation (generate → store in single operation)
+- **Backend:** `get_pending_drafts` returns both `pending` and `posting_failed` drafts for retry visibility
+- **Backend:** `FeedbackService` uses compound SK `FEEDBACK#{opportunity_id}#{timestamp}` for per-opportunity queries
+- **Backend:** `store_drafts` uses conditional write (`attribute_not_exists`) to prevent overwrite on re-scrape
+- **Backend:** Input validation for feedback ratings and draft status updates (400 instead of 200-with-error or 500)
+- **Frontend:** Per-card approve/posting state instead of global `isPending` flag
+- **Frontend:** Failed drafts shown with red border, warning message, and retry button
+- **Client:** `postCommentDirect` throws on validation failure instead of returning error object
+- **Client:** `LinkedInInteractionService` instantiated with `controlPlaneService` in post-comment handler
+- **Client:** `userProfile` forwarded through command router → orchestrator → LLM for personalized comments
+- **Client:** URL hashing uses SHA-256 instead of weak 32-bit hash for link dedup
+- **Sync:** Updated LLM Lambda overlays, selector index overlay, RAGStack proxy overlay, command router overlay, and monetization stubs overlay for community edition
+
 ## [1.11.0] - 2026-04-12
 
 ### Added

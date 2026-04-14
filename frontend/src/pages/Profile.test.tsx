@@ -19,6 +19,10 @@ vi.mock('@/features/connections/utils/csvExport', () => ({
   exportConnectionsCsv: vi.fn(),
 }));
 
+vi.mock('@/features/connections/utils/jsonExport', () => ({
+  exportConnectionsJson: vi.fn(),
+}));
+
 describe('Profile page', () => {
   const AuthenticatedWrapper = createAuthenticatedWrapper();
 
@@ -33,10 +37,11 @@ describe('Profile page', () => {
       </AuthenticatedWrapper>
     );
 
-  it('should render the export section', () => {
+  it('should render the export section with both CSV and JSON buttons', () => {
     renderProfile();
     expect(screen.getByTestId('export-section')).toBeInTheDocument();
     expect(screen.getByTestId('export-csv-button')).toBeInTheDocument();
+    expect(screen.getByTestId('export-json-button')).toBeInTheDocument();
   });
 
   it('should render the activity timeline section', () => {

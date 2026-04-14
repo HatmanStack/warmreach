@@ -125,6 +125,9 @@ export interface Connection {
 
   /** Flag indicating if this is demo/fake data (optional) */
   isFakeData?: boolean;
+
+  /** Origin platform for this contact (optional, defaults to 'linkedin') */
+  source?: 'linkedin' | 'github' | 'twitter' | 'meetup' | 'email' | 'manual';
 }
 
 /** Breakdown of relationship strength score components */
@@ -290,6 +293,9 @@ export interface UserProfile {
 
   /** Whether the user has opted out of digest emails */
   digest_opted_out?: boolean;
+
+  /** Comment Concierge mode: automated, manual, or off */
+  comment_concierge_mode?: 'automated' | 'manual' | 'off';
 
   /** User's preferred timezone (IANA, e.g. 'America/New_York') */
   timezone?: string;
