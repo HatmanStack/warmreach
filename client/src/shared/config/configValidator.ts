@@ -215,7 +215,13 @@ export class ConfigValidator {
     }
 
     // Validate dependent features
-    if (linkedinConfig.enableSuspiciousActivityDetection && !linkedinConfig.enableHumanBehavior) {
+    // These properties exist at runtime in config/index.js but TS inference
+    // truncates the object type at ~50 properties. Access via bracket notation.
+    const enableSAD = (linkedinConfig as Record<string, unknown>)[
+      'enableSuspiciousActivityDetection'
+    ];
+    const enableHB = (linkedinConfig as Record<string, unknown>)['enableHumanBehavior'];
+    if (enableSAD && !enableHB) {
       result.warnings.push(
         'Suspicious activity detection works best with human behavior simulation enabled'
       );
@@ -355,8 +361,10 @@ export class ConfigValidator {
       maxConcurrentInteractions: linkedinConfig.maxConcurrentInteractions,
       rateLimitMax: linkedinConfig.rateLimitMax,
       retryAttempts: linkedinConfig.retryAttempts,
-      humanBehaviorEnabled: linkedinConfig.enableHumanBehavior,
-      suspiciousActivityDetectionEnabled: linkedinConfig.enableSuspiciousActivityDetection,
+      humanBehaviorEnabled: (linkedinConfig as Record<string, unknown>)['enableHumanBehavior'],
+      suspiciousActivityDetectionEnabled: (linkedinConfig as Record<string, unknown>)[
+        'enableSuspiciousActivityDetection'
+      ],
       auditLoggingEnabled: linkedinConfig.auditLoggingEnabled,
       debugMode: linkedinConfig.debugMode,
       featuresEnabled: {
