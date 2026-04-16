@@ -148,5 +148,11 @@
     "date": "2026-04-13",
     "plan": "2026-04-13-planned-backlog",
     "verdict": "GO"
+  },
+  {
+    "skill": "audit",
+    "date": "2026-04-15",
+    "plan": "2026-04-15-audit-warmreach-pro",
+    "audits": ["health", "eval", "docs"]
   }
 ]

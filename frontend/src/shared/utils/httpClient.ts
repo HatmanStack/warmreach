@@ -177,7 +177,14 @@ class HttpClient {
         });
       }
     }
-    return result as unknown as T;
+    if (result === null || result === undefined) {
+      throw new ApiError({
+        message: 'Response body is empty',
+        status: 502,
+        code: 'EMPTY_RESPONSE',
+      });
+    }
+    return result as T;
   }
 
   private sleep(ms: number): Promise<void> {

@@ -66,7 +66,7 @@ def _validate_jwt(token: str) -> dict | None:
                 break
 
         if not matching_key:
-            logger.warning(f'No matching key found in JWKS for kid: {kid}')
+            logger.warning('No matching key found in JWKS for kid: %s', kid)
             return None
 
         # Construct RSA public key object
@@ -86,12 +86,12 @@ def _validate_jwt(token: str) -> dict | None:
         if expected_client_id:
             token_client_id = claims.get('client_id', '')
             if token_client_id != expected_client_id:
-                logger.warning(f'JWT client_id mismatch: expected={expected_client_id}, got={token_client_id}')
+                logger.warning('JWT client_id mismatch: expected=%s, got=%s', expected_client_id, token_client_id)
                 return None
 
         return claims
     except jwt.InvalidTokenError as e:
-        logger.warning(f'JWT validation failed: {e}')
+        logger.warning('JWT validation failed: %s', e)
         return None
     except Exception:
         logger.exception('Unexpected error during JWT validation')
@@ -107,7 +107,7 @@ def lambda_handler(event, context):
     client_type = qs.get('clientType', 'browser')
 
     if client_type not in ('browser', 'agent'):
-        logger.warning(f'Invalid clientType: {client_type}')
+        logger.warning('Invalid clientType: %s', client_type)
         return {'statusCode': 400, 'body': 'Invalid clientType'}
 
     if not token:
@@ -131,14 +131,14 @@ def lambda_handler(event, context):
     for conn in existing:
         old_id = conn['connectionId']
         if old_id != connection_id:
-            logger.info(f'Disconnecting existing {client_type} connection {old_id} for user {user_sub}')
+            logger.info('Disconnecting existing %s connection %s for user %s', client_type, old_id, user_sub)
             try:
                 ws_service.disconnect_connection(old_id)
             except Exception:
-                logger.exception(f'Failed to disconnect {old_id}')
+                logger.exception('Failed to disconnect %s', old_id)
 
     # Store new connection
     ws_service.store_connection(connection_id, user_sub, client_type)
-    logger.info(f'Connected: {connection_id} user={user_sub} type={client_type}')
+    logger.info('Connected: %s user=%s type=%s', connection_id, user_sub, client_type)
 
     return {'statusCode': 200, 'body': 'Connected'}

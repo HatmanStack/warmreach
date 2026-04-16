@@ -6,11 +6,8 @@ sub-services can continue importing from this module.
 """
 
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
-from botocore.exceptions import ClientError
-from errors.exceptions import ExternalServiceError, ValidationError
 from shared_services.base_service import BaseService
 from shared_services.dynamodb_types import ProfileMetadataItem
 from shared_services.edge_constants import (  # noqa: F401
@@ -25,6 +22,7 @@ from shared_services.edge_constants import (  # noqa: F401
 from shared_services.edge_ingestion_service import EdgeIngestionService
 from shared_services.edge_message_service import EdgeMessageService
 from shared_services.edge_note_service import EdgeNoteService
+from shared_services.edge_opportunity_service import EdgeOpportunityService
 from shared_services.edge_query_service import EdgeQueryService
 from shared_services.edge_status_service import EdgeStatusService
 
@@ -61,6 +59,7 @@ class EdgeDataService(BaseService):
         self._messages_svc = EdgeMessageService(table)
         self._notes_svc = EdgeNoteService(table)
         self._queries_svc = EdgeQueryService(table)
+        self._opportunity_svc = EdgeOpportunityService(table, self._queries_svc)
 
     # ---- Status operations (delegated to EdgeStatusService) ----
 
@@ -123,161 +122,20 @@ class EdgeDataService(BaseService):
     ) -> None:
         return self._ingestion_svc.update_ingestion_flag(user_id, profile_id_b64, timestamp, document_id)
 
-    # ---- Opportunity methods (remain in facade, not yet extracted) ----
-
-    @staticmethod
-    def _validate_profile_id_encoded(profile_id: str) -> None:
-        """Validate that profile_id looks like a base64url-encoded string."""
-        if '/' in profile_id or profile_id.startswith('http'):
-            raise ValidationError(
-                'profile_id must be base64url-encoded, got a raw URL or path',
-                field='profileId',
-            )
+    # ---- Opportunity operations (delegated to EdgeOpportunityService) ----
 
     def tag_connection_to_opportunity(
         self, user_id: str, profile_id: str, opportunity_id: str, stage: str = 'identified'
     ) -> dict[str, Any]:
-        """Tag a connection to an opportunity with an initial stage."""
-        self._validate_profile_id_encoded(profile_id)
-        if stage not in OPPORTUNITY_STAGES:
-            raise ValidationError(f'Invalid stage: {stage}. Must be one of: {", ".join(OPPORTUNITY_STAGES)}')
-
-        try:
-            key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id}'}
-            response = self.table.get_item(Key=key)
-            edge = response.get('Item', {})
-            opps = edge.get('opportunities', [])
-
-            if any(o.get('opportunityId') == opportunity_id for o in opps):
-                raise ValidationError('Connection already tagged to this opportunity', field='opportunityId')
-
-            opps.append({'opportunityId': opportunity_id, 'stage': stage})
-            current_time = datetime.now(UTC).isoformat()
-
-            self.table.update_item(
-                Key=key,
-                UpdateExpression='SET opportunities = :opps, updatedAt = :updated',
-                ExpressionAttributeValues={':opps': opps, ':updated': current_time},
-            )
-
-            return {'success': True, 'profileId': profile_id, 'opportunityId': opportunity_id, 'stage': stage}
-
-        except ValidationError:
-            raise
-        except ClientError as e:
-            logger.error(f'DynamoDB error in tag_connection_to_opportunity: {e}')
-            raise ExternalServiceError(
-                message='Failed to tag connection', service='DynamoDB', original_error=str(e)
-            ) from e
+        return self._opportunity_svc.tag_connection_to_opportunity(user_id, profile_id, opportunity_id, stage)
 
     def untag_connection_from_opportunity(self, user_id: str, profile_id: str, opportunity_id: str) -> dict[str, Any]:
-        """Remove a connection's tag from an opportunity."""
-        self._validate_profile_id_encoded(profile_id)
-        try:
-            key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id}'}
-            response = self.table.get_item(Key=key)
-            edge = response.get('Item', {})
-            opps = edge.get('opportunities', [])
-
-            filtered = [o for o in opps if o.get('opportunityId') != opportunity_id]
-            if len(filtered) == len(opps):
-                raise ValidationError('Connection not tagged to this opportunity', field='opportunityId')
-
-            current_time = datetime.now(UTC).isoformat()
-            self.table.update_item(
-                Key=key,
-                UpdateExpression='SET opportunities = :opps, updatedAt = :updated',
-                ExpressionAttributeValues={':opps': filtered, ':updated': current_time},
-            )
-
-            return {'success': True, 'profileId': profile_id, 'opportunityId': opportunity_id}
-
-        except ValidationError:
-            raise
-        except ClientError as e:
-            logger.error(f'DynamoDB error in untag_connection_from_opportunity: {e}')
-            raise ExternalServiceError(
-                message='Failed to untag connection', service='DynamoDB', original_error=str(e)
-            ) from e
+        return self._opportunity_svc.untag_connection_from_opportunity(user_id, profile_id, opportunity_id)
 
     def update_connection_stage(
         self, user_id: str, profile_id: str, opportunity_id: str, new_stage: str
     ) -> dict[str, Any]:
-        """Update a connection's stage within an opportunity."""
-        self._validate_profile_id_encoded(profile_id)
-        if new_stage not in OPPORTUNITY_STAGES:
-            raise ValidationError(f'Invalid stage: {new_stage}. Must be one of: {", ".join(OPPORTUNITY_STAGES)}')
-
-        try:
-            key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id}'}
-            response = self.table.get_item(Key=key)
-            edge = response.get('Item', {})
-            opps = edge.get('opportunities', [])
-
-            old_stage = None
-            for opp in opps:
-                if opp.get('opportunityId') == opportunity_id:
-                    old_stage = opp['stage']
-                    opp['stage'] = new_stage
-                    break
-
-            if old_stage is None:
-                raise ValidationError('Connection not tagged to this opportunity', field='opportunityId')
-
-            current_time = datetime.now(UTC).isoformat()
-            self.table.update_item(
-                Key=key,
-                UpdateExpression='SET opportunities = :opps, updatedAt = :updated',
-                ExpressionAttributeValues={':opps': opps, ':updated': current_time},
-            )
-
-            return {
-                'success': True,
-                'profileId': profile_id,
-                'opportunityId': opportunity_id,
-                'oldStage': old_stage,
-                'newStage': new_stage,
-            }
-
-        except ValidationError:
-            raise
-        except ClientError as e:
-            logger.error(f'DynamoDB error in update_connection_stage: {e}')
-            raise ExternalServiceError(
-                message='Failed to update connection stage', service='DynamoDB', original_error=str(e)
-            ) from e
+        return self._opportunity_svc.update_connection_stage(user_id, profile_id, opportunity_id, new_stage)
 
     def get_opportunity_connections(self, user_id: str, opportunity_id: str) -> dict[str, Any]:
-        """Get all connections tagged to an opportunity, grouped by stage."""
-        try:
-            edges = self._queries_svc.query_all_edges(user_id)
-
-            stages: dict[str, list] = {stage: [] for stage in OPPORTUNITY_STAGES}
-            total = 0
-
-            for edge in edges:
-                opps = edge.get('opportunities', [])
-                for opp in opps:
-                    if opp.get('opportunityId') == opportunity_id:
-                        stage = opp.get('stage', 'identified')
-                        profile_id = edge.get('SK', '').replace('PROFILE#', '')
-                        connection_info = {
-                            'profileId': profile_id,
-                            'firstName': edge.get('first_name', ''),
-                            'lastName': edge.get('last_name', ''),
-                            'position': edge.get('position', ''),
-                            'company': edge.get('company', ''),
-                            'stage': stage,
-                        }
-                        if stage in stages:
-                            stages[stage].append(connection_info)
-                        total += 1
-                        break
-
-            return {'success': True, 'stages': stages, 'totalCount': total}
-
-        except ClientError as e:
-            logger.error(f'DynamoDB error in get_opportunity_connections: {e}')
-            raise ExternalServiceError(
-                message='Failed to get opportunity connections', service='DynamoDB', original_error=str(e)
-            ) from e
+        return self._opportunity_svc.get_opportunity_connections(user_id, opportunity_id)

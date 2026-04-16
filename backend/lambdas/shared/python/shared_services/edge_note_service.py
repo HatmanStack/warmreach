@@ -61,7 +61,7 @@ class EdgeNoteService(BaseService):
                     f'Maximum of {MAX_NOTES_PER_EDGE} notes per connection reached',
                     field='notes',
                 ) from e
-            logger.error(f'DynamoDB error in add_note: {e}')
+            logger.error('DynamoDB error in add_note: %s', e)
             raise ExternalServiceError(message='Failed to add note', service='DynamoDB', original_error=str(e)) from e
 
     def update_note(self, user_id: str, profile_id: str, note_id: str, content: str) -> dict[str, Any]:
@@ -105,7 +105,7 @@ class EdgeNoteService(BaseService):
         except ValidationError:
             raise
         except ClientError as e:
-            logger.error(f'DynamoDB error in update_note: {e}')
+            logger.error('DynamoDB error in update_note: %s', e)
             raise ExternalServiceError(
                 message='Failed to update note', service='DynamoDB', original_error=str(e)
             ) from e
@@ -136,7 +136,7 @@ class EdgeNoteService(BaseService):
         except ValidationError:
             raise
         except ClientError as e:
-            logger.error(f'DynamoDB error in delete_note: {e}')
+            logger.error('DynamoDB error in delete_note: %s', e)
             raise ExternalServiceError(
                 message='Failed to delete note', service='DynamoDB', original_error=str(e)
             ) from e

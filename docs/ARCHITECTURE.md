@@ -26,7 +26,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 
 - **Stack**: AWS SAM, Python 3.13 Lambdas, DynamoDB, API Gateway V2, Cognito
 - **Infrastructure** (defined in `template.yaml`):
-  - **DynamoDB**: Single-table design (PK/SK + GSI1, TTL enabled)
+  - **DynamoDB**: Single-table design (PK/SK + GSI1, TTL enabled). Available in WarmReach Pro: GSI2 for paid-user queries.
   - **HTTP API**: API Gateway V2 with Cognito JWT authorizer
   - **WebSocket API**: API Gateway V2 for real-time command dispatch to Electron agent
   - **Cognito**: User pool with email-based auth

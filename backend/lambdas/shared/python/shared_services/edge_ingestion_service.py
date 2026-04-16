@@ -45,7 +45,7 @@ class EdgeIngestionService(BaseService):
 
         ingest_state = self._get_ingest_state(profile_id_b64)
         if ingest_state:
-            logger.info(f'Skipping ingestion for {profile_id_b64}: recently ingested')
+            logger.info('Skipping ingestion for %s: recently ingested', profile_id_b64)
             return {
                 'success': True,
                 'status': 'already_ingested',
@@ -66,7 +66,7 @@ class EdgeIngestionService(BaseService):
             try:
                 markdown_content = generate_profile_markdown(profile_data)
             except Exception as e:
-                logger.error(f'Error generating markdown: {e}')
+                logger.error('Error generating markdown: %s', e)
                 return {'success': False, 'error': f'Markdown generation failed: {e}'}
 
             result = self.ingestion_service.ingest_profile(
@@ -82,7 +82,7 @@ class EdgeIngestionService(BaseService):
                 return {'success': False, 'error': result.get('error', 'Ingestion failed')}
 
         except Exception as e:
-            logger.error(f'Error triggering RAGStack ingestion: {e}')
+            logger.error('Error triggering RAGStack ingestion: %s', e)
             return {'success': False, 'error': str(e)}
 
     def update_ingestion_flag(
@@ -101,7 +101,7 @@ class EdgeIngestionService(BaseService):
                 ExpressionAttributeValues=attr_values,
             )
         except Exception as e:
-            logger.warning(f'Failed to update ingestion flag: {e}')
+            logger.warning('Failed to update ingestion flag: %s', e)
 
     def is_recently_ingested(self, profile_id: str) -> bool:
         """Check if this profile has been ingested within 30 days."""
@@ -130,7 +130,7 @@ class EdgeIngestionService(BaseService):
             except (ValueError, TypeError):
                 return None
         except Exception as e:
-            logger.warning(f'Failed to check ingestion dedup for {profile_id}: {e}')
+            logger.warning('Failed to check ingestion dedup for %s: %s', profile_id, e)
             return None
 
     def _update_ingest_state(self, profile_id: str, document_id: str | None = None) -> None:
@@ -151,7 +151,7 @@ class EdgeIngestionService(BaseService):
                 ExpressionAttributeValues=attr_values,
             )
         except Exception as e:
-            logger.warning(f'Failed to update ingest state for {profile_id}: {e}')
+            logger.warning('Failed to update ingest state for %s: %s', profile_id, e)
 
     def _get_profile_metadata(self, profile_id: str) -> dict:
         """Fetch profile metadata from DynamoDB."""
@@ -159,5 +159,5 @@ class EdgeIngestionService(BaseService):
             response = self.table.get_item(Key={'PK': f'PROFILE#{profile_id}', 'SK': '#METADATA'})
             return response.get('Item', {})
         except Exception as e:
-            logger.warning(f'Failed to fetch profile metadata: {e}')
+            logger.warning('Failed to fetch profile metadata: %s', e)
             return {}

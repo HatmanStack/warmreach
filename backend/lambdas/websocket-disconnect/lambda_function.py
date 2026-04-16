@@ -28,6 +28,6 @@ def lambda_handler(event, context):
     ws_service = WebSocketService(table, '')  # No endpoint needed for delete
 
     ws_service.delete_connection(connection_id)
-    logger.info(f'Disconnected: {connection_id}')
+    logger.info('Disconnected: %s', connection_id)
 
     return {'statusCode': 200, 'body': 'Disconnected'}

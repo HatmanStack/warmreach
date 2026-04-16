@@ -171,7 +171,7 @@ describe('HttpClient', () => {
     expect(attempts).toBe(2);
   });
 
-  it('should handle lambda response without body', async () => {
+  it('should reject lambda response without body as EMPTY_RESPONSE', async () => {
     server.use(
       http.post('*/edges', () => {
         return HttpResponse.json({
@@ -182,8 +182,8 @@ describe('HttpClient', () => {
     );
 
     const result = await httpClient.makeRequest('edges', 'op');
-    expect(result.success).toBe(true);
-    expect(result.data).toBeUndefined();
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('EMPTY_RESPONSE');
   });
 
   describe('Zod schema validation', () => {
@@ -247,6 +247,39 @@ describe('HttpClient', () => {
       const result = await httpClient.get<{ arbitrary: string }>('no-schema');
       expect(result.success).toBe(true);
       expect(result.data).toEqual({ arbitrary: 'data' });
+    });
+  });
+
+  describe('unwrapLambdaResponse null/undefined guard', () => {
+    it('should throw EMPTY_RESPONSE for null lambda body', async () => {
+      server.use(
+        http.post('*/edges', () => {
+          return HttpResponse.json({
+            statusCode: 200,
+            body: 'null',
+          });
+        })
+      );
+
+      const result = await httpClient.makeRequest('edges', 'op');
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('EMPTY_RESPONSE');
+      expect(result.error?.message).toBe('Response body is empty');
+    });
+
+    it('should return valid response body without schema', async () => {
+      server.use(
+        http.post('*/edges', () => {
+          return HttpResponse.json({
+            statusCode: 200,
+            body: JSON.stringify({ key: 'value' }),
+          });
+        })
+      );
+
+      const result = await httpClient.makeRequest<{ key: string }>('edges', 'op');
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ key: 'value' });
     });
   });
 });

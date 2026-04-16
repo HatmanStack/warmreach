@@ -132,9 +132,9 @@ def lambda_handler(event, context):
     """Route RAGStack operations."""
     setup_correlation_context(event, context)
 
-    logger.debug(f'Event keys: {list(event.keys())}')
+    logger.debug('Event keys: %s', list(event.keys()))
     logger.debug(
-        f'Request context: {json.dumps(sanitize_request_context(event.get("requestContext", {})), default=str)}'
+        'Request context: %s', json.dumps(sanitize_request_context(event.get('requestContext', {})), default=str)
     )
 
     # Handle CORS preflight

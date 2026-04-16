@@ -104,3 +104,22 @@ def get_user_edges_cached(edge_data_service: Any, user_id: str, cache: dict) -> 
     if user_id not in cache:
         cache[user_id] = edge_data_service.query_all_edges(user_id)
     return cache[user_id]
+
+
+def make_goal_intelligence_service(table: Any) -> Any:
+    """Construct a GoalIntelligenceService with its dependency chain.
+
+    Shared factory used by both the LLM and analytics-insights Lambdas to avoid
+    duplicating the OpportunityService → WebSocketService → NotificationService
+    → GoalIntelligenceService construction graph.
+    """
+    from shared_services.goal_intelligence_service import GoalIntelligenceService
+    from shared_services.notification_service import NotificationService
+    from shared_services.opportunity_service import OpportunityService
+    from shared_services.websocket_service import WebSocketService
+
+    opp_service = OpportunityService(table)
+    ws_endpoint = os.environ.get('WEBSOCKET_ENDPOINT', '')
+    ws_service = WebSocketService(table, ws_endpoint) if ws_endpoint else None
+    notification_service = NotificationService(table, ws_service) if table else None
+    return GoalIntelligenceService(table, opp_service, notification_service=notification_service)

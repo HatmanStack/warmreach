@@ -118,12 +118,25 @@ SAM template (`template.yaml`) defines:
 
 Lambdas share code via `lambdas/shared/python/`:
 - `shared_services/base_service.py` - Base class for all service layers
-- `shared_services/websocket_service.py` - WebSocket @connections API helper
-- `shared_services/monetization.py` - Community edition stubs (all features enabled)
-- `shared_services/ragstack_client.py` - RAGStack GraphQL client with circuit breaker + retry
 - `shared_services/circuit_breaker.py` - Circuit breaker pattern (public API: `on_success()`/`on_failure()`)
+- `shared_services/dynamodb_types.py` - TypedDict definitions for DynamoDB item schemas
+- `shared_services/edge_constants.py` - Edge-related constants
+- `shared_services/edge_data_service.py` - Edge CRUD operations
+- `shared_services/edge_ingestion_service.py` - Edge ingestion operations
+- `shared_services/edge_message_service.py` - Edge message operations
+- `shared_services/edge_note_service.py` - Edge note operations
+- `shared_services/edge_query_service.py` - Edge query operations
+- `shared_services/edge_status_service.py` - Edge status operations
+- `shared_services/handler_utils.py` - Lambda routing, feature gating, lazy service init
 - `shared_services/ingestion_service.py` - Profile data ingestion
+- `shared_services/message_utils.py` - Shared message analysis utilities
+- `shared_services/monetization.py` - Community edition stubs (all features enabled)
 - `shared_services/observability.py` - Correlation context and logging
+- `shared_services/ragstack_client.py` - RAGStack GraphQL client with circuit breaker + retry
+- `shared_services/ragstack_proxy_service.py` - RAGStack search, ingest, and status proxy
+- `shared_services/request_utils.py` - User ID extraction, CORS headers, API response formatting
+- `shared_services/ssm_cache.py` - SSM SecureString parameter caching with TTL
+- `shared_services/websocket_service.py` - WebSocket @connections API helper
 - `errors/` - Shared exception classes (`ServiceError`, `ValidationError`, etc.)
 
 ### RAGStack-Lambda (separate nested stack)

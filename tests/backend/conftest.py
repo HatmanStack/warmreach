@@ -41,6 +41,14 @@ def load_lambda_module(lambda_name: str):
     """
     Load a Lambda module with proper isolation to avoid caching conflicts.
 
+    Lambda packaging places shared services (errors/, shared_services/) in a
+    Lambda layer at a separate path from the handler code. In the repo, these
+    live in ``backend/lambdas/shared/python/``. This function temporarily
+    rewrites ``sys.path`` to simulate that structure: shared modules are found
+    first, then lambda-specific code. After loading, the original path is
+    restored. ``sys.modules`` is also cleared for known shared prefixes to
+    prevent stale cached imports from interfering across test files.
+
     Args:
         lambda_name: Name of the Lambda directory (e.g., 'dynamodb-api', 'edge-processing')
 

@@ -55,7 +55,7 @@ class EdgeMessageService(BaseService):
             return {'success': True, 'message': 'Message added successfully', 'profileId': profile_id_b64}
 
         except ClientError as e:
-            logger.error(f'DynamoDB error in add_message: {e}')
+            logger.error('DynamoDB error in add_message: %s', e)
             raise ExternalServiceError(
                 message='Failed to add message', service='DynamoDB', original_error=str(e)
             ) from e
@@ -79,7 +79,7 @@ class EdgeMessageService(BaseService):
             return {'success': True, 'messageCount': len(trimmed), 'profileId': profile_id_b64}
 
         except ClientError as e:
-            logger.error(f'DynamoDB error in update_messages: {e}')
+            logger.error('DynamoDB error in update_messages: %s', e)
             raise ExternalServiceError(
                 message='Failed to update messages', service='DynamoDB', original_error=str(e)
             ) from e
@@ -100,7 +100,7 @@ class EdgeMessageService(BaseService):
             return {'success': True, 'messages': formatted_messages, 'count': len(formatted_messages)}
 
         except ClientError as e:
-            logger.error(f'DynamoDB error in get_messages: {e}')
+            logger.error('DynamoDB error in get_messages: %s', e)
             raise ExternalServiceError(
                 message='Failed to get messages', service='DynamoDB', original_error=str(e)
             ) from e
@@ -142,7 +142,7 @@ class EdgeMessageService(BaseService):
                 formatted.append(formatted_msg)
 
             except Exception as e:
-                logger.warning(f'Error formatting message {i}: {e}')
+                logger.warning('Error formatting message %s: %s', i, e)
                 formatted.append(
                     {
                         'id': f'{profile_id}_{i}_error',

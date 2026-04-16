@@ -71,4 +71,4 @@ def write_activity(
         table.put_item(Item=item)
 
     except Exception as e:
-        logger.warning(f'Failed to write activity record: {e}')
+        logger.warning('Failed to write activity record: %s', e)

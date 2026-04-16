@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { MessageModal } from './MessageModal';
 import type { Connection } from '@/types';
@@ -151,5 +151,40 @@ describe('MessageModal', () => {
     render(<MessageModal {...defaultProps} isOpen={false} />);
 
     expect(screen.queryByText(/john smith/i)).not.toBeInTheDocument();
+  });
+
+  it('should call onSendMessage when send button is clicked', () => {
+    const onSendMessage = vi.fn();
+    render(<MessageModal {...defaultProps} onSendMessage={onSendMessage} />);
+
+    const textarea = screen.getByPlaceholderText(/type your message/i);
+    fireEvent.change(textarea, { target: { value: 'Hello back' } });
+
+    const sendBtn = screen.getByRole('button', { name: /send message/i });
+    fireEvent.click(sendBtn);
+
+    expect(onSendMessage).toHaveBeenCalledWith('Hello back');
+  });
+
+  it('should handle pre-populated message', () => {
+    render(<MessageModal {...defaultProps} prePopulatedMessage="AI generated content" />);
+
+    const textarea = screen.getByPlaceholderText(/type your message/i);
+    expect(textarea).toHaveValue('AI generated content');
+  });
+
+  it('should handle keyboard shortcuts', () => {
+    const mockApprove = vi.fn();
+    render(
+      <MessageModal
+        {...defaultProps}
+        showGenerationControls={true}
+        onApproveAndNext={mockApprove}
+        onSkipConnection={vi.fn()}
+      />
+    );
+
+    fireEvent.keyDown(document, { key: 'Enter', ctrlKey: true });
+    expect(mockApprove).toHaveBeenCalled();
   });
 });

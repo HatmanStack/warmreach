@@ -93,7 +93,7 @@ class WebSocketService:
         except ClientError as e:
             code = e.response['Error']['Code']
             if code in ('GoneException', '410'):
-                logger.info(f'Connection {connection_id} is gone, cleaning up')
+                logger.info('Connection %s is gone, cleaning up', connection_id)
                 self.delete_connection(connection_id)
                 return False
             raise

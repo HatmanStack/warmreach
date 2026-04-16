@@ -92,7 +92,7 @@ class IngestionService:
 
         try:
             # Get presigned upload URL
-            logger.info(f'Creating upload URL for profile {profile_id}')
+            logger.info('Creating upload URL for profile %s', profile_id)
             upload_data = self.client.create_upload_url(filename)
 
             upload_url = upload_data['uploadUrl']
@@ -103,10 +103,10 @@ class IngestionService:
             content_with_metadata = self._prepare_content(markdown_content, metadata, profile_id)
 
             # Upload to S3
-            logger.info(f'Uploading profile {profile_id} to S3')
+            logger.info('Uploading profile %s to S3', profile_id)
             self._upload_to_s3(upload_url, fields, content_with_metadata)
 
-            logger.info(f'Profile {profile_id} submitted for ingestion')
+            logger.info('Profile %s submitted for ingestion', profile_id)
             return {
                 'status': 'submitted',
                 'documentId': document_id,
@@ -115,7 +115,7 @@ class IngestionService:
             }
 
         except RAGStackError as e:
-            logger.error(f'RAGStack error during ingestion: {e}')
+            logger.error('RAGStack error during ingestion: %s', e)
             return {
                 'status': 'failed',
                 'documentId': None,
@@ -123,7 +123,7 @@ class IngestionService:
                 'error': str(e),
             }
         except UploadError as e:
-            logger.error(f'Upload error during ingestion: {e}')
+            logger.error('Upload error during ingestion: %s', e)
             return {
                 'status': 'failed',
                 'documentId': None,
@@ -131,7 +131,7 @@ class IngestionService:
                 'error': str(e),
             }
         except Exception as e:
-            logger.error(f'Unexpected error during ingestion: {e}')
+            logger.error('Unexpected error during ingestion: %s', e)
             return {
                 'status': 'failed',
                 'documentId': None,
@@ -224,21 +224,21 @@ class IngestionService:
 
                 # Non-success response
                 last_error = UploadError(f'S3 upload failed with status {response.status_code}: {response.text[:200]}')
-                logger.warning(f'Upload attempt {attempt + 1} failed: {last_error}')
+                logger.warning('Upload attempt %s failed: %s', attempt + 1, last_error)
 
             except requests.exceptions.Timeout:
                 last_error = UploadError('S3 upload timeout')
-                logger.warning(f'Upload timeout on attempt {attempt + 1}')
+                logger.warning('Upload timeout on attempt %s', attempt + 1)
 
             except requests.exceptions.RequestException as e:
                 last_error = UploadError(f'S3 upload request failed: {e}')
-                logger.warning(f'Upload error on attempt {attempt + 1}: {e}')
+                logger.warning('Upload error on attempt %s: %s', attempt + 1, e)
 
             # WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
             # Exponential backoff before retry
             if attempt < self.max_upload_retries - 1:
                 delay = self.upload_retry_delay * (2**attempt)
-                logger.info(f'Retrying upload in {delay} seconds...')
+                logger.info('Retrying upload in %s seconds...', delay)
                 time.sleep(delay)
 
         # All retries exhausted

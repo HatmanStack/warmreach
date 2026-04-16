@@ -36,7 +36,14 @@ class InMemoryStore:
 class DynamoDBStore:
     """DynamoDB-backed storage for distributed circuit breaker state."""
 
-    def __init__(self, table, ttl_seconds: int = 3600):
+    def __init__(self, table, ttl_seconds: int = 86400):
+        """Initialize DynamoDB-backed circuit breaker store.
+
+        Args:
+            table: DynamoDB table resource.
+            ttl_seconds: TTL for state records. Default 24h. A shorter TTL risks
+                silent reset to closed while a downstream service is still failing.
+        """
         self.table = table
         self.ttl_seconds = ttl_seconds
 
@@ -45,7 +52,7 @@ class DynamoDBStore:
             resp = self.table.get_item(Key={'PK': f'CB#{service_name}', 'SK': 'STATE'})
             return resp.get('Item', {})
         except Exception as e:
-            logger.warning(f'Failed to get circuit breaker state from DynamoDB for {service_name}: {e}')
+            logger.warning('Failed to get circuit breaker state from DynamoDB for %s: %s', service_name, e)
             # Fallback to empty state which defaults to 'closed'
             return {}
 
@@ -59,7 +66,7 @@ class DynamoDBStore:
             }
             self.table.put_item(Item=item)
         except Exception as e:
-            logger.error(f'Failed to set circuit breaker state in DynamoDB: {e}')
+            logger.error('Failed to set circuit breaker state in DynamoDB: %s', e)
 
 
 class CachedDynamoDBStore:
@@ -157,13 +164,20 @@ class CircuitBreaker:
         if state == 'open' and self._should_attempt_recovery(last_failure_time):
             state = 'half_open'
             self._update_local_state(state=state, half_open_calls=0)
-            logger.info(f"Circuit breaker '{self.service_name}': open -> half_open")
+            logger.info("Circuit breaker '%s': open -> half_open", self.service_name)
         return state
 
     def call(self, func: Callable, *args: Any, **kwargs: Any) -> Any:
         """Execute function through the circuit breaker."""
-        current_state = self.state  # Trigger transition check and potential write
-        data = self._get_local_state()  # Read post-transition state
+        data = self._get_local_state()
+        current_state = data['state']
+
+        # Check open -> half_open transition inline (mirrors .state property logic)
+        if current_state == 'open' and self._should_attempt_recovery(data['last_failure_time']):
+            current_state = 'half_open'
+            self._update_local_state(state=current_state, half_open_calls=0)
+            data = self._get_local_state()
+            logger.info("Circuit breaker '%s': open -> half_open", self.service_name)
 
         if current_state == 'open':
             remaining = self.recovery_timeout - (time.time() - (data['last_failure_time'] or 0))
@@ -187,7 +201,7 @@ class CircuitBreaker:
         """Reset failure tracking on successful call."""
         data = self._get_local_state()
         if data['state'] == 'half_open':
-            logger.info(f"Circuit breaker '{self.service_name}': half_open -> closed (recovery successful)")
+            logger.info("Circuit breaker '%s': half_open -> closed (recovery successful)", self.service_name)
         self._update_local_state(state='closed', failure_count=0, last_failure_time=None, half_open_calls=0)
 
     def on_failure(self, error: Exception) -> None:
@@ -197,12 +211,14 @@ class CircuitBreaker:
         now = time.time()
 
         if data['state'] == 'half_open':
-            logger.warning(f"Circuit breaker '{self.service_name}': half_open -> open (recovery failed: {error})")
+            logger.warning("Circuit breaker '%s': half_open -> open (recovery failed: %s)", self.service_name, error)
             self._update_local_state(state='open', failure_count=new_count, last_failure_time=now)
         elif new_count >= self.failure_threshold:
             logger.warning(
-                f"Circuit breaker '{self.service_name}': closed -> open "
-                f'(threshold {self.failure_threshold} reached: {error})'
+                "Circuit breaker '%s': closed -> open (threshold %s reached: %s)",
+                self.service_name,
+                self.failure_threshold,
+                error,
             )
             self._update_local_state(state='open', failure_count=new_count, last_failure_time=now)
         else:

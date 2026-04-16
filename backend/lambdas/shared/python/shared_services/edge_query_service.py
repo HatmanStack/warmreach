@@ -54,7 +54,7 @@ class EdgeQueryService(BaseService):
             return {'success': True, 'connections': connections, 'count': len(connections)}
 
         except ClientError as e:
-            logger.error(f'DynamoDB error in get_connections_by_status: {e}')
+            logger.error('DynamoDB error in get_connections_by_status: %s', e)
             raise ExternalServiceError(
                 message='Failed to get connections', service='DynamoDB', original_error=str(e)
             ) from e
@@ -83,7 +83,7 @@ class EdgeQueryService(BaseService):
             }
 
         except ClientError as e:
-            logger.error(f'DynamoDB error in check_exists: {e}')
+            logger.error('DynamoDB error in check_exists: %s', e)
             raise ExternalServiceError(
                 message='Failed to check edge existence', service='DynamoDB', original_error=str(e)
             ) from e
@@ -98,7 +98,7 @@ class EdgeQueryService(BaseService):
             response = self.table.get_item(Key={'PK': f'PROFILE#{profile_id}', 'SK': '#METADATA'})
             return response.get('Item', {})
         except Exception as e:
-            logger.warning(f'Failed to fetch profile metadata: {e}')
+            logger.warning('Failed to fetch profile metadata: %s', e)
             return {}
 
     def batch_get_profile_metadata(self, profile_ids: list[str]) -> dict[str, ProfileMetadataItem]:
@@ -132,7 +132,7 @@ class EdgeQueryService(BaseService):
                         results[pid] = item
                     unprocessed = response.get('UnprocessedKeys', {})
             except Exception as e:
-                logger.warning(f'Batch profile metadata fetch failed for chunk: {e}')
+                logger.warning('Batch profile metadata fetch failed for chunk: %s', e)
         return results
 
     def _query_all_user_edges(self, user_id: str) -> list[dict]:
@@ -195,7 +195,7 @@ class EdgeQueryService(BaseService):
             'messages': message_count,
             'date_added': edge_item.get('addedAt', ''),
             'linkedin_url': profile_data.get('originalUrl', ''),
-            'tags': profile_data.get('skills', []) if isinstance(profile_data.get('skills'), list) else [],
+            'tags': edge_item.get('tags', []),
             'last_action_summary': edge_item.get('lastActionSummary', ''),
             'status': edge_item.get('status', ''),
             'conversion_likelihood': conversion_likelihood,

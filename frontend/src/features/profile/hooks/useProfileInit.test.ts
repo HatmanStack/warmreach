@@ -81,6 +81,61 @@ describe('useProfileInit', () => {
     });
   });
 
+  describe('status transitions', () => {
+    it('should handle successful completion', () => {
+      mockStatus = 'completed';
+      mockResult = { success: true, message: 'Done' };
+
+      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
+
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Success' }));
+      expect(result.current.initializationMessage).toBe('Done');
+    });
+
+    it('should invoke onSuccess callback on successful completion', async () => {
+      const { result, rerender } = renderHook(() => useProfileInit(), {
+        wrapper: createWrapper(),
+      });
+
+      const onSuccess = vi.fn();
+      await act(async () => {
+        await result.current.initializeProfile(onSuccess);
+      });
+
+      // Simulate completion
+      mockStatus = 'completed';
+      mockResult = { success: true };
+      rerender();
+
+      expect(onSuccess).toHaveBeenCalled();
+    });
+
+    it('should handle healing status', () => {
+      mockStatus = 'completed';
+      mockResult = { healing: true, message: 'Healing...' };
+
+      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
+
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Processing' }));
+      expect(result.current.initializationMessage).toBe('Healing...');
+    });
+
+    it('should handle failure', () => {
+      mockStatus = 'failed';
+      mockError = 'Dispatch failed';
+
+      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
+
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Error',
+          variant: 'destructive',
+        })
+      );
+      expect(result.current.initializationError).toBe('Dispatch failed');
+    });
+  });
+
   describe('clearMessages', () => {
     it('should reset message and error', () => {
       const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });

@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react-swc'
 import path from "path"
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   // Use root .env file for all environment variables
   envDir: '..',
@@ -17,7 +17,8 @@ export default defineConfig({
   },
   define: {
     global: 'globalThis',
-    'process.env': 'import.meta.env'
+    'process.env': 'import.meta.env',
+    ...(mode === 'production' ? { 'import.meta.env.VITE_MOCK_MODE': JSON.stringify('false') } : {}),
   },
   build: {
     rollupOptions: {
@@ -50,4 +51,4 @@ export default defineConfig({
     include: ['src/**/*.test.{js,ts,tsx}'],
     exclude: ['**/node_modules/**'],
   },
-})
+}))

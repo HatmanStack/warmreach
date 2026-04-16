@@ -42,13 +42,13 @@ def lambda_handler(event, context):
     body = json.loads(event.get('body', '{}'))
     action = body.get('action', '')
 
-    logger.info(f'Message from {connection_id}: action={action}')
+    logger.info('Message from %s: action=%s', connection_id, action)
 
     handler = ACTION_HANDLERS.get(action)
     if handler:
         return handler(connection_id, body)
 
-    logger.warning(f'Unknown action: {action}')
+    logger.warning('Unknown action: %s', action)
     return {'statusCode': 200, 'body': json.dumps({'error': f'Unknown action: {action}'})}
 
 

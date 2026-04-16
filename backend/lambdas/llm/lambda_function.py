@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import time
 
 import boto3
 from openai import OpenAI
@@ -34,14 +35,34 @@ def _get_openai_client():
 
 # Clients
 OPENAI_TIMEOUT = int(os.environ.get('OPENAI_TIMEOUT', '60'))  # Optional: defaults to 60s
-bedrock_client = boto3.client('bedrock-runtime')
+_bedrock_client = None
+
+
+def _get_bedrock_client():
+    global _bedrock_client
+    if _bedrock_client is None:
+        _bedrock_client = boto3.client('bedrock-runtime')
+    return _bedrock_client
 # Optional: LLM Lambda can serve AI-only operations (generate, research) without DynamoDB.
 # Quota enforcement and usage tracking require DynamoDB but are skipped when table is None.
 table_name = os.environ.get('DYNAMODB_TABLE_NAME')
 table = boto3.resource('dynamodb').Table(table_name) if table_name else None
 
-# LLMService initialized lazily on first invocation
+# LLMService initialized lazily on first invocation with TTL refresh
 _llm_service = None
+_llm_service_created_at: float = 0
+_LLM_SERVICE_TTL = 300  # 5 minutes
+
+
+def _get_llm_service():
+    """Return cached LLMService, recreating after TTL to pick up rotated keys."""
+    global _llm_service, _llm_service_created_at
+    now = time.time()
+    if _llm_service is None or (now - _llm_service_created_at) > _LLM_SERVICE_TTL:
+        openai_client = _get_openai_client()
+        _llm_service = LLMService(openai_client=openai_client, bedrock_client=_get_bedrock_client(), table=table)
+        _llm_service_created_at = now
+    return _llm_service
 
 OPS = {
     'generate_ideas',
@@ -160,7 +181,6 @@ HANDLERS = {
 
 def lambda_handler(event, _context):
     """Route LLM operations to LLMService."""
-    global _llm_service
     try:
         setup_correlation_context(event, _context)
         method = event.get('requestContext', {}).get('http', {}).get('method', '')
@@ -227,14 +247,12 @@ def lambda_handler(event, _context):
                     logger.exception('Feature flag check failed for %s, denying request', feature_to_check)
                     return api_response(503, {'error': 'Feature availability check failed'}, event)
 
-        # Lazy-init LLMService with SSM-fetched OpenAI key
-        if _llm_service is None:
-            openai_client = _get_openai_client()
-            _llm_service = LLMService(openai_client=openai_client, bedrock_client=bedrock_client, table=table)
+        # Lazy-init LLMService with TTL refresh for key rotation
+        svc = _get_llm_service()
 
         # Dispatch via routing table
         handler = HANDLERS[op]
-        result = handler(body, user_id, _llm_service)
+        result = handler(body, user_id, svc)
 
         # If the handler returned an api_response (e.g. 400 validation error), pass it through
         if isinstance(result, dict) and 'statusCode' in result:

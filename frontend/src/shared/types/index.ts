@@ -43,6 +43,42 @@ export type AsyncStatus<T> =
   | { status: 'success'; data: T }
   | { status: 'error'; error: Error };
 // =============================================================================
+// TIER AND MONETIZATION INTERFACES
+// =============================================================================
+
+/**
+ * Quota limits for a subscription tier.
+ * Keys are operation identifiers; values are numeric limits.
+ */
+export interface TierQuotas {
+  daily_linkedin_interactions?: number;
+  hourly_linkedin_interactions?: number;
+  monthly_linkedin_interactions?: number;
+  daily_messages?: number;
+  monthly_messages?: number;
+  [key: string]: number | undefined;
+}
+
+/**
+ * Rate limit configuration for a subscription tier.
+ * Keys are rate limit identifiers; values are numeric limits.
+ */
+export interface TierRateLimits {
+  [key: string]: number | undefined;
+}
+
+/**
+ * Tier information returned by the get_tier_info backend operation.
+ * Contains the user's current tier, enabled features, quota limits, and rate limits.
+ */
+export interface TierInfo {
+  tier: string;
+  features: Record<string, boolean>;
+  quotas: TierQuotas;
+  rateLimits: TierRateLimits;
+}
+
+// =============================================================================
 // CORE DATA INTERFACES
 // =============================================================================
 

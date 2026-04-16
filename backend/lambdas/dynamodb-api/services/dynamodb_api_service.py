@@ -2,7 +2,6 @@
 
 import ipaddress
 import logging
-import socket
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -117,7 +116,7 @@ class DynamoDBApiService(BaseService):
         for field in allowed_profile_fields:
             if field in body and body[field] is not None:
                 if not self.validate_profile_field(field, body[field]):
-                    logger.warning(f'Invalid value for field: {field}')
+                    logger.warning('Invalid value for field: %s', field)
                     return {'error': f'Invalid value for field: {field}'}
                 profile_updates[field] = body[field]
 
@@ -201,7 +200,7 @@ class DynamoDBApiService(BaseService):
         self.table.put_item(Item=profile_metadata)
 
         logger.info(
-            f'Created/updated bad contact profile metadata (evaluated=True): {profile_id_b64} for user: {user_id}'
+            'Created/updated bad contact profile metadata (evaluated=True): %s for user: %s', profile_id_b64, user_id
         )
 
         return {
@@ -276,7 +275,7 @@ class DynamoDBApiService(BaseService):
         }
         validator = validators.get(field)
         if not validator:
-            logger.warning(f'Rejected unknown profile field: {field}')
+            logger.warning('Rejected unknown profile field: %s', field)
             return False
         return validator(value)
 
@@ -287,7 +286,7 @@ class DynamoDBApiService(BaseService):
             item = response.get('Item')
             return {'count': item.get('count', 0) if item else 0}
         except ClientError as e:
-            logger.error(f'Error getting daily scrape count: {e}')
+            logger.error('Error getting daily scrape count: %s', e)
             return {'count': 0}
 
     def increment_daily_scrape_count(self, user_id: str, date: str) -> dict[str, Any]:
@@ -304,7 +303,7 @@ class DynamoDBApiService(BaseService):
             new_count = int(response.get('Attributes', {}).get('count', 1))
             return {'count': new_count}
         except ClientError as e:
-            logger.error(f'Error incrementing daily scrape count: {e}')
+            logger.error('Error incrementing daily scrape count: %s', e)
             raise
 
     CHECKPOINT_ALLOWED_KEYS = frozenset(
@@ -335,7 +334,7 @@ class DynamoDBApiService(BaseService):
             checkpoint = {k: v for k, v in item.items() if k not in ('PK', 'SK', 'ttl')}
             return {'checkpoint': checkpoint}
         except ClientError as e:
-            logger.error(f'Error getting import checkpoint: {e}')
+            logger.error('Error getting import checkpoint: %s', e)
             return {}
 
     def clear_import_checkpoint(self, user_id: str) -> dict[str, Any]:
@@ -344,11 +343,18 @@ class DynamoDBApiService(BaseService):
             self.table.delete_item(Key={'PK': f'USER#{user_id}', 'SK': '#IMPORT_CHECKPOINT'})
             return {'success': True}
         except ClientError as e:
-            logger.error(f'Error clearing import checkpoint: {e}')
+            logger.error('Error clearing import checkpoint: %s', e)
             raise
 
+    # Hostnames that should be rejected for SSRF prevention
+    _RESERVED_HOSTNAME_SUFFIXES = ('.local', '.internal', '.localhost')
+    _RESERVED_HOSTNAMES = {'localhost'}
+
     def _is_safe_url(self, url: str) -> bool:
-        """Validate URL is safe (HTTPS, non-private IP, valid hostname)."""
+        """Validate URL is safe (HTTPS, non-private IP, valid hostname).
+
+        Uses parse-only validation without DNS resolution (ADR-1).
+        """
         try:
             parsed = urlparse(url)
             if parsed.scheme != 'https':
@@ -356,15 +362,21 @@ class DynamoDBApiService(BaseService):
             hostname = parsed.hostname
             if not hostname:
                 return False
-            try:
-                addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-                for _, _, _, _, sockaddr in addr_info:
-                    ip = ipaddress.ip_address(sockaddr[0])
-                    if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
-                        return False
-            except (socket.gaierror, ValueError) as e:
-                logger.warning(f"DNS resolution failed for hostname '{hostname}': {e}")
+
+            # Reject reserved hostnames
+            if hostname in self._RESERVED_HOSTNAMES:
                 return False
+            if any(hostname.endswith(suffix) for suffix in self._RESERVED_HOSTNAME_SUFFIXES):
+                return False
+
+            # If hostname is an IP literal, check for private/reserved ranges
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+                    return False
+            except ValueError:
+                pass  # Not an IP literal, hostname is fine
+
             return True
         except (ValueError, OSError) as e:
             logger.warning('URL safety check failed for URL: %s', e)

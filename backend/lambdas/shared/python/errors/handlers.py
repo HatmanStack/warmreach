@@ -74,13 +74,16 @@ def handle_service_error(exception: Exception, operation: str, cors_headers: dic
     """
     if isinstance(exception, ServiceError):
         logger.warning(
-            f'Service error in {operation}: {exception.code} - {exception.message}',
+            'Service error in %s: %s - %s',
+            operation,
+            exception.code,
+            exception.message,
             extra={'error_details': exception.details},
         )
         return build_error_response(exception, cors_headers)
 
     # Unexpected error - log full traceback
-    logger.exception(f'Unexpected error in {operation}: {exception}')
+    logger.exception('Unexpected error in %s: %s', operation, exception)
 
     # Return generic error to client
     generic_error = ServiceError(message='An internal error occurred', code='INTERNAL_ERROR')

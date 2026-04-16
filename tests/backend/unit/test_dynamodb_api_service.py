@@ -1,6 +1,5 @@
 """Unit tests for DynamoDBApiService class."""
 import base64
-import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -137,8 +136,7 @@ class TestUpdateUserSettings:
         assert result == {'success': True}
         mock_table.update_item.assert_not_called()
 
-    @patch('socket.getaddrinfo')
-    def test_url_safety_validation(self, mock_getaddrinfo):
+    def test_url_safety_validation(self):
         """profile_url must be a safe HTTPS URL."""
         mock_table = MagicMock()
         service = DynamoDBApiService(table=mock_table)
@@ -426,8 +424,7 @@ class TestValidateProfileField:
         assert service.validate_profile_field('interests', 'tech, music') is True
         assert service.validate_profile_field('interests', ['tech', 'music']) is True
 
-    @patch('socket.getaddrinfo')
-    def test_profile_url_requires_https(self, mock_getaddrinfo):
+    def test_profile_url_requires_https(self):
         service = DynamoDBApiService(table=MagicMock())
         assert service.validate_profile_field('profile_url', 'http://example.com') is False
 
@@ -438,25 +435,73 @@ class TestValidateProfileField:
 
 
 class TestIsSafeUrl:
-    """Tests for _is_safe_url SSRF protection."""
+    """Tests for _is_safe_url SSRF protection (parse-only, no DNS)."""
 
-    @patch('socket.getaddrinfo', side_effect=socket.gaierror('DNS lookup failed'))
-    def test_dns_gaierror_returns_false(self, _mock_dns):
-        """socket.gaierror during DNS resolution returns False (no raise)."""
+    def test_valid_https_url(self):
+        """Valid HTTPS URL is accepted."""
         service = DynamoDBApiService(table=MagicMock())
-        assert service._is_safe_url('https://nonexistent.invalid') is False
+        assert service._is_safe_url('https://linkedin.com/in/foo') is True
 
-    @patch('socket.getaddrinfo', side_effect=OSError('Network unreachable'))
-    def test_os_error_returns_false(self, _mock_dns):
-        """OSError during DNS resolution returns False (no raise)."""
+    def test_http_rejected(self):
+        """Non-HTTPS scheme is rejected."""
         service = DynamoDBApiService(table=MagicMock())
-        assert service._is_safe_url('https://unreachable.example') is False
+        assert service._is_safe_url('http://linkedin.com/in/foo') is False
 
-    def test_malformed_url_returns_false(self):
-        """Completely malformed URL returns False (outer except catches parse error)."""
+    def test_localhost_rejected(self):
+        """Localhost hostnames are rejected."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://localhost/') is False
+
+    def test_loopback_ip_rejected(self):
+        """Loopback IP 127.0.0.1 is rejected."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://127.0.0.1/') is False
+
+    def test_private_10_rejected(self):
+        """Private 10.x.x.x IP is rejected."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://10.0.0.1/') is False
+
+    def test_private_192_168_rejected(self):
+        """Private 192.168.x.x IP is rejected."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://192.168.1.1/') is False
+
+    def test_link_local_rejected(self):
+        """AWS metadata endpoint (link-local) is rejected."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://169.254.169.254/') is False
+
+    def test_ipv6_loopback_rejected(self):
+        """IPv6 loopback ::1 is rejected."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://[::1]/') is False
+
+    def test_empty_string_returns_false(self):
+        """Empty string returns False."""
         service = DynamoDBApiService(table=MagicMock())
         assert service._is_safe_url('') is False
+
+    def test_no_hostname_returns_false(self):
+        """URL without hostname returns False."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://') is False
         assert service._is_safe_url('not-a-url') is False
+
+    def test_reserved_hostnames_rejected(self):
+        """Hostnames ending in .local, .internal, .localhost are rejected."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://myhost.local/') is False
+        assert service._is_safe_url('https://myhost.internal/') is False
+        assert service._is_safe_url('https://myhost.localhost/') is False
+
+    def test_private_172_rejected(self):
+        """Private 172.16-31.x.x IPs are rejected."""
+        service = DynamoDBApiService(table=MagicMock())
+        assert service._is_safe_url('https://172.16.0.1/') is False
+        assert service._is_safe_url('https://172.31.255.255/') is False
+        # 172.32.x is NOT private
+        assert service._is_safe_url('https://172.32.0.1/') is True
 
 
 class TestDailyScrapeCount:

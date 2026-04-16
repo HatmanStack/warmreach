@@ -209,18 +209,7 @@ def lambda_handler(event: dict[str, Any], context) -> dict[str, Any]:
             400,
             {
                 'error': f'Unsupported operation: {operation}',
-                'supported_operations': [
-                    'create',
-                    'get_details',
-                    'get_user_settings',
-                    'update_user_settings',
-                    'update_user_profile',
-                    'update_profile_picture',
-                    'increment_daily_scrape_count',
-                    'save_import_checkpoint',
-                    'clear_import_checkpoint',
-                    'complete_onboarding_step',
-                ],
+                'supported_operations': list(POST_HANDLERS.keys()),
             },
             event,
         )

@@ -124,7 +124,7 @@ class EdgeStatusService(BaseService):
 
         except ClientError as e:
             if e.response.get('Error', {}).get('Code') != 'TransactionCanceledException':
-                logger.error(f'DynamoDB error in upsert_status: {e}')
+                logger.error('DynamoDB error in upsert_status: %s', e)
             raise ExternalServiceError(
                 message='Failed to upsert edge', service='DynamoDB', original_error=str(e)
             ) from e

@@ -186,15 +186,15 @@ class RAGStackClient:
 
                 except requests.exceptions.Timeout as e:
                     last_error = RAGStackNetworkError(f'Request timeout: {e}')
-                    logger.warning(f'Timeout on attempt {attempt + 1}/{self.max_retries}')
+                    logger.warning('Timeout on attempt %s/%s', attempt + 1, self.max_retries)
 
                 except requests.exceptions.ConnectionError as e:
                     last_error = RAGStackNetworkError(f'Connection error: {e}')
-                    logger.warning(f'Connection error on attempt {attempt + 1}/{self.max_retries}')
+                    logger.warning('Connection error on attempt %s/%s', attempt + 1, self.max_retries)
 
                 except requests.exceptions.RequestException as e:
                     last_error = RAGStackNetworkError(f'Request failed: {e}')
-                    logger.warning(f'Request error on attempt {attempt + 1}/{self.max_retries}')
+                    logger.warning('Request error on attempt %s/%s', attempt + 1, self.max_retries)
 
                 except (RAGStackAuthError, RAGStackGraphQLError):
                     # Don't retry auth or GraphQL errors
@@ -202,13 +202,13 @@ class RAGStackClient:
 
                 except json.JSONDecodeError as e:
                     last_error = RAGStackError(f'Invalid JSON response: {e}')
-                    logger.warning(f'JSON decode error on attempt {attempt + 1}/{self.max_retries}')
+                    logger.warning('JSON decode error on attempt %s/%s', attempt + 1, self.max_retries)
 
                 # WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
                 # Exponential backoff before retry
                 if attempt < self.max_retries - 1:
                     delay = self.retry_delay * (2**attempt)
-                    logger.info(f'Retrying in {delay} seconds...')
+                    logger.info('Retrying in %s seconds...', delay)
                     time.sleep(delay)
 
             # All retries exhausted

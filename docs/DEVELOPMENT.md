@@ -207,6 +207,24 @@ npm run lint:client
 npm run lint:backend
 ```
 
+## Working with Sync Overlays
+
+WarmReach Pro syncs one-way to the [community edition](https://github.com/HatmanStack/warmreach) via `.sync/sync.sh`. When modifying files, check whether they have a sync overlay:
+
+1. Open `.sync/config.json` and search `overlay_mappings` for the file path
+2. Three outcomes:
+   - **File has an overlay** (`overlay_mappings` entry exists): Update BOTH the source file AND the corresponding overlay in `.sync/overlays/`
+   - **File is excluded** (listed in `exclude_paths`): No overlay to update — the file never reaches the community repo
+   - **File syncs directly** (not in either list): Changes flow automatically to the community repo via rsync
+
+Common overlay patterns:
+- Lambda handlers: community overlay strips billing/tier gating
+- `monetization.py`: swapped for `monetization_stubs.py` (no-op)
+- Frontend components: pro features stubbed out
+- Docs: "Available in WarmReach Pro" notes added
+
+Run `.sync/sync.sh --dry-run` to preview what would change in the community repo.
+
 ## Project Structure
 
 -   `frontend/`: React/Vite frontend application

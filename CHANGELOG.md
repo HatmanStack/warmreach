@@ -5,6 +5,54 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-04-16
+
+### Fixed
+
+- **Security:** Replace `socket.getaddrinfo` DNS resolution in URL validation with parse-only SSRF check — eliminates Lambda thread blocking on DNS failures
+- **Security:** Fix Redis rate limiter middleware bypass — `next()` was called after 429 response, allowing rate-limited requests through
+- **Security:** Add optimistic concurrency (ConditionExpression) to EdgeOpportunityService tag/untag/stage operations — prevents duplicate entries from concurrent requests
+- **Security:** Strengthen profile_id validation with proper base64url regex (`^[A-Za-z0-9_\-]+=*$`)
+- **Security:** Derive electron-store encryption key from machine-specific hash instead of static string
+- **Backend:** Fix PAID_TIER_FEATURES missing 17 feature flags — new paid subscribers now receive all 27 flags (goal_intelligence, comment_concierge, portfolio_metrics, etc.)
+- **Backend:** Cap notification `mark_all_read` at 500 items with per-item error handling to prevent Lambda timeout
+- **Backend:** Lazy-init Bedrock client in LLM Lambda — eliminates unnecessary cold-start overhead for OpenAI-only operations
+- **Backend:** Add explicit timeouts to 3 OpenAI `responses.create()` calls outside LLMService (summarize_evidence, goal_intelligence_service)
+- **Backend:** Add 5-minute TTL to cached LLM service for API key rotation support
+- **Backend:** Add ProjectionExpression to analytics dashboard queries — funnel/growth exclude message arrays, engagement uses targeted messages-only projection
+- **Backend:** Eliminate circuit breaker double-read in `call()` — single `_get_local_state()` in common path
+- **Backend:** Cache BillingService in dynamodb-api Lambda instead of per-request instantiation
+- **Backend:** Scope SES IAM policy from `Resource: '*'` to verified sender identity ARN
+- **Backend:** Increase circuit breaker DynamoDB store TTL from 1h to 24h to prevent silent reset
+- **Backend:** Converge `os.environ` access pattern in dynamodb-api to use explicit RuntimeError
+- **Backend:** Deduplicate GoalIntelligenceService construction via shared factory in handler_utils.py
+- **Backend:** Cache OpenAI client in analytics-insights `_handle_generate_checklist` instead of creating fresh client per call
+- **Frontend:** Replace `next-themes` (Next.js library) with native MutationObserver theme hook
+- **Frontend:** Guard `VITE_MOCK_MODE` in production builds via Vite define
+- **Frontend:** Replace unsafe `as unknown as T` cast in httpClient with null guard
+- **Frontend:** Unify TierInfo type from shared types — remove local duplicate in TierContext
+- **Client:** Fix `fileToGenerativePart` blocking `readFileSync` → async `readFile`
+- **Client:** Fix typing pattern `randomInRange` always returning 1.2 for float multipliers — add `randomFloat()`
+- **Client:** Fix graceful shutdown `process.exit(0)` firing before HTTP drain completes
+
+### Added
+
+- **Backend:** `EdgeOpportunityService` — extracted from EdgeDataService facade, completing decomposition
+- **Client:** Full JS→TS migration: 33 source files converted across security, transport, config, and domain layers
+- **Admin:** Test coverage expanded from 4 to 7 files (LoginPage, authService, apiClient)
+- **CI:** Docs lint workflow with markdownlint and lychee link checking
+- **Docs:** Sync overlay development guide in DEVELOPMENT.md
+- **Docs:** 13 missing shared services added to ARCHITECTURE.md and CLAUDE.md tables
+- **Docs:** All API operations documented (19 POST + 2 GET for DynamoDB API, 14 LLM, 5 analytics goal intelligence)
+- **Docs:** DEPLOYMENT.md parameter name corrected (OpenAIApiKeyArn), AlarmNotificationEmail documented
+- **Docs:** Missing env vars added to CONFIGURATION.md (GITHUB_CLIENT_ID/SECRET, VITE_STRIPE_PRO_PRICE_ID, VITE_TELEMETRY_ENDPOINT)
+
+### Changed
+
+- **Backend:** Enable Ruff G004 rule — 148 f-string logging calls converted to lazy `%s` formatting across 35 files
+- **Backend:** `_query_all_edges` accepts optional `projection` and `expression_attribute_names` parameters
+- **Frontend:** `vite.config.ts` uses function form for mode-dependent define
+
 ## [1.12.0] - 2026-04-14
 
 ### Added
