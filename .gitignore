@@ -59,6 +59,7 @@ backend/samconfig.toml
 # Secrets / Keys
 client/.keys/*
 mcp-servers.json
+docs/*.local.md
 
 # IDE Integration
 GEMINI.md
