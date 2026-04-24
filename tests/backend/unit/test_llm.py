@@ -137,35 +137,9 @@ def test_generate_message_missing_profile_returns_400(lambda_context, llm_module
     assert 'connectionProfile' in body['error']
 
 
-def test_quota_exceeded_returns_429(lambda_context, llm_module, mock_services):
-    """When quota service raises QuotaExceededError, return 429."""
-    from errors.exceptions import QuotaExceededError
-
-    mock_services['quota'].report_usage.side_effect = QuotaExceededError(
-        message='Daily limit reached', operation='generate_message'
-    )
-    event = {
-        'body': json.dumps({
-            'operation': 'generate_message',
-            'conversationTopic': 'AI trends',
-            'connectionProfile': {'firstName': 'A', 'lastName': 'B', 'position': 'X', 'company': 'Y'},
-        }),
-        'requestContext': {
-            'authorizer': {'claims': {'sub': 'test-user'}}
-        },
-    }
-    mock_svc = MagicMock()
-    mock_svc.generate_message.return_value = {'message': 'Hello'}
-    orig_svc = llm_module._llm_service
-    llm_module._llm_service = mock_svc
-    try:
-        response = llm_module.lambda_handler(event, lambda_context)
-    finally:
-        llm_module._llm_service = orig_svc
-    assert response['statusCode'] == 429
-    body = json.loads(response['body'])
-    assert body['code'] == 'QUOTA_EXCEEDED'
-    assert body['error'] == 'Daily limit reached'
+# test_quota_exceeded_returns_429 removed: community uses monetization_stubs
+# where QuotaService.report_usage is a no-op and never raises QuotaExceededError,
+# so the 429 path cannot be triggered here. Pro keeps the metered test.
 
 
 def test_feature_gated_returns_403(lambda_context, llm_module, mock_services):
@@ -352,34 +326,9 @@ class TestConfigurableOpenAITimeout:
             del os.environ['OPENAI_TIMEOUT']
 
 
-def test_analyze_message_patterns_metered(lambda_context, llm_module, mock_services):
-    """analyze_message_patterns calls report_usage (it's a metered op)."""
-    mock_services['feature_flags'].get_feature_flags.return_value = {
-        'tier': 'paid',
-        'features': {'message_intelligence': True, 'deep_research': True, 'ai_messaging': True},
-        'quotas': {},
-        'rateLimits': {},
-    }
-    event = {
-        'body': json.dumps({
-            'operation': 'analyze_message_patterns',
-            'stats': {'totalOutbound': 5},
-            'sampleMessages': [],
-        }),
-        'requestContext': {
-            'authorizer': {'claims': {'sub': 'test-user'}}
-        },
-    }
-    mock_svc = MagicMock()
-    mock_svc.analyze_message_patterns.return_value = {'insights': [], 'analyzedAt': '2026-01-01'}
-    orig_svc = llm_module._llm_service
-    llm_module._llm_service = mock_svc
-    try:
-        response = llm_module.lambda_handler(event, lambda_context)
-    finally:
-        llm_module._llm_service = orig_svc
-    assert response['statusCode'] == 200
-    mock_services['quota'].report_usage.assert_called_once_with('test-user', 'analyze_message_patterns', count=1)
+# test_analyze_message_patterns_metered removed: community overlays
+# monetization with no-op stubs so report_usage is never called from the
+# handler, even though the operation is metered in pro. Pro keeps the test.
 
 
 # ---- Activity writer instrumentation tests ----
