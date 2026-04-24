@@ -13,13 +13,14 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
       exclude: ['node_modules/', 'src/setupTests.ts', 'src/shared/components/ui/**'],
-      // Floors set at (current coverage - 1 or 2) to catch regressions without
-      // false-failing on small drift. Raise as coverage grows.
+      // Community-edition floors. Pro has more tests and runs higher floors;
+      // do not copy pro numbers here without re-measuring community coverage.
+      // Set at (current - ~2) to catch regressions without false-failing on drift.
       thresholds: {
-        lines: 76,
-        branches: 67,
-        functions: 71,
-        statements: 76,
+        lines: 74,
+        branches: 65,
+        functions: 68,
+        statements: 74,
       },
     },
   },
