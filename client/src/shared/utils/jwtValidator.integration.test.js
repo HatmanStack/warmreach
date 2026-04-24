@@ -141,7 +141,7 @@ describe('JWT validation integration', () => {
     it('prevents use of manipulated token with extended exp', () => {
       // An attacker might try to extend the exp claim
       // Since we don't verify signature, this would actually pass
-      // This is an accepted limitation per ADR-001
+      // This is an accepted limitation per ADR-006
       const manipulatedToken = createTestJwt({
         sub: 'user-123',
         exp: currentTime + 86400 * 365, // 1 year from now
@@ -150,7 +150,7 @@ describe('JWT validation integration', () => {
       const result = validateJwt(manipulatedToken);
 
       // This passes because we don't verify signature
-      // ADR-001 documents this as acceptable tradeoff
+      // ADR-006 documents this as acceptable tradeoff
       expect(result.valid).toBe(true);
     });
 

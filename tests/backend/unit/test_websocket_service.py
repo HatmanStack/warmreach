@@ -164,3 +164,18 @@ class TestWebSocketService:
             Key={'PK': 'WSCONN#conn-1', 'SK': '#METADATA'}
         ).get('Item')
         assert item is None
+
+    def test_disconnect_already_gone_logs_info(self, ws_table, caplog):
+        """GoneException on disconnect must log (not silently swallow)."""
+        import logging
+        from botocore.exceptions import ClientError
+        service = self._make_service(ws_table)
+        service.store_connection('conn-1', 'user-abc', 'browser')
+
+        service.apigw.delete_connection.side_effect = ClientError(
+            {'Error': {'Code': 'GoneException', 'Message': 'Gone'}},
+            'DeleteConnection',
+        )
+        with caplog.at_level(logging.INFO):
+            service.disconnect_connection('conn-1')
+        assert any('conn-1' in r.getMessage() for r in caplog.records)

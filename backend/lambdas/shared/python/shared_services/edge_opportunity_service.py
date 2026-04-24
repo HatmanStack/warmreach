@@ -2,15 +2,30 @@
 
 import logging
 import re
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 from botocore.exceptions import ClientError
-from errors.exceptions import ExternalServiceError, ValidationError
+from errors.exceptions import ExternalServiceError, ServiceError, ValidationError
 from shared_services.base_service import BaseService
 from shared_services.edge_constants import OPPORTUNITY_STAGES
 
 logger = logging.getLogger(__name__)
+
+# Bounded retry on optimistic-concurrency conflicts. Without a ceiling, a
+# contended edge can burn the entire Lambda budget retrying. 3 attempts with
+# 50/100/200ms backoff gives ~350ms worst case, well under the handler SLA.
+MAX_RETRIES = 3
+BACKOFF_BASE_MS = 50
+
+
+class OptimisticConcurrencyError(ServiceError):
+    """Raised after MAX_RETRIES conditional-check failures on the same key."""
+
+    def __init__(self, message: str = 'Concurrent modification could not be resolved', field: str | None = None):
+        details = {'field': field} if field else None
+        super().__init__(message, code='OPTIMISTIC_CONCURRENCY', details=details)
 
 
 class EdgeOpportunityService(BaseService):
@@ -22,6 +37,51 @@ class EdgeOpportunityService(BaseService):
         self._queries_svc = queries_svc
 
     _BASE64URL_RE = re.compile(r'^[A-Za-z0-9_\-]+=*$')
+
+    def _apply_with_retry(self, key: dict, build_update):
+        """Run an optimistic-concurrency update with bounded retry.
+
+        ``build_update`` is a callable that reads the current edge item and
+        returns a 4-tuple ``(update_expr, condition_expr, expr_attr_values, result)``
+        or raises ``ValidationError``. Returns ``result`` on success.
+
+        Retries ``MAX_RETRIES`` times on ``ConditionalCheckFailedException`` with
+        exponential backoff (50ms, 100ms, 200ms). After exhaustion raises
+        ``OptimisticConcurrencyError``.
+        """
+        for attempt in range(MAX_RETRIES):
+            response = self.table.get_item(Key=key)
+            edge = response.get('Item', {})
+            update_expr, condition_expr, expr_values, result = build_update(edge)
+            try:
+                self.table.update_item(
+                    Key=key,
+                    UpdateExpression=update_expr,
+                    ConditionExpression=condition_expr,
+                    ExpressionAttributeValues=expr_values,
+                )
+                return result
+            except ClientError as e:
+                if e.response.get('Error', {}).get('Code') != 'ConditionalCheckFailedException':
+                    raise
+                if attempt == MAX_RETRIES - 1:
+                    logger.warning(
+                        'Optimistic concurrency exhausted for key=%s after %s attempts',
+                        key,
+                        MAX_RETRIES,
+                    )
+                    raise OptimisticConcurrencyError(field='opportunityId') from e
+                backoff_s = (BACKOFF_BASE_MS * (2**attempt)) / 1000
+                logger.info(
+                    'Optimistic concurrency retry %s/%s after %.3fs for key=%s',
+                    attempt + 1,
+                    MAX_RETRIES,
+                    backoff_s,
+                    key,
+                )
+                time.sleep(backoff_s)
+        # Unreachable: loop always returns or raises.
+        raise RuntimeError('apply_with_retry exited without result')
 
     @classmethod
     def _validate_profile_id_encoded(cls, profile_id: str) -> None:
@@ -44,38 +104,31 @@ class EdgeOpportunityService(BaseService):
         if stage not in OPPORTUNITY_STAGES:
             raise ValidationError(f'Invalid stage: {stage}. Must be one of: {", ".join(OPPORTUNITY_STAGES)}')
 
-        try:
-            key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id}'}
-            response = self.table.get_item(Key=key)
-            edge = response.get('Item', {})
-            opps = edge.get('opportunities', [])
-            previous_updated = edge.get('updatedAt')
+        key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id}'}
 
+        def _build(edge):
+            opps = list(edge.get('opportunities', []))
+            previous_updated = edge.get('updatedAt')
             if any(o.get('opportunityId') == opportunity_id for o in opps):
                 raise ValidationError('Connection already tagged to this opportunity', field='opportunityId')
-
             opps.append({'opportunityId': opportunity_id, 'stage': stage})
             current_time = datetime.now(UTC).isoformat()
-
             condition = 'updatedAt = :prev' if previous_updated else 'attribute_not_exists(updatedAt)'
-            condition_values = {':opps': opps, ':updated': current_time}
+            values = {':opps': opps, ':updated': current_time}
             if previous_updated:
-                condition_values[':prev'] = previous_updated
-
-            self.table.update_item(
-                Key=key,
-                UpdateExpression='SET opportunities = :opps, updatedAt = :updated',
-                ConditionExpression=condition,
-                ExpressionAttributeValues=condition_values,
+                values[':prev'] = previous_updated
+            return (
+                'SET opportunities = :opps, updatedAt = :updated',
+                condition,
+                values,
+                {'success': True, 'profileId': profile_id, 'opportunityId': opportunity_id, 'stage': stage},
             )
 
-            return {'success': True, 'profileId': profile_id, 'opportunityId': opportunity_id, 'stage': stage}
-
-        except ValidationError:
+        try:
+            return self._apply_with_retry(key, _build)
+        except (ValidationError, OptimisticConcurrencyError):
             raise
         except ClientError as e:
-            if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
-                raise ValidationError('Concurrent modification detected, please retry', field='opportunityId') from e
             logger.error('DynamoDB error in tag_connection_to_opportunity: %s', e)
             raise ExternalServiceError(
                 message='Failed to tag connection', service='DynamoDB', original_error=str(e)
@@ -87,37 +140,31 @@ class EdgeOpportunityService(BaseService):
         Uses optimistic concurrency to prevent lost updates from concurrent requests.
         """
         self._validate_profile_id_encoded(profile_id)
-        try:
-            key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id}'}
-            response = self.table.get_item(Key=key)
-            edge = response.get('Item', {})
+        key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id}'}
+
+        def _build(edge):
             opps = edge.get('opportunities', [])
             previous_updated = edge.get('updatedAt')
-
             filtered = [o for o in opps if o.get('opportunityId') != opportunity_id]
             if len(filtered) == len(opps):
                 raise ValidationError('Connection not tagged to this opportunity', field='opportunityId')
-
             current_time = datetime.now(UTC).isoformat()
             condition = 'updatedAt = :prev' if previous_updated else 'attribute_not_exists(updatedAt)'
-            condition_values = {':opps': filtered, ':updated': current_time}
+            values = {':opps': filtered, ':updated': current_time}
             if previous_updated:
-                condition_values[':prev'] = previous_updated
-
-            self.table.update_item(
-                Key=key,
-                UpdateExpression='SET opportunities = :opps, updatedAt = :updated',
-                ConditionExpression=condition,
-                ExpressionAttributeValues=condition_values,
+                values[':prev'] = previous_updated
+            return (
+                'SET opportunities = :opps, updatedAt = :updated',
+                condition,
+                values,
+                {'success': True, 'profileId': profile_id, 'opportunityId': opportunity_id},
             )
 
-            return {'success': True, 'profileId': profile_id, 'opportunityId': opportunity_id}
-
-        except ValidationError:
+        try:
+            return self._apply_with_retry(key, _build)
+        except (ValidationError, OptimisticConcurrencyError):
             raise
         except ClientError as e:
-            if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
-                raise ValidationError('Concurrent modification detected, please retry', field='opportunityId') from e
             logger.error('DynamoDB error in untag_connection_from_opportunity: %s', e)
             raise ExternalServiceError(
                 message='Failed to untag connection', service='DynamoDB', original_error=str(e)
@@ -134,49 +181,42 @@ class EdgeOpportunityService(BaseService):
         if new_stage not in OPPORTUNITY_STAGES:
             raise ValidationError(f'Invalid stage: {new_stage}. Must be one of: {", ".join(OPPORTUNITY_STAGES)}')
 
-        try:
-            key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id}'}
-            response = self.table.get_item(Key=key)
-            edge = response.get('Item', {})
-            opps = edge.get('opportunities', [])
-            previous_updated = edge.get('updatedAt')
+        key = {'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id}'}
 
+        def _build(edge):
+            opps = [dict(o) for o in edge.get('opportunities', [])]
+            previous_updated = edge.get('updatedAt')
             old_stage = None
             for opp in opps:
                 if opp.get('opportunityId') == opportunity_id:
                     old_stage = opp['stage']
                     opp['stage'] = new_stage
                     break
-
             if old_stage is None:
                 raise ValidationError('Connection not tagged to this opportunity', field='opportunityId')
-
             current_time = datetime.now(UTC).isoformat()
             condition = 'updatedAt = :prev' if previous_updated else 'attribute_not_exists(updatedAt)'
-            condition_values = {':opps': opps, ':updated': current_time}
+            values = {':opps': opps, ':updated': current_time}
             if previous_updated:
-                condition_values[':prev'] = previous_updated
-
-            self.table.update_item(
-                Key=key,
-                UpdateExpression='SET opportunities = :opps, updatedAt = :updated',
-                ConditionExpression=condition,
-                ExpressionAttributeValues=condition_values,
+                values[':prev'] = previous_updated
+            return (
+                'SET opportunities = :opps, updatedAt = :updated',
+                condition,
+                values,
+                {
+                    'success': True,
+                    'profileId': profile_id,
+                    'opportunityId': opportunity_id,
+                    'oldStage': old_stage,
+                    'newStage': new_stage,
+                },
             )
 
-            return {
-                'success': True,
-                'profileId': profile_id,
-                'opportunityId': opportunity_id,
-                'oldStage': old_stage,
-                'newStage': new_stage,
-            }
-
-        except ValidationError:
+        try:
+            return self._apply_with_retry(key, _build)
+        except (ValidationError, OptimisticConcurrencyError):
             raise
         except ClientError as e:
-            if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
-                raise ValidationError('Concurrent modification detected, please retry', field='opportunityId') from e
             logger.error('DynamoDB error in update_connection_stage: %s', e)
             raise ExternalServiceError(
                 message='Failed to update connection stage', service='DynamoDB', original_error=str(e)

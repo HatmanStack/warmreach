@@ -1,3 +1,4 @@
+import type { Request, Response } from 'express';
 import { logger } from '#utils/logger.js';
 import {
   initializeLinkedInServices,
@@ -10,7 +11,11 @@ import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { profileInitMonitor } from '../utils/profileInitMonitor.js';
 
 export class ProfileInitController {
-  async performProfileInit(req: any, res: any, opts: Record<string, any> = {}) {
+  async performProfileInit(
+    req: Request,
+    res: Response,
+    opts: Record<string, unknown> = {}
+  ): Promise<void> {
     const requestId = this._generateRequestId();
     const startTime = Date.now();
 
@@ -21,10 +26,11 @@ export class ProfileInitController {
       const jwtToken = this._extractJwtToken(req);
       if (!jwtToken) {
         logger.warn('Profile initialization request rejected: Missing JWT token', { requestId });
-        return res.status(401).json({
+        res.status(401).json({
           error: 'Missing or invalid Authorization header',
           requestId,
         });
+        return;
       }
 
       const validationResult = this._validateRequest(req.body, jwtToken);
@@ -34,11 +40,12 @@ export class ProfileInitController {
           error: validationResult.error,
           statusCode: validationResult.statusCode,
         });
-        return res.status(validationResult.statusCode).json({
+        res.status(validationResult.statusCode).json({
           error: validationResult.error,
           message: validationResult.message,
           requestId,
         });
+        return;
       }
 
       // Do not decrypt here; pass ciphertext through and decrypt at login
@@ -88,7 +95,7 @@ export class ProfileInitController {
           healReason: state.healReason,
         });
 
-        return res.status(202).json({
+        res.status(202).json({
           status: 'healing',
           message: 'Worker process started for healing/recovery.',
           requestId,
@@ -98,6 +105,7 @@ export class ProfileInitController {
             recursionCount: state.recursionCount,
           },
         });
+        return;
       }
 
       const totalDuration = Date.now() - startTime;
@@ -128,10 +136,11 @@ export class ProfileInitController {
       });
 
       // Log additional context for debugging
-      if ((error as any).context) {
+      const errWithContext = error as { context?: unknown };
+      if (errWithContext && typeof errWithContext === 'object' && 'context' in errWithContext) {
         logger.error('Error context details', {
           requestId,
-          context: (error as any).context,
+          context: errWithContext.context,
         });
       }
 
@@ -353,7 +362,7 @@ export class ProfileInitController {
     });
   }
 
-  _logRequestDetails(req: any, requestId: string): void {
+  _logRequestDetails(req: Request, requestId: string): void {
     logger.info('Profile init request details:', {
       requestId,
       method: req.method,
@@ -477,7 +486,7 @@ export class ProfileInitController {
     };
   }
 
-  _extractJwtToken(req: any): string | undefined {
+  _extractJwtToken(req: Request): string | undefined {
     const authHeader = req.headers.authorization;
     return authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : undefined;
   }

@@ -52,7 +52,7 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
       if (response.success && response.data) {
         setUserProfile(response.data);
 
-        // Auto-detect timezone and save if not yet set or changed (ADR-8)
+        // Auto-detect timezone and save if not yet set or changed (ADR-008)
         try {
           const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
           const storedTimezone = response.data.timezone;

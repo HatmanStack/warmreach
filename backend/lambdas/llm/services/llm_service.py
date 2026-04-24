@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -37,6 +38,41 @@ logger = logging.getLogger(__name__)
 
 # Placeholder name used for demo/test profiles that should be skipped
 PROFILE_PLACEHOLDER_NAME = 'Tom, Dick, And Harry'
+
+# Retry configuration for transient OpenAI errors (community edition parity).
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE_S = 2.0
+_RETRYABLE_OPENAI_ERRORS: tuple[type[Exception], ...] = (
+    openai.APIConnectionError,
+    openai.APITimeoutError,
+    openai.RateLimitError,
+    openai.InternalServerError,
+)
+
+
+def _retry_openai_call(fn, *, max_retries: int = MAX_RETRIES, sleep=None):
+    """Invoke ``fn`` retrying transient OpenAI errors with exponential backoff."""
+    _sleep = sleep if sleep is not None else time.sleep
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except _RETRYABLE_OPENAI_ERRORS as e:
+            last_exc = e
+            if attempt == max_retries - 1:
+                raise
+            backoff = RETRY_BACKOFF_BASE_S * (2**attempt)
+            logger.warning(
+                'Transient OpenAI error on attempt %s/%s: %s; retrying in %.1fs',
+                attempt + 1,
+                max_retries,
+                type(e).__name__,
+                backoff,
+            )
+            _sleep(backoff)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError('retry helper exited without result')
 
 # Per-operation timeout overrides (seconds) for OpenAI responses.create() calls.
 # Default client timeout (60s) is used as fallback via .get(name, 60).

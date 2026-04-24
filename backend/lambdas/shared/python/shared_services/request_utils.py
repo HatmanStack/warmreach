@@ -62,6 +62,52 @@ def cors_headers(event, allowed_origins=None, allowed_methods='POST,OPTIONS'):
     return headers
 
 
+def api_error(
+    code,
+    message,
+    status_code=400,
+    event=None,
+    details=None,
+    allowed_origins=None,
+    allowed_methods='POST,OPTIONS',
+):
+    """Build an error Lambda proxy response with the structured error schema.
+
+    Canonical shape::
+
+        {
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "Human-readable message",
+                "details": {...}   # optional
+            }
+        }
+
+    Ad-hoc ``{"error": "..."}`` shapes emitted by older handlers remain valid
+    responses — the frontend parser accepts both for a rollout window. Prefer
+    this helper for any NEW error response.
+
+    Args:
+        code: Machine-readable error code (e.g. ``VALIDATION_ERROR``).
+        message: Human-readable message shown to the user.
+        status_code: HTTP status (defaults 400).
+        event: API Gateway event for CORS resolution. Optional.
+        details: Optional dict with structured details.
+        allowed_origins: Override allowed origins list.
+        allowed_methods: Allowed HTTP methods string.
+    """
+    body = {'error': {'code': code, 'message': message}}
+    if details is not None:
+        body['error']['details'] = details
+    return api_response(
+        status_code,
+        body,
+        event=event,
+        allowed_origins=allowed_origins,
+        allowed_methods=allowed_methods,
+    )
+
+
 def api_response(status_code, body, event=None, allowed_origins=None, allowed_methods='POST,OPTIONS'):
     """Build a complete Lambda proxy response.
 

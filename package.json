@@ -23,6 +23,7 @@
     "lint:frontend": "cd frontend && npm run lint",
     "lint:client": "cd client && npm run lint",
     "lint:backend": "cd backend && uvx ruff check lambdas --exclude .aws-sam && uvx ruff format --check lambdas --exclude .aws-sam",
+    "lint:docs": "npx markdownlint-cli2 \"docs/**/*.md\" \"*.md\" && npx --yes @lycheeverse/lychee --config lychee.toml \"docs/**/*.md\" \"*.md\"",
     "format": "npx prettier --write 'frontend/src/**/*.{ts,tsx}' 'client/src/**/*.{js,ts}' 'admin/src/**/*.{ts,tsx}' 'mock-linkedin/**/*.js'",
     "format:check": "npx prettier --check 'frontend/src/**/*.{ts,tsx}' 'client/src/**/*.{js,ts}' 'admin/src/**/*.{ts,tsx}' 'mock-linkedin/**/*.js'",
     "typecheck:admin": "cd admin && npx tsc --noEmit",

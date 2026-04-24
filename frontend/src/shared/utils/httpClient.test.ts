@@ -59,6 +59,29 @@ describe('HttpClient', () => {
     expect(result.error?.status).toBe(400);
   });
 
+  it('parses the structured { error: { code, message, details } } shape', async () => {
+    server.use(
+      http.post('*/edges', () => {
+        return HttpResponse.json({
+          statusCode: 422,
+          body: JSON.stringify({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Field required',
+              details: { field: 'name' },
+            },
+          }),
+        });
+      })
+    );
+
+    const result = await httpClient.makeRequest('edges', 'op');
+    expect(result.success).toBe(false);
+    expect(result.error?.message).toBe('Field required');
+    expect(result.error?.code).toBe('VALIDATION_ERROR');
+    expect(result.error?.status).toBe(422);
+  });
+
   it('should retry on retryable errors', async () => {
     let attempts = 0;
     server.use(

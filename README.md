@@ -1,3 +1,6 @@
+<!-- Synced from pro 2026-04-24: pro README clone-directory and admin sections
+     diverge intentionally. Community keeps `cd warmreach`. -->
+
 > **Active Development** — This repo changes frequently. No stable release yet. Expect breaking changes on any commit.
 
 # WarmReach Community Edition

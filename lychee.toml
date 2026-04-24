@@ -1,0 +1,32 @@
+# Lychee link-check configuration.
+# Docs: https://lychee.cli.rs/#/usage/config
+
+# Skip redirects, progress bars, and noisy network output.
+no_progress = true
+
+# Hosts we never want to hit during link checks.
+exclude = [
+  "^https?://localhost",
+  "^https?://127\\.0\\.0\\.1",
+  "^https?://0\\.0\\.0\\.0",
+  # GitHub rate-limits anonymous probes; skip gh.io shortlinks and raw fetches.
+  "^https?://(www\\.)?linkedin\\.com",
+  # SaaS marketing hosts that reject HEAD probes.
+  "^https?://(www\\.)?stripe\\.com",
+]
+
+# Treat 429 and 999 (LinkedIn rate-limit sentinel) as OK.
+accept = [200, 204, 206, 301, 302, 307, 308, 429, 999]
+
+# Bounded retry budget so CI cannot stall.
+max_retries = 2
+timeout = 20
+max_concurrency = 8
+
+# Paths lychee ignores outright.
+exclude_path = [
+  "node_modules",
+  ".aws-sam",
+  "dist",
+  "coverage",
+]

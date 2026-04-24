@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { PuppeteerService } from './puppeteerService';
+import {
+  PuppeteerService,
+  BrowserLaunchTimeoutError,
+  PUPPETEER_LAUNCH_TIMEOUT_MS,
+} from './puppeteerService';
 import * as fingerprintProfile from '../utils/fingerprintProfile';
 import config from '#shared-config/index.js';
 
@@ -181,6 +185,42 @@ describe('PuppeteerService', () => {
 
       expect(consoleOff?.[1]).toBe(consoleHandler);
       expect(pageerrorOff?.[1]).toBe(pageerrorHandler);
+    });
+  });
+
+  describe('launch timeout (ADR-A)', () => {
+    it('passes a numeric timeout to puppeteer.launch', async () => {
+      vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+        throw new Error('No profile');
+      });
+
+      const puppeteer = await import('puppeteer');
+      await service.initialize();
+
+      const launchCall = vi.mocked(puppeteer.default.launch).mock.calls.at(-1);
+      expect(launchCall).toBeTruthy();
+      expect((launchCall?.[0] as any).timeout).toBe(PUPPETEER_LAUNCH_TIMEOUT_MS);
+    });
+
+    it('throws BrowserLaunchTimeoutError when puppeteer.launch hangs past the deadline', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+          throw new Error('No profile');
+        });
+
+        const puppeteer = await import('puppeteer');
+        // A launch that never resolves — simulates a hung Chromium handshake.
+        vi.mocked(puppeteer.default.launch).mockImplementation(() => new Promise(() => {}));
+
+        const initPromise = service.initialize().catch((e) => e);
+        await vi.advanceTimersByTimeAsync(PUPPETEER_LAUNCH_TIMEOUT_MS + 1);
+        const err = await initPromise;
+        expect(err).toBeInstanceOf(BrowserLaunchTimeoutError);
+        expect((err as BrowserLaunchTimeoutError).code).toBe('BROWSER_LAUNCH_TIMEOUT');
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

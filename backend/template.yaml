@@ -68,6 +68,7 @@ Globals:
     Runtime: python3.13
     Timeout: 30
     MemorySize: 512
+    Tracing: Active
     Layers:
       - !Ref SharedPythonLayer
     Environment:

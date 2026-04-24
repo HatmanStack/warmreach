@@ -32,28 +32,38 @@ export function extractUserId(req: AuthenticatedRequest): string {
   return `ip:${req.ip || 'unknown'}`;
 }
 
-export function createRateLimiter(options: RateLimiterOptions = {}) {
+interface RateLimiterHandle {
+  (req: Request, res: Response, next: NextFunction): void;
+  shutdown(): void;
+}
+
+export function createRateLimiter(options: RateLimiterOptions = {}): RateLimiterHandle {
   const { windowMs = 60000, max = 30, name = 'rate-limiter' } = options;
 
   const userWindows = new Map<string, RateWindow>();
 
-  const CLEANUP_INTERVAL = 5 * 60 * 1000;
-  let lastCleanup = Date.now();
+  const CLEANUP_INTERVAL = 60 * 1000;
 
-  function cleanup(): void {
+  // Periodic sweep independent of request traffic so the Map cannot grow
+  // unbounded between bursts. unref() so the timer does not keep the process
+  // alive on its own.
+  const prune = setInterval(() => {
     const now = Date.now();
-    if (now - lastCleanup < CLEANUP_INTERVAL) return;
-    lastCleanup = now;
     for (const [userId, window] of userWindows) {
       if (now - window.windowStart > windowMs * 2) {
         userWindows.delete(userId);
       }
     }
+  }, CLEANUP_INTERVAL);
+  if (typeof prune.unref === 'function') {
+    prune.unref();
   }
 
-  return function rateLimiterMiddleware(req: Request, res: Response, next: NextFunction) {
-    cleanup();
-
+  const middleware = function rateLimiterMiddleware(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): void {
     const userId = extractUserId(req as AuthenticatedRequest);
     const now = Date.now();
 
@@ -82,5 +92,12 @@ export function createRateLimiter(options: RateLimiterOptions = {}) {
     res.set('X-RateLimit-Reset', String(Math.ceil((window.windowStart + windowMs) / 1000)));
 
     next();
+  } as RateLimiterHandle;
+
+  middleware.shutdown = function (): void {
+    clearInterval(prune);
+    userWindows.clear();
   };
+
+  return middleware;
 }

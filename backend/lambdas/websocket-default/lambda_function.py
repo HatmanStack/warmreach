@@ -36,20 +36,44 @@ def _register(action_name):
 
 
 def lambda_handler(event, context):
-    setup_correlation_context(event, context)
+    """Route inbound WebSocket messages to per-action handlers.
 
-    connection_id = event['requestContext']['connectionId']
-    body = json.loads(event.get('body', '{}'))
-    action = body.get('action', '')
+    Every exception is caught so a malformed body, missing connectionId, or
+    handler bug can't cause an uncaught Lambda failure. Unknown actions return
+    a non-crash 200 response.
+    """
+    try:
+        setup_correlation_context(event, context)
 
-    logger.info('Message from %s: action=%s', connection_id, action)
+        request_context = event.get('requestContext') or {}
+        connection_id = request_context.get('connectionId', '<unknown>')
 
-    handler = ACTION_HANDLERS.get(action)
-    if handler:
-        return handler(connection_id, body)
+        raw_body = event.get('body') or '{}'
+        try:
+            body = json.loads(raw_body) if isinstance(raw_body, str) else (raw_body or {})
+        except (ValueError, TypeError) as exc:
+            logger.warning('Malformed JSON body from %s: %s', connection_id, exc)
+            return {'statusCode': 400, 'body': json.dumps({'error': 'Invalid JSON body'})}
 
-    logger.warning('Unknown action: %s', action)
-    return {'statusCode': 200, 'body': json.dumps({'error': f'Unknown action: {action}'})}
+        if not isinstance(body, dict):
+            logger.warning('Non-object body from %s', connection_id)
+            return {'statusCode': 400, 'body': json.dumps({'error': 'Body must be a JSON object'})}
+
+        action = body.get('action', '')
+
+        logger.info('Message from %s: action=%s', connection_id, action)
+
+        handler = ACTION_HANDLERS.get(action)
+        if handler:
+            return handler(connection_id, body)
+
+        logger.warning('Unknown action: %s', action)
+        return {'statusCode': 200, 'body': json.dumps({'error': f'Unknown action: {action}'})}
+    except Exception:
+        # Top-level guard: surface the failure as 500 rather than letting the
+        # Lambda runtime crash (which would leave the client with a socket reset).
+        logger.exception('ws $default handler failure')
+        return {'statusCode': 500, 'body': json.dumps({'error': 'Internal server error'})}
 
 
 def _get_ws_service():

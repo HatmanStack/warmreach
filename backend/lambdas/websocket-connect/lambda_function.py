@@ -7,6 +7,7 @@ enforces single-client-per-user per type, and stores connection in DynamoDB.
 import json
 import logging
 import os
+import time
 
 import boto3
 from shared_services.observability import setup_correlation_context
@@ -18,24 +19,68 @@ TABLE_NAME = os.environ['DYNAMODB_TABLE_NAME']
 USER_POOL_ID = os.environ['COGNITO_USER_POOL_ID']
 COGNITO_REGION = os.environ.get('COGNITO_REGION', 'us-east-1')
 WEBSOCKET_ENDPOINT = os.environ.get('WEBSOCKET_ENDPOINT', '')
+if not os.environ.get('COGNITO_CLIENT_ID'):
+    logger.warning(
+        'COGNITO_CLIENT_ID not set — cross-application JWT reuse check is disabled. This MUST be set in production.'
+    )
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(TABLE_NAME)
 
-# Cognito JWKS fetched once per cold start
-_jwks_client = None
+# Cognito JWKS cache (ADR-A: explicit fail-fast timeout with a single retry;
+# serve stale on transient fetch failure). Module-level so cache persists
+# across warm invocations.
+_JWKS_CACHE: dict = {'data': None, 'fetched_at': 0.0}
+_JWKS_TTL_SECONDS = 6 * 60 * 60  # 6 hours
+_JWKS_STALE_GRACE_SECONDS = 24 * 60 * 60  # serve stale up to 24 h on fetch failure
+_JWKS_FETCH_TIMEOUT = 2.0
 _cognito_issuer = f'https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{USER_POOL_ID}'
 
 
-def _get_jwks_client():
-    global _jwks_client
-    if _jwks_client is None:
-        import urllib.request
+class JWKSUnavailableError(RuntimeError):
+    """Raised when JWKS cannot be fetched and no usable cached copy exists."""
 
-        jwks_url = f'{_cognito_issuer}/.well-known/jwks.json'
-        with urllib.request.urlopen(jwks_url, timeout=5) as resp:  # nosec B310 - URL from Cognito issuer config, not user input
-            _jwks_client = json.loads(resp.read())
-    return _jwks_client
+
+def fetch_jwks():
+    """Fetch JWKS with a 2s timeout and one retry. Raises on both-attempts failure."""
+    import urllib.request
+
+    jwks_url = f'{_cognito_issuer}/.well-known/jwks.json'
+    last_exc = None
+    for attempt in (1, 2):
+        try:
+            with urllib.request.urlopen(  # nosec B310 - URL from Cognito issuer config, not user input
+                jwks_url, timeout=_JWKS_FETCH_TIMEOUT
+            ) as resp:
+                return json.loads(resp.read())
+        except Exception as exc:  # noqa: BLE001 - retry once, then re-raise
+            last_exc = exc
+            logger.warning('JWKS fetch attempt %d failed: %s', attempt, exc)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _get_jwks_client():
+    """Return JWKS, refreshing if TTL expired; serve stale on fetch failure."""
+    now = time.time()
+    cached = _JWKS_CACHE.get('data')
+    fetched_at = _JWKS_CACHE.get('fetched_at', 0.0)
+    age = now - fetched_at
+
+    if cached is not None and age < _JWKS_TTL_SECONDS:
+        return cached
+
+    try:
+        fresh = fetch_jwks()
+        _JWKS_CACHE['data'] = fresh
+        _JWKS_CACHE['fetched_at'] = now
+        return fresh
+    except Exception as exc:  # noqa: BLE001
+        if cached is not None and age < _JWKS_STALE_GRACE_SECONDS:
+            logger.warning('JWKS fetch failed (%s); serving stale cache (age=%.0fs)', exc, age)
+            return cached
+        logger.error('JWKS fetch failed and no usable cache available: %s', exc)
+        raise JWKSUnavailableError(str(exc)) from exc
 
 
 def _validate_jwt(token: str) -> dict | None:
@@ -52,6 +97,9 @@ def _validate_jwt(token: str) -> dict | None:
 
     try:
         jwks = _get_jwks_client()
+    except JWKSUnavailableError:
+        raise
+    try:
         unverified_header = jwt.get_unverified_header(token)
         kid = unverified_header.get('kid')
         if not kid:
@@ -81,7 +129,9 @@ def _validate_jwt(token: str) -> dict | None:
             options={'verify_aud': False},
         )
 
-        # Validate client_id claim to prevent cross-application JWT reuse
+        # Validate client_id claim to prevent cross-application JWT reuse.
+        # Read os.environ at call time so tests can patch it; the module-init
+        # warning above surfaces the unset case at cold start.
         expected_client_id = os.environ.get('COGNITO_CLIENT_ID', '')
         if expected_client_id:
             token_client_id = claims.get('client_id', '')
@@ -114,7 +164,10 @@ def lambda_handler(event, context):
         logger.warning('Missing token in query string')
         return {'statusCode': 401, 'body': 'Missing token'}
 
-    claims = _validate_jwt(token)
+    try:
+        claims = _validate_jwt(token)
+    except JWKSUnavailableError:
+        return {'statusCode': 500, 'body': 'JWKS unavailable'}
     if not claims:
         return {'statusCode': 401, 'body': 'Invalid token'}
 

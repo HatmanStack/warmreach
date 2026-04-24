@@ -105,7 +105,10 @@ class WebSocketService:
         except ClientError as e:
             code = e.response['Error']['Code']
             if code in ('GoneException', '410'):
-                pass  # Already disconnected
+                logger.info(
+                    'Connection %s already gone during disconnect, cleaning up record',
+                    connection_id,
+                )
             else:
                 raise
         self.delete_connection(connection_id)

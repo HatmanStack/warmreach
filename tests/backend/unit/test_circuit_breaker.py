@@ -1,8 +1,10 @@
 """Tests for CircuitBreaker pattern implementation."""
+import logging
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.exceptions import ClientError
 
 import sys
 import os
@@ -201,6 +203,35 @@ class TestCachedDynamoDBStore:
         assert result['state'] == 'open'
         assert result['failure_count'] == 5
         assert mock_table.get_item.call_count == 0  # Never read from DB
+
+    def test_dynamodb_store_reraises_on_read_error_by_default(self, caplog):
+        """DynamoDBStore.get_state re-raises ClientError by default (no silent fail-open)."""
+        mock_table = MagicMock()
+        mock_table.get_item.side_effect = ClientError(
+            {'Error': {'Code': 'ProvisionedThroughputExceededException', 'Message': 'x'}},
+            'GetItem',
+        )
+        store = DynamoDBStore(mock_table)
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(ClientError):
+                store.get_state('svc')
+        assert any(
+            r.exc_info is not None and 'circuit breaker' in r.getMessage().lower()
+            for r in caplog.records
+        )
+
+    def test_dynamodb_store_fail_open_returns_empty(self, caplog):
+        """DynamoDBStore with fail_open=True returns empty dict on read error."""
+        mock_table = MagicMock()
+        mock_table.get_item.side_effect = ClientError(
+            {'Error': {'Code': 'ThrottlingException', 'Message': 'x'}},
+            'GetItem',
+        )
+        store = DynamoDBStore(mock_table, fail_open=True)
+        with caplog.at_level(logging.ERROR):
+            result = store.get_state('svc')
+        assert result == {}
+        assert any(r.exc_info is not None for r in caplog.records)
 
     def test_circuit_breaker_with_cached_store_reduces_reads(self):
         """CircuitBreaker using CachedDynamoDBStore reduces DynamoDB round trips."""

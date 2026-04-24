@@ -10,6 +10,8 @@ import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from botocore.exceptions import ClientError
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,25 +38,39 @@ class InMemoryStore:
 class DynamoDBStore:
     """DynamoDB-backed storage for distributed circuit breaker state."""
 
-    def __init__(self, table, ttl_seconds: int = 86400):
+    def __init__(self, table, ttl_seconds: int = 86400, fail_open: bool = False):
         """Initialize DynamoDB-backed circuit breaker store.
 
         Args:
             table: DynamoDB table resource.
             ttl_seconds: TTL for state records. Default 24h. A shorter TTL risks
                 silent reset to closed while a downstream service is still failing.
+            fail_open: If True, treat DynamoDB read failures as 'no record'
+                (circuit assumed healthy). Default False (re-raise), so caller
+                can degrade explicitly rather than silently assuming health.
         """
         self.table = table
         self.ttl_seconds = ttl_seconds
+        self.fail_open = fail_open
 
     def get_state(self, service_name: str) -> dict[str, Any]:
         try:
             resp = self.table.get_item(Key={'PK': f'CB#{service_name}', 'SK': 'STATE'})
             return resp.get('Item', {})
-        except Exception as e:
-            logger.warning('Failed to get circuit breaker state from DynamoDB for %s: %s', service_name, e)
-            # Fallback to empty state which defaults to 'closed'
-            return {}
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', 'Unknown')
+            logger.exception(
+                'Failed to get circuit breaker state from DynamoDB',
+                extra={
+                    'subsystem': 'circuit_breaker',
+                    'service_name': service_name,
+                    'error_code': code,
+                },
+            )
+            if self.fail_open:
+                # Caller opted in: assume healthy on DDB outage.
+                return {}
+            raise
 
     def set_state(self, service_name: str, state_data: dict[str, Any]) -> None:
         try:
@@ -65,8 +81,24 @@ class DynamoDBStore:
                 **state_data,
             }
             self.table.put_item(Item=item)
-        except Exception as e:
-            logger.error('Failed to set circuit breaker state in DynamoDB: %s', e)
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', 'Unknown')
+            logger.exception(
+                'Failed to set circuit breaker state in DynamoDB',
+                extra={
+                    'subsystem': 'circuit_breaker',
+                    'service_name': service_name,
+                    'error_code': code,
+                },
+            )
+        except Exception:
+            # set_state is best-effort: serialization errors, float/decimal
+            # coercion, and other boto runtime issues must not break the
+            # circuit breaker's in-memory protection around the caller's code.
+            logger.exception(
+                'Unexpected error setting circuit breaker state in DynamoDB',
+                extra={'subsystem': 'circuit_breaker', 'service_name': service_name},
+            )
 
 
 class CachedDynamoDBStore:
@@ -78,8 +110,14 @@ class CachedDynamoDBStore:
     (typically from 2-3 per circuit breaker call down to 0-1).
     """
 
-    def __init__(self, table, ttl_seconds: int = 3600, cache_ttl_seconds: float = 5.0):
-        self._inner = DynamoDBStore(table, ttl_seconds)
+    def __init__(
+        self,
+        table,
+        ttl_seconds: int = 3600,
+        cache_ttl_seconds: float = 5.0,
+        fail_open: bool = False,
+    ):
+        self._inner = DynamoDBStore(table, ttl_seconds, fail_open=fail_open)
         self._cache_ttl = cache_ttl_seconds
         self._cache: dict[str, dict[str, Any]] = {}
         self._cache_ts: dict[str, float] = {}
@@ -156,7 +194,16 @@ class CircuitBreaker:
 
     @property
     def state(self) -> str:
-        """Current circuit state, checking if open circuit should transition to half-open."""
+        """Current circuit state, checking if open circuit should transition to half-open.
+
+        The open -> half_open transition is implemented identically here and in
+        ``call()``. Both paths do a read-then-write against the store without a
+        lock, so they are race-safe only under a single-threaded executor (the
+        Lambda Python worker model). If ``DynamoDBStore`` is ever used from
+        concurrent threads or processes, wrap both transitions in a conditional
+        update (e.g. ``attribute_exists AND #state = :open``) so only one
+        caller performs the promotion.
+        """
         data = self._get_local_state()
         state = data['state']
         last_failure_time = data['last_failure_time']

@@ -1,9 +1,11 @@
+import type { Request, Response } from 'express';
 import { config } from '#shared-config/index.js';
 import { logger } from '#utils/logger.js';
 import {
   initializeLinkedInServices,
   cleanupLinkedInServices,
 } from '../../../shared/utils/serviceFactory.js';
+import { isNodeErrno } from '../../../shared/types/errors.js';
 import { FileHelpers } from '#utils/fileHelpers.js';
 import { SearchRequestValidator } from '../utils/searchRequestValidator.js';
 import { SearchStateManager } from '../utils/searchStateManager.js';
@@ -13,7 +15,11 @@ import { HealingManager } from '../../automation/utils/healingManager.js';
 import fs from 'fs/promises';
 
 export class SearchController {
-  async performSearch(req: any, res: any, opts: Record<string, any> = {}) {
+  async performSearch(
+    req: Request,
+    res: Response,
+    opts: Record<string, unknown> = {}
+  ): Promise<void> {
     logger.info('=== SEARCH REQUEST RECEIVED ===');
     logger.info(`Request path: ${req.path}, method: ${req.method}`);
 
@@ -47,19 +53,21 @@ export class SearchController {
 
     if (!jwtToken) {
       logger.error('JWT token missing after fallback, rejecting request');
-      return res.status(401).json({
+      res.status(401).json({
         error: 'Missing or invalid Authorization header',
       });
+      return;
     }
 
     logger.info('Validating request with SearchRequestValidator...');
     const validationResult = SearchRequestValidator.validateRequest(req.body, jwtToken);
     logger.info(`Validation result: ${validationResult.isValid ? 'VALID' : 'INVALID'}`);
     if (!validationResult.isValid) {
-      return res.status(validationResult.statusCode).json({
+      res.status(validationResult.statusCode).json({
         error: validationResult.error,
         message: validationResult.message,
       });
+      return;
     }
 
     const { companyName, companyRole, companyLocation, linkedinCredentialsCiphertext } = req.body;
@@ -97,10 +105,11 @@ export class SearchController {
       const result = await this.performSearchFromState(state);
 
       if (result === undefined) {
-        return res.status(202).json({
+        res.status(202).json({
           status: 'healing',
           message: 'Worker process started for healing/recovery.',
         });
+        return;
       }
 
       res.json(this._buildSuccessResponse(result, { companyName, companyRole, companyLocation }));
@@ -267,7 +276,7 @@ export class SearchController {
       const fileContent = await fs.readFile(filePath, 'utf-8');
       return JSON.parse(fileContent);
     } catch (error: unknown) {
-      if ((error as any).code === 'ENOENT') {
+      if (isNodeErrno(error) && error.code === 'ENOENT') {
         // File not found is expected on first run or after cache clear - not an error
         logger.debug(`Links file not found at ${filePath}, starting fresh`);
         return [];
@@ -275,7 +284,8 @@ export class SearchController {
       // For other errors (permissions, corrupted JSON), log but continue with empty array.
       // This allows the search to proceed rather than failing completely.
       // The links will be re-collected from LinkedIn.
-      logger.error(`Failed to load links from ${filePath}:`, (error as Error).message);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to load links from ${filePath}:`, message);
       return [];
     }
   }
@@ -286,7 +296,7 @@ export class SearchController {
     logger.info('Closed browser in finally!');
   }
 
-  _logRequestDetails(req: any): void {
+  _logRequestDetails(req: Request): void {
     // Sanitize headers to prevent credential leakage in logs
     const sanitizedHeaders = { ...req.headers };
     const sensitiveHeaders = ['authorization', 'cookie', 'x-api-key', 'x-auth-token'];
@@ -304,7 +314,7 @@ export class SearchController {
     });
   }
 
-  _extractJwtToken(req: any): string | undefined {
+  _extractJwtToken(req: Request): string | undefined {
     const authHeader = req.headers.authorization;
     return authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : undefined;
   }
@@ -324,11 +334,12 @@ export class SearchController {
     };
   }
 
-  _buildErrorResponse(error: any): Record<string, unknown> {
+  _buildErrorResponse(error: unknown): Record<string, unknown> {
+    const err = error instanceof Error ? error : new Error(String(error));
     return {
       error: 'Internal server error during search',
-      message: (error as Error).message,
-      details: process.env.NODE_ENV === 'development' ? (error as Error).stack : undefined,
+      message: err.message,
+      details: process.env.NODE_ENV === 'development' ? err.stack : undefined,
     };
   }
 

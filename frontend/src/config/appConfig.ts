@@ -26,6 +26,23 @@ const validateCognitoConfig = () => {
 
 export const isCognitoConfigured = validateCognitoConfig();
 
+const DEFAULT_API_TIMEOUT_MS = 30000;
+const MIN_API_TIMEOUT_MS = 5000;
+const MAX_API_TIMEOUT_MS = 120000;
+
+const resolveApiTimeout = (): number => {
+  const raw = import.meta.env.VITE_API_TIMEOUT_MS;
+  if (raw === undefined || raw === null || raw === '') {
+    return DEFAULT_API_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    logger.warn('Invalid VITE_API_TIMEOUT_MS value; falling back to default', { raw });
+    return DEFAULT_API_TIMEOUT_MS;
+  }
+  return Math.min(MAX_API_TIMEOUT_MS, Math.max(MIN_API_TIMEOUT_MS, Math.trunc(parsed)));
+};
+
 export const API_CONFIG = {
   // Production AWS API Gateway URL (fallback)
   BASE_URL: import.meta.env.VITE_API_GATEWAY_URL || '',
@@ -33,7 +50,7 @@ export const API_CONFIG = {
     SEARCH: '/',
     MESSAGE_GENERATION: '/llm',
   },
-  TIMEOUT: 100000000,
+  TIMEOUT: resolveApiTimeout(),
 } as const;
 
 export const STORAGE_KEYS = {

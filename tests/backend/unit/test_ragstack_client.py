@@ -312,6 +312,25 @@ class TestErrorHandling:
             # Should have retried (max_retries=2)
             assert m.call_count == 2
 
+    def test_post_called_with_connect_and_read_timeout(self, ragstack_client):
+        """Fail-fast contract: session.post must pass an explicit (connect, read) timeout tuple."""
+        with patch.object(ragstack_client.session, "post", wraps=ragstack_client.session.post) as spy_post:
+            with requests_mock.Mocker() as m:
+                m.post(
+                    ragstack_client.endpoint,
+                    json={"data": {"searchKnowledgeBase": {"results": []}}},
+                )
+                ragstack_client.search("test")
+
+            assert spy_post.call_count == 1
+            kwargs = spy_post.call_args.kwargs
+            timeout = kwargs.get("timeout")
+            assert isinstance(timeout, tuple), f"expected (connect, read) tuple, got {timeout!r}"
+            assert len(timeout) == 2
+            connect, read = timeout
+            assert 0 < connect <= 10
+            assert 0 < read <= 60
+
     def test_connection_error_with_retry(self, ragstack_client):
         """Test connection error handling with retry"""
         with requests_mock.Mocker() as m:

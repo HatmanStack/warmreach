@@ -246,4 +246,54 @@ describe('postsService', () => {
       expect(mockSendLLMRequest.mock.calls[0][1].research_content).toBeNull();
     });
   });
+
+  describe('response schema validation', () => {
+    it('strips unknown fields injected by the server (no PII leak)', async () => {
+      mockSendLLMRequest.mockResolvedValue({
+        success: true,
+        data: {
+          ideas: ['a', 'b'],
+          // Anything not in the schema gets dropped — even if the server
+          // accidentally adds it, callers cannot depend on it.
+          internal_user_notes: 'leaked PII',
+        },
+        legacy_field: 'old',
+      });
+
+      const ideas = await postsService.generateIdeas('x');
+      expect(ideas).toEqual(['a', 'b']);
+    });
+
+    it('throws a schema error when success field is the wrong type', async () => {
+      mockSendLLMRequest.mockResolvedValue({
+        // success should be boolean; sending a number forces zod to fail.
+        success: 1,
+        data: { ideas: ['a'] },
+      });
+
+      await expect(postsService.generateIdeas('x')).rejects.toThrow();
+    });
+
+    it('parses research polling response with extra fields stripped', async () => {
+      mockSendLLMRequest.mockResolvedValue({
+        success: true,
+        data: { job_id: 'job-789' },
+      });
+      mockMakeRequest.mockResolvedValue({
+        success: true,
+        data: { content: 'result', hidden_token: 'shhh' },
+      });
+
+      vi.useFakeTimers();
+      const promise = postsService.researchTopics(['topic']);
+      await vi.advanceTimersByTimeAsync(15_000);
+      const res = await promise;
+      vi.useRealTimers();
+
+      expect(res).toBe('result');
+      // The poll call carries a correlation_id for traceability.
+      const pollParams = mockMakeRequest.mock.calls[0]?.[2];
+      expect(pollParams).toHaveProperty('correlation_id');
+    });
+  });
 });

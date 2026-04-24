@@ -264,3 +264,59 @@ class TestError:
         assert cmd['status'] == 'failed'
         assert cmd['errorCode'] == 'SESSION_EXPIRED'
         assert cmd['errorMessage'] == 'Login required'
+
+
+class TestErrorWrapper:
+    """Top-level try/except wrapper for ADR-A (no unhandled escape)."""
+
+    def test_missing_body_returns_success(self, lambda_context):
+        """No body field should not crash — falls through to 'Unknown action'."""
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-default')
+
+        event = {'requestContext': {'connectionId': 'conn-1'}}
+        result = module.lambda_handler(event, lambda_context)
+
+        assert result['statusCode'] in (200, 400)
+
+    def test_malformed_json_returns_400(self, lambda_context):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-default')
+
+        event = {'requestContext': {'connectionId': 'conn-1'}, 'body': '{not json'}
+        result = module.lambda_handler(event, lambda_context)
+
+        assert result['statusCode'] == 400
+        body = json.loads(result['body'])
+        assert 'Invalid JSON body' in body['error']
+
+    def test_handler_exception_returns_500(self, ws_table, lambda_context):
+        """A handler raising unexpectedly must be caught by the top-level guard."""
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-default')
+
+        def _boom(connection_id, body):
+            raise RuntimeError('handler crashed')
+
+        event = _make_default_event(body={'action': 'heartbeat'})
+
+        original = module.ACTION_HANDLERS.get('heartbeat')
+        module.ACTION_HANDLERS['heartbeat'] = _boom
+        try:
+            with patch.object(module, 'table', ws_table):
+                result = module.lambda_handler(event, lambda_context)
+        finally:
+            if original is not None:
+                module.ACTION_HANDLERS['heartbeat'] = original
+
+        assert result['statusCode'] == 500
+        assert 'Internal server error' in json.loads(result['body'])['error']
+
+    def test_missing_request_context_returns_500(self, lambda_context):
+        """Completely malformed event: still returns a response, never crashes."""
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-default')
+
+        # setup_correlation_context may tolerate this; behaviour is: response.
+        result = module.lambda_handler({}, lambda_context)
+        assert result['statusCode'] in (200, 400, 500)

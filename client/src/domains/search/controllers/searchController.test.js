@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'fs/promises';
 import { SearchController } from './searchController.js';
 import { SearchRequestValidator } from '../utils/searchRequestValidator.js';
 import { SearchStateManager } from '../utils/searchStateManager.js';
@@ -153,6 +154,28 @@ describe('SearchController', () => {
           error: 'Internal server error during search',
         })
       );
+    });
+  });
+
+  describe('_loadLinksFromFile typed-error narrowing', () => {
+    it('returns [] on ENOENT (NodeJS.ErrnoException narrowing)', async () => {
+      const err = Object.assign(new Error('not found'), { code: 'ENOENT' });
+      const spy = vi.spyOn(fs, 'readFile').mockRejectedValue(err);
+
+      const result = await controller._loadLinksFromFile('/tmp/does-not-exist.json');
+
+      expect(result).toEqual([]);
+      spy.mockRestore();
+    });
+
+    it('returns [] on other read errors (falls through gracefully)', async () => {
+      const err = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      const spy = vi.spyOn(fs, 'readFile').mockRejectedValue(err);
+
+      const result = await controller._loadLinksFromFile('/tmp/no-perms.json');
+
+      expect(result).toEqual([]);
+      spy.mockRestore();
     });
   });
 

@@ -14,6 +14,7 @@ Sealbox encrypts sensitive user credentials (e.g., LinkedIn passwords) using lib
 -   **AWS Cognito**: Used for user identity management. All users must authenticate via Cognito User Pools to access the application.
 -   **JWT Tokens**: Secure JSON Web Tokens are used to authorize API requests to the backend.
 -   **API Gateway Authorizers**: Cognito JWT authorizers verify tokens before allowing access to backend resources.
+-   **WebSocket Access-Log Redaction**: The WebSocket API stage uses a custom access log format that deliberately omits `$context.requestQueryString`. The `$connect` route accepts the JWT via `?token=`, and logging the raw query string would leak bearer tokens to CloudWatch. Only non-sensitive routing and diagnostic fields (requestId, source IP, routeKey, status, connectionId) are logged.
 
 ## Data Isolation
 

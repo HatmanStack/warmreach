@@ -18,6 +18,14 @@ class QuotaService:
     def report_usage(self, user_sub, operation, *, count=1):
         pass
 
+    def reserve_usage(self, user_sub, operation, *, count=1):
+        """No-op quota reservation — community edition has no cap."""
+        pass
+
+    def release_usage(self, user_sub, operation, *, count=1):
+        """No-op compensating release — community edition never reserves."""
+        pass
+
     def get_rate_limits(self, user_sub):
         return {
             'linkedin_interactions': {
@@ -26,6 +34,15 @@ class QuotaService:
                 'hourly_limit': 999999,
                 'hourly_used': 0,
             }
+        }
+
+    def get_quota_status(self, user_sub, operation):
+        """No-op quota status — community edition has no quotas."""
+        return {
+            'operation': operation,
+            'period_limit': 999999,
+            'period_used': 0,
+            'remaining': 999999,
         }
 
 

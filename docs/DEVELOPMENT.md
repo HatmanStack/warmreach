@@ -139,9 +139,10 @@ cd client && node --import tsx linkedin-inspect.mjs
 ```
 
 Disable individual layers for comparison testing:
+
 ```bash
-PUPPETEER_STEALTH=false cd client && node --import tsx linkedin-inspect.mjs
-PUPPETEER_FINGERPRINT_NOISE=false cd client && node --import tsx linkedin-inspect.mjs
+PUPPETEER_STEALTH=false node --import tsx client/linkedin-inspect.mjs
+PUPPETEER_FINGERPRINT_NOISE=false node --import tsx client/linkedin-inspect.mjs
 ```
 
 Visit `bot.sannysoft.com` in the opened browser to verify stealth mitigations are active.

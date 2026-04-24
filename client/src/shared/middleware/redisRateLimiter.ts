@@ -12,6 +12,15 @@ interface RateLimiterOptions {
 type RedisClient = InstanceType<typeof Redis.default>;
 
 let redisClient: RedisClient | null = null;
+let redisFallbackCounter = 0;
+
+export function getRedisFallbackCount(): number {
+  return redisFallbackCounter;
+}
+
+export function resetRedisFallbackCount(): void {
+  redisFallbackCounter = 0;
+}
 
 function getRedisClient(): RedisClient | null {
   if (redisClient) return redisClient;
@@ -51,6 +60,19 @@ function getRedisClient(): RedisClient | null {
   }
 }
 
+// Atomic INCR + set-expire-if-missing. Returns [count, ttl] so the caller can
+// build rate-limit headers without a second round-trip. Running as a Lua script
+// closes the TOCTTOU gap between a separate INCR, TTL read, and EXPIRE call.
+const INCR_WITH_TTL_SCRIPT = `
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('TTL', KEYS[1])
+if ttl == -1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return {count, ttl}
+`;
+
 export function createRedisRateLimiter(options: RateLimiterOptions = {}) {
   const { windowMs = 60000, max = 30, name = 'rate-limiter' } = options;
   const windowSec = Math.ceil(windowMs / 1000);
@@ -73,30 +95,16 @@ export function createRedisRateLimiter(options: RateLimiterOptions = {}) {
     const key = `ratelimit:${name}:${userId}`;
 
     try {
-      const multi = redis.multi();
-      multi.incr(key);
-      multi.ttl(key);
+      const result = (await redis.eval(INCR_WITH_TTL_SCRIPT, 1, key, String(windowSec))) as [
+        number,
+        number,
+      ];
 
-      const results = await multi.exec();
-
-      if (!results || results.length < 2) {
-        throw new Error('Unexpected Redis multi.exec() result');
+      if (!Array.isArray(result) || result.length < 2) {
+        throw new Error('Unexpected Redis eval result');
       }
 
-      const [incrResult, ttlResult] = results;
-      if (incrResult![0]) {
-        throw new Error(`Redis INCR failed: ${(incrResult![0] as Error).message}`);
-      }
-      if (ttlResult![0]) {
-        throw new Error(`Redis TTL failed: ${(ttlResult![0] as Error).message}`);
-      }
-
-      const count = incrResult![1] as number;
-      const ttl = ttlResult![1] as number;
-
-      if (ttl === -1) {
-        await redis.expire(key, windowSec);
-      }
+      const [count, ttl] = result;
 
       const remaining = Math.max(0, max - count);
       const resetTime = Date.now() + (ttl > 0 ? ttl * 1000 : windowMs);
@@ -119,9 +127,11 @@ export function createRedisRateLimiter(options: RateLimiterOptions = {}) {
       next();
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err));
+      redisFallbackCounter += 1;
       logger.warn('Redis rate limit check failed, using memory fallback', {
         error: error.message,
         userId,
+        fallbackCount: redisFallbackCounter,
       });
       memoryFallback(req, res, next);
     }

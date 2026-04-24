@@ -37,9 +37,9 @@ jobs:
       - name: Frontend TypeScript check
         working-directory: ./frontend
         run: npx tsc --noEmit
-      - name: Frontend tests
+      - name: Frontend tests (with coverage)
         working-directory: ./frontend
-        run: npm run test
+        run: npx vitest run --coverage
 
       # Client
       - uses: actions/setup-node@v6
@@ -53,9 +53,9 @@ jobs:
       - name: Client TypeScript check
         working-directory: ./client
         run: npx tsc --noEmit
-      - name: Client tests
+      - name: Client tests (with coverage)
         working-directory: ./client
-        run: npm run test
+        run: npx vitest run --coverage
 
       # Backend
       - uses: actions/setup-python@v6
@@ -71,3 +71,7 @@ jobs:
       - name: Backend tests
         working-directory: ./tests/backend
         run: python -m pytest unit/ -v --tb=short
+
+      # Skipped-test lint (shared with pro CI)
+      - name: Check for untracked test skips
+        run: scripts/check-skipped-tests.sh

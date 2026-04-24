@@ -17,11 +17,15 @@ export default defineConfig({
       reporter: ['text', 'html', 'lcov'],
       include: ['src/**/*.{js,ts}'],
       exclude: ['src/**/*.test.{js,ts}', 'src/setupTests.js'],
+      // Initial floors — set to current-minus-2 so a regression trips CI.
+      // Raise as test coverage grows. Stealth/Puppeteer code is intentionally
+      // hard to cover, so the bar is modest. TODO: raise toward 70 once the
+      // factory/mocks helpers in test-utils/ gain coverage.
       thresholds: {
-        lines: 50,
-        branches: 45,
-        functions: 50,
-        statements: 50,
+        lines: 56,
+        branches: 46,
+        functions: 59,
+        statements: 57,
       },
     },
 

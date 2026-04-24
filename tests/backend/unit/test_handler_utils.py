@@ -178,3 +178,140 @@ def test_get_user_edges_cached_separate_users(handler_utils):
     assert r1 == [{'user': 'u1'}]
     assert r2 == [{'user': 'u2'}]
     assert mock_edge_svc.query_all_edges.call_count == 2
+
+
+class TestParseDays:
+    """Tests for parse_days helper used by analytics-insights handlers."""
+
+    def test_returns_valid_int_from_string(self):
+        from shared_services.handler_utils import parse_days
+        assert parse_days({'days': '7'}) == 7
+
+    def test_returns_valid_int_from_number(self):
+        from shared_services.handler_utils import parse_days
+        assert parse_days({'days': 42}) == 42
+
+    def test_default_when_missing(self):
+        from shared_services.handler_utils import parse_days
+        assert parse_days({}) == 30
+        assert parse_days(None) == 30
+        assert parse_days({'other': 1}) == 30
+
+    def test_clamps_to_max(self):
+        from shared_services.handler_utils import parse_days
+        assert parse_days({'days': 500}) == 365
+        assert parse_days({'days': '9999'}) == 365
+
+    def test_fallback_on_non_numeric(self):
+        from shared_services.handler_utils import parse_days
+        assert parse_days({'days': 'banana'}) == 30
+        assert parse_days({'days': None}) == 30
+
+    def test_zero_and_negative_return_default(self):
+        from shared_services.handler_utils import parse_days
+        assert parse_days({'days': 0}) == 30
+        assert parse_days({'days': -5}) == 30
+
+    def test_honors_custom_bounds(self):
+        from shared_services.handler_utils import parse_days
+        assert parse_days({'days': 50}, default=7, max_=30) == 30
+        assert parse_days({}, default=7, max_=30) == 7
+
+
+class TestParallelScan:
+    """Tests for the parallel_scan helper (Phase-4 Task 9)."""
+
+    def _make_table(self, items_by_segment):
+        """Build a MagicMock table whose scan() responds per-Segment.
+
+        ``items_by_segment`` is a dict: {segment_index: list_of_pages}
+        where each page is a list of items. The last page of a segment
+        has no LastEvaluatedKey so pagination stops.
+        """
+        table = MagicMock()
+        call_log = []
+
+        def scan(**kwargs):
+            call_log.append(kwargs)
+            segment = kwargs['Segment']
+            pages = items_by_segment.get(segment, [[]])
+            # Advance based on how many times this segment has been called.
+            seg_calls = sum(1 for c in call_log if c['Segment'] == segment)
+            page_idx = seg_calls - 1
+            if page_idx >= len(pages):
+                return {'Items': []}
+            items = pages[page_idx]
+            response = {'Items': items}
+            if page_idx < len(pages) - 1:
+                response['LastEvaluatedKey'] = {'PK': f'cursor-{segment}-{page_idx}'}
+            return response
+
+        table.scan.side_effect = scan
+        table._call_log = call_log
+        return table
+
+    def test_fans_out_across_segments_and_collects_all_items(self):
+        from shared_services.handler_utils import parallel_scan
+
+        table = self._make_table({
+            0: [[{'id': 'a'}, {'id': 'b'}]],
+            1: [[{'id': 'c'}]],
+            2: [[{'id': 'd'}, {'id': 'e'}]],
+            3: [[{'id': 'f'}]],
+        })
+        items = parallel_scan(table, total_segments=4)
+        ids = sorted(i['id'] for i in items)
+        assert ids == ['a', 'b', 'c', 'd', 'e', 'f']
+        # All four segments were invoked.
+        segments_seen = {c['Segment'] for c in table._call_log}
+        assert segments_seen == {0, 1, 2, 3}
+        # Every call carries TotalSegments matching the helper arg.
+        assert all(c['TotalSegments'] == 4 for c in table._call_log)
+
+    def test_paginates_each_segment(self):
+        from shared_services.handler_utils import parallel_scan
+
+        table = self._make_table({
+            0: [[{'id': 'a'}], [{'id': 'b'}]],
+            1: [[{'id': 'c'}], [{'id': 'd'}]],
+        })
+        items = parallel_scan(table, total_segments=2)
+        assert sorted(i['id'] for i in items) == ['a', 'b', 'c', 'd']
+        # Each segment produced two calls (page 1 + page 2).
+        seg0_calls = [c for c in table._call_log if c['Segment'] == 0]
+        seg1_calls = [c for c in table._call_log if c['Segment'] == 1]
+        assert len(seg0_calls) == 2
+        assert len(seg1_calls) == 2
+        # The second page carries ExclusiveStartKey.
+        assert 'ExclusiveStartKey' in seg0_calls[1]
+
+    def test_forwards_filter_expression(self):
+        from shared_services.handler_utils import parallel_scan
+
+        table = self._make_table({0: [[]], 1: [[]]})
+        parallel_scan(
+            table,
+            total_segments=2,
+            scan_kwargs={
+                'FilterExpression': 'begins_with(SK, :sk)',
+                'ExpressionAttributeValues': {':sk': 'TIER#current'},
+            },
+        )
+        for call in table._call_log:
+            assert call['FilterExpression'] == 'begins_with(SK, :sk)'
+            assert call['ExpressionAttributeValues'] == {':sk': 'TIER#current'}
+
+    def test_rejects_caller_segment_and_total_segments(self):
+        """Caller-supplied Segment/TotalSegments must be ignored (helper manages)."""
+        from shared_services.handler_utils import parallel_scan
+
+        table = self._make_table({0: [[]], 1: [[]]})
+        parallel_scan(
+            table,
+            total_segments=2,
+            scan_kwargs={'Segment': 99, 'TotalSegments': 99, 'FilterExpression': 'x'},
+        )
+        for call in table._call_log:
+            assert call['Segment'] in (0, 1)
+            assert call['TotalSegments'] == 2
+            assert call['FilterExpression'] == 'x'

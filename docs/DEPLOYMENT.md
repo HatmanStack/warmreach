@@ -2,7 +2,7 @@
 
 This guide walks through deploying a fresh WarmReach stack from scratch. After the architecture redesign, all infrastructure lives in this repo — there is no separate control plane stack.
 
-> **Note:** Billing and tier management are available in WarmReach Pro.
+> **Note:** Billing, tier management, admin metrics (`AdminUserSub` parameter), and pro-only SAM parameters are available in WarmReach Pro. The community-edition SAM template keeps a pared-down parameter set; see `template.yaml` for the authoritative list.
 
 ## Prerequisites
 

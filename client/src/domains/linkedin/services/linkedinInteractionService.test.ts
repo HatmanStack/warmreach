@@ -208,4 +208,34 @@ describe('LinkedInInteractionService', () => {
       expect(typeof service.validateWorkflowParameters).toBe('function');
     });
   });
+
+  describe('Typed DI contracts (ADR-D)', () => {
+    it('accepts a hand-rolled contract-compliant fake for sessionManager and configManager', () => {
+      const fakeSession = {
+        getInstance: vi.fn(async () => ({})),
+        cleanup: vi.fn(async () => {}),
+        isSessionHealthy: vi.fn(async () => true),
+        getHealthStatus: vi.fn(async () => ({})),
+        recordError: vi.fn(async () => {}),
+        getBackoffController: vi.fn(() => null),
+        getSessionMetrics: vi.fn(() => null),
+        lastActivity: null,
+      };
+      const fakeConfig = {
+        get: vi.fn((_k: string, def: number) => def),
+        setOverride: vi.fn(),
+        getErrorHandlingConfig: vi.fn(() => ({ retryAttempts: 2, retryBaseDelay: 500 })),
+      };
+
+      const service = new LinkedInInteractionService({
+        sessionManager: fakeSession,
+        configManager: fakeConfig,
+      });
+
+      expect(service.maxRetries).toBe(2);
+      expect(service.baseRetryDelay).toBe(500);
+      expect(service.sessionManager).toBe(fakeSession);
+      expect(service.configManager).toBe(fakeConfig);
+    });
+  });
 });

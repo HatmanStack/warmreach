@@ -19,15 +19,28 @@ table = dynamodb.Table(TABLE_NAME)
 
 
 def lambda_handler(event, context):
-    setup_correlation_context(event, context)
+    """Remove the WSCONN item for a disconnecting client.
 
-    connection_id = event['requestContext']['connectionId']
+    Every exception is caught so a missing connectionId or DynamoDB failure
+    can't cause an uncaught Lambda crash during session teardown.
+    """
+    try:
+        setup_correlation_context(event, context)
 
-    from shared_services.websocket_service import WebSocketService
+        request_context = event.get('requestContext') or {}
+        connection_id = request_context.get('connectionId')
+        if not connection_id:
+            logger.warning('ws $disconnect missing connectionId')
+            return {'statusCode': 400, 'body': 'Missing connectionId'}
 
-    ws_service = WebSocketService(table, '')  # No endpoint needed for delete
+        from shared_services.websocket_service import WebSocketService
 
-    ws_service.delete_connection(connection_id)
-    logger.info('Disconnected: %s', connection_id)
+        ws_service = WebSocketService(table, '')  # No endpoint needed for delete
 
-    return {'statusCode': 200, 'body': 'Disconnected'}
+        ws_service.delete_connection(connection_id)
+        logger.info('Disconnected: %s', connection_id)
+
+        return {'statusCode': 200, 'body': 'Disconnected'}
+    except Exception:
+        logger.exception('ws $disconnect handler failure')
+        return {'statusCode': 500, 'body': 'Internal server error'}

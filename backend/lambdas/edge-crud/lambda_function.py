@@ -9,6 +9,7 @@ from errors.exceptions import AuthorizationError, ExternalServiceError, NotFound
 from shared_services.activity_service import ActivityService
 from shared_services.activity_writer import write_activity
 from shared_services.edge_data_service import EdgeDataService
+from shared_services.edge_opportunity_service import OptimisticConcurrencyError
 from shared_services.observability import setup_correlation_context
 from shared_services.request_utils import api_response, extract_user_id
 
@@ -250,6 +251,8 @@ def lambda_handler(event, context):
 
     except ValidationError as e:
         return api_response(400, {'error': e.message}, event)
+    except OptimisticConcurrencyError as e:
+        return api_response(409, {'error': e.message, 'code': e.code}, event)
     except NotFoundError as e:
         return api_response(404, {'error': e.message}, event)
     except AuthorizationError as e:

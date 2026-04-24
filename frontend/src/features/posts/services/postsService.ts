@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { analyticsApiService } from '@/shared/services/analyticsApiService';
 import { httpClient } from '@/shared/utils/httpClient';
 import { v4 as uuidv4 } from 'uuid';
@@ -5,6 +6,55 @@ import type { UserProfile } from '@/types';
 import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('PostsService');
+
+// --- Response schemas ------------------------------------------------------
+// Each LLM operation returns `{ success, data, ...rest }`. We validate the
+// parts we actually read. `.strip()` (zod's default) drops unknown fields so a
+// server-side addition (e.g. new PII columns) cannot leak through the
+// historical `as unknown as Record<string, unknown>` escape hatch.
+
+const GenerateIdeasDataSchema = z.object({
+  ideas: z.array(z.string()).optional(),
+});
+
+const GenerateIdeasResponseSchema = z.object({
+  success: z.boolean(),
+  error: z.string().optional(),
+  data: GenerateIdeasDataSchema.optional(),
+  // Some legacy backends bubble `ideas` at the top level.
+  ideas: z.array(z.string()).optional(),
+});
+
+const ResearchStartResponseSchema = z.object({
+  success: z.boolean(),
+  error: z.string().optional(),
+  data: z
+    .object({
+      job_id: z.string().optional(),
+      jobId: z.string().optional(),
+    })
+    .optional(),
+});
+
+const ResearchPollResponseSchema = z.object({
+  success: z.boolean().optional(),
+  data: z
+    .object({
+      content: z.string().optional(),
+      status: z.string().optional(),
+    })
+    .optional(),
+});
+
+const SynthesisResponseSchema = z.object({
+  success: z.boolean(),
+  error: z.string().optional(),
+  data: z
+    .object({
+      content: z.string().optional(),
+    })
+    .optional(),
+});
 
 /**
  * Remove sensitive/temporary fields before sending profile to backend.
@@ -39,49 +89,50 @@ function sanitizeProfileForBackend(userProfile?: UserProfile): Record<string, un
 
 export const postsService = {
   async generateIdeas(prompt?: string, userProfile?: UserProfile): Promise<string[]> {
+    const correlationId = uuidv4();
     try {
       const profileToSend = sanitizeProfileForBackend(userProfile);
 
-      const jobId = uuidv4();
-      const response = await analyticsApiService.sendLLMRequest('generate_ideas', {
+      const rawResponse = await analyticsApiService.sendLLMRequest('generate_ideas', {
         prompt: prompt || '',
         user_profile: profileToSend,
-        job_id: jobId,
+        job_id: correlationId,
       });
+
+      const response = GenerateIdeasResponseSchema.parse(rawResponse);
 
       if (!response.success) {
         throw new Error(response.error || 'Failed to generate ideas');
       }
 
-      const data = response.data as Record<string, unknown> | undefined;
-      const ideas =
-        (data?.ideas as string[]) ||
-        ((response as unknown as Record<string, unknown>).ideas as string[] | undefined);
+      const ideas = response.data?.ideas ?? response.ideas;
       if (Array.isArray(ideas) && ideas.length > 0) {
         return ideas;
       }
 
       throw new Error('No ideas returned from backend');
     } catch (error) {
-      logger.error('Error generating ideas', { error });
+      logger.error('Error generating ideas', { error, correlationId });
       throw error instanceof Error ? error : new Error('Failed to generate ideas');
     }
   },
 
   async researchTopics(topics: string[], userProfile?: UserProfile): Promise<string> {
+    const correlationId = uuidv4();
     try {
       const filteredProfile = sanitizeProfileForBackend(userProfile);
-      const response = await analyticsApiService.sendLLMRequest('research_selected_ideas', {
+      const rawResponse = await analyticsApiService.sendLLMRequest('research_selected_ideas', {
         selected_ideas: topics,
         user_profile: filteredProfile,
       });
 
+      const response = ResearchStartResponseSchema.parse(rawResponse);
+
       if (!response.success) {
         throw new Error(response.error || 'Failed to research topics');
       }
-      const responseData = response.data as Record<string, unknown> | undefined;
-      const jobId: string | undefined =
-        (responseData?.job_id as string) || (responseData?.jobId as string);
+
+      const jobId = response.data?.job_id ?? response.data?.jobId;
       if (!jobId) {
         throw new Error('No job_id returned for research request');
       }
@@ -95,29 +146,33 @@ export const postsService = {
       await sleep(intervalMs);
       for (let i = 0; i < maxChecks; i++) {
         try {
-          const poll = await httpClient.makeRequest<{
-            content?: string;
-            status?: string;
-          }>('llm', 'get_research_result', {
+          const rawPoll = await httpClient.makeRequest<unknown>('llm', 'get_research_result', {
             job_id: jobId,
             kind: 'RESEARCH',
+            correlation_id: correlationId,
           });
-          if (poll && poll.success === true) {
-            const pollData = poll as Record<string, unknown>;
-            const nestedData = (pollData.data as Record<string, unknown>) ?? undefined;
-            const content = (nestedData?.content as string) || '';
-            if (content && typeof content === 'string' && content.trim().length > 0) {
+          const poll = ResearchPollResponseSchema.parse(rawPoll);
+          if (poll.success === true) {
+            const content = poll.data?.content ?? '';
+            if (content.trim().length > 0) {
               return content;
             }
           }
-        } catch {
-          // ignore transient errors and continue polling
+        } catch (pollError) {
+          // Non-timeout polling errors are worth surfacing in logs even though
+          // we continue to retry — a sustained schema or auth failure should
+          // be visible rather than hidden.
+          logger.warn('Research poll attempt failed', {
+            correlationId,
+            attempt: i + 1,
+            error: pollError instanceof Error ? pollError.message : String(pollError),
+          });
         }
         if (i < maxChecks - 1) await sleep(intervalMs);
       }
       throw new Error('Deep research polling timed out');
     } catch (error) {
-      logger.error('Error researching topics', { error });
+      logger.error('Error researching topics', { error, correlationId });
       throw new Error('Failed to research topics');
     }
   },
@@ -126,11 +181,11 @@ export const postsService = {
     payload: { existing_content: string; research_content?: string; selected_ideas?: string[] },
     userProfile?: UserProfile
   ): Promise<{ content: string }> {
+    const correlationId = uuidv4();
     try {
       const profileToSend = sanitizeProfileForBackend(userProfile);
 
-      const jobId = uuidv4();
-      const response = await analyticsApiService.sendLLMRequest('synthesize_research', {
+      const rawResponse = await analyticsApiService.sendLLMRequest('synthesize_research', {
         existing_content: payload.existing_content,
         research_content: payload.research_content ?? null,
         selected_ideas:
@@ -138,22 +193,23 @@ export const postsService = {
             ? payload.selected_ideas
             : [],
         user_profile: profileToSend,
-        job_id: jobId,
+        job_id: correlationId,
       });
+
+      const response = SynthesisResponseSchema.parse(rawResponse);
 
       if (!response.success) {
         throw new Error(response.error || 'Failed to synthesize research');
       }
 
-      const data = response.data as Record<string, unknown> | undefined;
-      const content = (data?.content as string) || '';
+      const content = response.data?.content ?? '';
       if (content.trim()) {
         return { content: content.trim() };
       }
 
       throw new Error('No synthesis result returned from backend');
     } catch (error) {
-      logger.error('Error synthesizing research', { error });
+      logger.error('Error synthesizing research', { error, correlationId });
       throw error instanceof Error ? error : new Error('Failed to synthesize research');
     }
   },

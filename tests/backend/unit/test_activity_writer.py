@@ -161,3 +161,15 @@ class TestWriteActivity:
         mock_table.put_item.side_effect = RuntimeError('unexpected')
         # Should not raise
         write_activity(mock_table, 'user-123', 'message_sent')
+
+    def test_failure_logs_at_error_level_with_traceback(self, caplog):
+        """write_activity must log with exc_info so the traceback is captured."""
+        mock_table = MagicMock()
+        mock_table.put_item.side_effect = RuntimeError('boom')
+        with caplog.at_level(logging.ERROR):
+            write_activity(mock_table, 'user-123', 'message_sent')
+        err_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert err_records, 'expected an ERROR-level log record'
+        assert any(r.exc_info is not None for r in err_records), (
+            'expected logger.exception with exc_info set'
+        )

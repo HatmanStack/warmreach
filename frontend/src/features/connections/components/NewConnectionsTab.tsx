@@ -41,7 +41,7 @@ const NewConnectionsTab = ({
 
   // Local search query state for client-side filtering
   // Note: NewConnections shows "possible" contacts which are NOT ingested into RAGStack
-  // per ADR-003, so we use client-side filtering instead of semantic search
+  // per ADR-007, so we use client-side filtering instead of semantic search
   const [searchQuery, setSearchQuery] = useState('');
 
   // Use real data from props instead of fake data, filtering for 'possible' status only

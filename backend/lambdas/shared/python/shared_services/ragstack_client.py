@@ -118,7 +118,11 @@ class RAGStackClient:
 
         # Initialize circuit breaker with DynamoDB store for distributed state
         cb_table = _get_cb_table()
-        cb_store = CachedDynamoDBStore(cb_table) if cb_table else InMemoryStore()
+        # fail_open=True: if the circuit-breaker DynamoDB state table is itself
+        # unavailable, we prefer to let the RAGStack call proceed (the call will
+        # fail or succeed on its own merits) rather than cascade the DDB outage
+        # into a RAGStack outage.
+        cb_store = CachedDynamoDBStore(cb_table, fail_open=True) if cb_table else InMemoryStore()
 
         self._circuit_breaker = CircuitBreaker(
             service_name='ragstack',
@@ -163,7 +167,8 @@ class RAGStackClient:
                     response = self.session.post(
                         self.endpoint,
                         json=payload,
-                        timeout=30,
+                        # (connect, read) — fail fast on connect, allow 30s for server work.
+                        timeout=(5, 30),
                     )
 
                     # Handle HTTP errors
@@ -204,7 +209,7 @@ class RAGStackClient:
                     last_error = RAGStackError(f'Invalid JSON response: {e}')
                     logger.warning('JSON decode error on attempt %s/%s', attempt + 1, self.max_retries)
 
-                # WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
+                # WARNING: time.sleep() blocks the Lambda execution thread. See ADR-003.
                 # Exponential backoff before retry
                 if attempt < self.max_retries - 1:
                     delay = self.retry_delay * (2**attempt)

@@ -97,3 +97,37 @@ class TestWebSocketDisconnect:
             result = module.lambda_handler(event, lambda_context)
 
         assert result['statusCode'] == 200
+
+
+class TestErrorWrapper:
+    """Top-level try/except wrapper (ADR-A)."""
+
+    def test_missing_connection_id_returns_400(self, ws_table, lambda_context):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-disconnect')
+
+        event = {'requestContext': {}}
+        with patch.object(module, 'table', ws_table):
+            result = module.lambda_handler(event, lambda_context)
+        assert result['statusCode'] == 400
+
+    def test_missing_request_context_returns_400(self, ws_table, lambda_context):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-disconnect')
+
+        with patch.object(module, 'table', ws_table):
+            result = module.lambda_handler({}, lambda_context)
+        assert result['statusCode'] == 400
+
+    def test_delete_failure_returns_500(self, lambda_context):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-disconnect')
+
+        event = {'requestContext': {'connectionId': 'conn-x'}}
+
+        # Force delete_connection to raise.
+        with patch('shared_services.websocket_service.WebSocketService.delete_connection') as mock_del:
+            mock_del.side_effect = RuntimeError('DDB down')
+            result = module.lambda_handler(event, lambda_context)
+
+        assert result['statusCode'] == 500

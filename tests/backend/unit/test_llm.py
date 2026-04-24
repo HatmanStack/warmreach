@@ -1,4 +1,9 @@
-"""Handler-level tests for LLM Lambda function."""
+"""Handler-level tests for LLM Lambda function (community edition).
+
+Pro-only handler tests (`summarize_evidence`, feedback operations, metered
+quota paths) are kept in the pro source copy and are not ported here because
+the corresponding handlers do not exist in the community LLM Lambda.
+"""
 import json
 from unittest.mock import MagicMock, patch
 

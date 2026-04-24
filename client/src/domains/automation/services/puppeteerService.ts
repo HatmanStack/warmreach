@@ -34,6 +34,25 @@ import { responseTimingInterceptor } from '../utils/responseTimingInterceptor.js
 // We manage our own headless evasion natively via getHeadlessEvasionScript().
 
 /**
+ * Maximum time (ms) to wait for puppeteer.launch to resolve before giving up.
+ * Mirrors ADR-A: fail-fast timeouts on every external call.
+ */
+export const PUPPETEER_LAUNCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Raised when puppeteer.launch exceeds PUPPETEER_LAUNCH_TIMEOUT_MS.
+ */
+export class BrowserLaunchTimeoutError extends Error {
+  code: string;
+
+  constructor(message = 'Browser failed to launch within timeout', options: ErrorOptions = {}) {
+    super(message, options);
+    this.name = 'BrowserLaunchTimeoutError';
+    this.code = 'BROWSER_LAUNCH_TIMEOUT';
+  }
+}
+
+/**
  * Detect a system-installed Chrome/Chromium binary.
  * Returns the first path found, or undefined to use bundled Chromium.
  */
@@ -164,15 +183,39 @@ export class PuppeteerService {
 
       const executablePath = detectSystemChrome();
 
-      this.browser = await puppeteer.launch({
+      // Wrap puppeteer.launch with a hard wall-clock timeout. Puppeteer's
+      // internal `timeout` option guards Chromium-handshake steps but can hang
+      // before they begin (e.g. stuck DBus on Linux). The outer race guarantees
+      // we never block the Electron main process longer than the SLA.
+      const launchPromise = puppeteer.launch({
         headless: effectiveHeadless,
         slowMo: config.puppeteer.slowMo,
         defaultViewport: null,
         args: launchArgs,
         ignoreDefaultArgs: ['--enable-automation'],
+        timeout: PUPPETEER_LAUNCH_TIMEOUT_MS,
         ...(userDataDir ? { userDataDir } : {}),
         ...(executablePath ? { executablePath } : {}),
       });
+
+      let launchTimeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        launchTimeoutId = setTimeout(
+          () =>
+            reject(
+              new BrowserLaunchTimeoutError(
+                `puppeteer.launch exceeded ${PUPPETEER_LAUNCH_TIMEOUT_MS}ms`
+              )
+            ),
+          PUPPETEER_LAUNCH_TIMEOUT_MS
+        );
+      });
+
+      try {
+        this.browser = await Promise.race([launchPromise, timeoutPromise]);
+      } finally {
+        if (launchTimeoutId !== undefined) clearTimeout(launchTimeoutId);
+      }
 
       this.page = await this.browser!.newPage();
 

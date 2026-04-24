@@ -353,7 +353,7 @@ class DynamoDBApiService(BaseService):
     def _is_safe_url(self, url: str) -> bool:
         """Validate URL is safe (HTTPS, non-private IP, valid hostname).
 
-        Uses parse-only validation without DNS resolution (ADR-1).
+        Uses parse-only validation without DNS resolution (ADR-001).
         """
         try:
             parsed = urlparse(url)

@@ -204,12 +204,38 @@ def lambda_handler(event, _context):
                     logger.error('Feature flag check failed for %s, denying request', feature_to_check)
                     return api_response(503, {'error': 'Feature availability check failed'}, event)
 
+        # Pre-call quota reservation (ADR-B). In the community edition the
+        # reservation and release are no-ops, but we keep the plumbing so the
+        # handler contract stays identical between editions.
+        reserved = False
+        if op in METERED_OPS and _quota_service:
+            try:
+                _quota_service.reserve_usage(user_id, op, count=1)
+                reserved = True
+            except QuotaExceededError:
+                raise
+            except Exception:
+                logger.warning('reserve_usage failed for %s, allowing request', op)
+
         # Dispatch via routing table
         handler = HANDLERS[op]
-        result = handler(body, user_id, _llm_service)
+        try:
+            result = handler(body, user_id, _llm_service)
+        except Exception:
+            if reserved and _quota_service:
+                try:
+                    _quota_service.release_usage(user_id, op, count=1)
+                except Exception:
+                    logger.exception('release_usage failed for %s', op)
+            raise
 
         # If the handler returned an api_response (e.g. 400 validation error), pass it through
         if isinstance(result, dict) and 'statusCode' in result:
+            if reserved and _quota_service and result.get('statusCode', 200) >= 400:
+                try:
+                    _quota_service.release_usage(user_id, op, count=1)
+                except Exception:
+                    logger.exception('release_usage failed for %s after handler error response', op)
             return result
 
         # Emit activity events for successful operations
@@ -223,15 +249,7 @@ def lambda_handler(event, _context):
             elif op in DEEP_RESEARCH_OPS:
                 write_activity(table, user_id, 'ai_deep_research')
 
-        # Report usage for metered operations after success.
-        if op in METERED_OPS and _quota_service:
-            try:
-                _quota_service.report_usage(user_id, op, count=1)
-            except QuotaExceededError:
-                raise
-            except Exception:
-                logger.warning('Usage reporting failed for %s, allowing request', op)
-
+        # Usage was already reserved pre-call; nothing to report on success.
         return api_response(200, result, event)
 
     except QuotaExceededError as e:

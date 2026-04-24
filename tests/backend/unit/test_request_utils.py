@@ -129,3 +129,47 @@ class TestApiResponse:
         event = {'headers': {'origin': 'http://localhost:5173'}}
         resp = mod.api_response(200, {}, event, allowed_methods='GET,OPTIONS')
         assert resp['headers']['Access-Control-Allow-Methods'] == 'GET,OPTIONS'
+
+
+class TestApiError:
+    """Structured {error: {code, message, details?}} response helper."""
+
+    def test_basic_shape(self):
+        import json
+        from shared_services.request_utils import api_error
+
+        resp = api_error('VALIDATION_ERROR', 'Missing field: name')
+        body = json.loads(resp['body'])
+        assert resp['statusCode'] == 400
+        assert body == {
+            'error': {
+                'code': 'VALIDATION_ERROR',
+                'message': 'Missing field: name',
+            }
+        }
+
+    def test_includes_details_when_provided(self):
+        import json
+        from shared_services.request_utils import api_error
+
+        resp = api_error(
+            'INVALID_INPUT',
+            'Bad input',
+            status_code=422,
+            details={'field': 'email', 'reason': 'format'},
+        )
+        body = json.loads(resp['body'])
+        assert resp['statusCode'] == 422
+        assert body['error']['details'] == {'field': 'email', 'reason': 'format'}
+
+    def test_passes_cors_event_through(self):
+        from shared_services.request_utils import api_error
+
+        resp = api_error(
+            'NOT_FOUND',
+            'x',
+            status_code=404,
+            event={'headers': {'origin': 'http://localhost:5173'}},
+        )
+        # Headers populated via cors_headers path.
+        assert 'Content-Type' in resp['headers']

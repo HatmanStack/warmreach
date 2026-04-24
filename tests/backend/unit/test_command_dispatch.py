@@ -281,11 +281,71 @@ class TestGetCommand:
         assert result['statusCode'] == 404
 
 
-class TestCheckRateLimitFailClosed:
-    """Verify _check_rate_limit denies on unexpected errors (fail-closed)."""
+class TestReserveAndCreateCommandTransactional:
+    """Verify _reserve_and_create_command is atomic (rate-limit + create commit together)."""
+
+    def test_rate_limit_conditional_check_raises_rate_limit_exceeded(self, ws_table, lambda_context):
+        """TransactionCanceledException with ConditionalCheckFailed on the rate-limit
+        update maps to RateLimitExceededError, and no command record is persisted."""
+        from conftest import load_lambda_module
+        module = load_lambda_module('command-dispatch')
+
+        from botocore.exceptions import ClientError
+
+        error = ClientError(
+            {
+                'Error': {'Code': 'TransactionCanceledException', 'Message': 'canceled'},
+                'CancellationReasons': [
+                    {'Code': 'ConditionalCheckFailed'},
+                    {'Code': 'None'},
+                ],
+            },
+            'TransactWriteItems',
+        )
+
+        with patch.object(module, 'table', ws_table):
+            with patch.object(module.ddb_client, 'transact_write_items', side_effect=error):
+                with pytest.raises(module.RateLimitExceededError):
+                    module._reserve_and_create_command('user-123', 'cmd-1', 't', {})
+
+        # Neither write should have committed.
+        assert ws_table.get_item(
+            Key={'PK': 'COMMAND#cmd-1', 'SK': '#METADATA'}
+        ).get('Item') is None
+
+    def test_put_condition_failure_rolls_back_rate_limit_increment(self, ws_table, lambda_context):
+        """If the Put side of the transaction fails, the rate-limit increment must
+        also be rolled back (atomicity)."""
+        from conftest import load_lambda_module
+        module = load_lambda_module('command-dispatch')
+
+        from botocore.exceptions import ClientError
+
+        # Simulate TransactWriteItems cancelling for a non-rate-limit reason
+        # (e.g. the Put ConditionExpression 'attribute_not_exists(PK)' failed).
+        error = ClientError(
+            {
+                'Error': {'Code': 'TransactionCanceledException', 'Message': 'canceled'},
+                'CancellationReasons': [
+                    {'Code': 'None'},
+                    {'Code': 'ConditionalCheckFailed'},
+                ],
+            },
+            'TransactWriteItems',
+        )
+
+        with patch.object(module, 'table', ws_table):
+            with patch.object(module.ddb_client, 'transact_write_items', side_effect=error):
+                with pytest.raises(module.RateLimitUnavailableError):
+                    module._reserve_and_create_command('user-123', 'cmd-2', 't', {})
+
+        # No command record should exist (atomic rollback).
+        assert ws_table.get_item(
+            Key={'PK': 'COMMAND#cmd-2', 'SK': '#METADATA'}
+        ).get('Item') is None
 
     def test_unexpected_client_error_raises_unavailable(self, ws_table, lambda_context):
-        """Unexpected ClientError (not ConditionalCheckFailedException) must raise RateLimitUnavailableError."""
+        """Unexpected ClientError (not TransactionCanceledException) must raise RateLimitUnavailableError."""
         from conftest import load_lambda_module
         module = load_lambda_module('command-dispatch')
 
@@ -293,12 +353,12 @@ class TestCheckRateLimitFailClosed:
 
         error = ClientError(
             {'Error': {'Code': 'InternalServerError', 'Message': 'DDB failure'}},
-            'UpdateItem',
+            'TransactWriteItems',
         )
         with patch.object(module, 'table', ws_table):
-            with patch.object(ws_table, 'update_item', side_effect=error):
+            with patch.object(module.ddb_client, 'transact_write_items', side_effect=error):
                 with pytest.raises(module.RateLimitUnavailableError):
-                    module._check_rate_limit('user-123')
+                    module._reserve_and_create_command('user-123', 'cmd-3', 't', {})
 
     def test_generic_exception_raises_unavailable(self, ws_table, lambda_context):
         """Generic Exception must raise RateLimitUnavailableError."""
@@ -306,41 +366,32 @@ class TestCheckRateLimitFailClosed:
         module = load_lambda_module('command-dispatch')
 
         with patch.object(module, 'table', ws_table):
-            with patch.object(ws_table, 'update_item', side_effect=RuntimeError('boom')):
+            with patch.object(module.ddb_client, 'transact_write_items', side_effect=RuntimeError('boom')):
                 with pytest.raises(module.RateLimitUnavailableError):
-                    module._check_rate_limit('user-123')
+                    module._reserve_and_create_command('user-123', 'cmd-4', 't', {})
 
-    def test_successful_update_returns_true(self, ws_table, lambda_context):
-        """Successful update_item returns True (allowed)."""
-        from conftest import load_lambda_module
-        module = load_lambda_module('command-dispatch')
-
-        with patch.object(module, 'table', ws_table):
-            result = module._check_rate_limit('user-123')
-        assert result is True
-
-    def test_conditional_check_failed_returns_false(self, ws_table, lambda_context):
-        """ConditionalCheckFailedException returns False (rate limited)."""
+    def test_provisioned_throughput_exceeded_does_not_return_429(self, ws_table, lambda_context):
+        """ProvisionedThroughputExceededException is a network/backend error, not a
+        rate-limit hit; it must not surface as 429 (which would trigger the wrong
+        client retry strategy)."""
         from conftest import load_lambda_module
         module = load_lambda_module('command-dispatch')
 
         from botocore.exceptions import ClientError
 
         error = ClientError(
-            {'Error': {'Code': 'ConditionalCheckFailedException', 'Message': 'Limit exceeded'}},
-            'UpdateItem',
+            {'Error': {'Code': 'ProvisionedThroughputExceededException', 'Message': 'hot partition'}},
+            'TransactWriteItems',
         )
         with patch.object(module, 'table', ws_table):
-            with patch.object(ws_table, 'update_item', side_effect=error):
-                result = module._check_rate_limit('user-123')
-        assert result is False
+            with patch.object(module.ddb_client, 'transact_write_items', side_effect=error):
+                with pytest.raises(module.RateLimitUnavailableError):
+                    module._reserve_and_create_command('user-123', 'cmd-5', 't', {})
 
     def test_dynamo_error_returns_503_to_caller(self, ws_table, lambda_context):
-        """DynamoDB error during rate limit check should result in 503 response."""
+        """DynamoDB error during reserve+create should surface as 503 to the caller."""
         from conftest import load_lambda_module
         module = load_lambda_module('command-dispatch')
-
-        from botocore.exceptions import ClientError
 
         # Pre-populate agent connection
         ws_table.put_item(Item={
@@ -354,19 +405,31 @@ class TestCheckRateLimitFailClosed:
             'connectedAt': 1000,
         })
 
-        error = ClientError(
-            {'Error': {'Code': 'InternalServerError', 'Message': 'DDB failure'}},
-            'UpdateItem',
-        )
-
         event = _make_http_event(body={'type': 'linkedin:search', 'payload': {}})
         with patch.object(module, 'table', ws_table), \
-             patch.object(module, '_check_rate_limit', side_effect=module.RateLimitUnavailableError('fail')):
+             patch.object(module, '_reserve_and_create_command',
+                          side_effect=module.RateLimitUnavailableError('fail')):
             result = module.lambda_handler(event, lambda_context)
 
         assert result['statusCode'] == 503
         body = json.loads(result['body'])
         assert body['code'] == 'RATE_LIMIT_UNAVAILABLE'
+
+    def test_successful_transaction_creates_command_record(self, ws_table, lambda_context):
+        """Happy path: transact_write_items succeeds and command record is written."""
+        from conftest import load_lambda_module
+        module = load_lambda_module('command-dispatch')
+
+        with patch.object(module, 'table', ws_table):
+            item = module._reserve_and_create_command('user-123', 'cmd-happy', 'linkedin:search', {'q': 'x'})
+
+        assert item['commandId'] == 'cmd-happy'
+        assert item['status'] == 'pending'
+        stored = ws_table.get_item(
+            Key={'PK': 'COMMAND#cmd-happy', 'SK': '#METADATA'}
+        ).get('Item')
+        assert stored is not None
+        assert stored['status'] == 'pending'
 
 
 class TestActivityWriterInstrumentation:

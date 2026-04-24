@@ -445,3 +445,118 @@ class TestValidateJwt:
 
         assert claims is not None
         assert claims['sub'] == 'user-123'
+
+
+class TestJwksCache:
+    """JWKS caching: TTL reuse, stale-on-failure fallback, 500 on no-cache failure."""
+
+    def _reset_cache(self, module):
+        module._JWKS_CACHE['data'] = None
+        module._JWKS_CACHE['fetched_at'] = 0.0
+
+    def test_first_call_fetches(self):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-connect')
+        self._reset_cache(module)
+        sample = {'keys': [{'kid': 'k1'}]}
+
+        with patch.object(module, 'fetch_jwks', return_value=sample) as mocked:
+            result = module._get_jwks_client()
+
+        assert result == sample
+        assert mocked.call_count == 1
+
+    def test_second_call_within_ttl_uses_cache(self):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-connect')
+        self._reset_cache(module)
+        sample = {'keys': [{'kid': 'k1'}]}
+
+        with patch.object(module, 'fetch_jwks', return_value=sample) as mocked:
+            module._get_jwks_client()
+            module._get_jwks_client()
+
+        assert mocked.call_count == 1
+
+    def test_expired_ttl_refetches(self):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-connect')
+        self._reset_cache(module)
+        module._JWKS_CACHE['data'] = {'keys': [{'kid': 'stale'}]}
+        # Simulate a fetch that happened long ago (older than TTL).
+        module._JWKS_CACHE['fetched_at'] = 0.0
+
+        fresh = {'keys': [{'kid': 'fresh'}]}
+        with patch.object(module, 'fetch_jwks', return_value=fresh) as mocked:
+            result = module._get_jwks_client()
+
+        assert result == fresh
+        assert mocked.call_count == 1
+
+    def test_fetch_failure_with_cache_serves_stale(self):
+        from conftest import load_lambda_module
+        import time as _time
+        module = load_lambda_module('websocket-connect')
+        self._reset_cache(module)
+        stale = {'keys': [{'kid': 'stale'}]}
+        # Prime cache with something older than TTL but within stale grace.
+        module._JWKS_CACHE['data'] = stale
+        module._JWKS_CACHE['fetched_at'] = _time.time() - (module._JWKS_TTL_SECONDS + 60)
+
+        with patch.object(module, 'fetch_jwks', side_effect=RuntimeError('net')):
+            result = module._get_jwks_client()
+
+        assert result == stale
+
+    def test_fetch_failure_without_cache_raises(self):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-connect')
+        self._reset_cache(module)
+
+        with patch.object(module, 'fetch_jwks', side_effect=RuntimeError('net')):
+            with pytest.raises(module.JWKSUnavailableError):
+                module._get_jwks_client()
+
+    def test_fetch_jwks_retries_once(self):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-connect')
+        import urllib.request as urlreq
+
+        call_counter = {'n': 0}
+
+        class _FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                import json as _json
+                return _json.dumps({'keys': []}).encode()
+
+        def fake_urlopen(url, timeout=None):
+            call_counter['n'] += 1
+            if call_counter['n'] == 1:
+                raise RuntimeError('transient')
+            return _FakeResp()
+
+        with patch.object(urlreq, 'urlopen', side_effect=fake_urlopen):
+            result = module.fetch_jwks()
+
+        assert result == {'keys': []}
+        assert call_counter['n'] == 2
+
+    def test_handler_returns_500_on_jwks_unavailable(self, lambda_context):
+        from conftest import load_lambda_module
+        module = load_lambda_module('websocket-connect')
+
+        event = _make_connect_event()
+
+        def raise_unavailable(_token):
+            raise module.JWKSUnavailableError('fetch failed')
+
+        with patch.object(module, '_validate_jwt', side_effect=raise_unavailable):
+            result = module.lambda_handler(event, lambda_context)
+
+        assert result['statusCode'] == 500

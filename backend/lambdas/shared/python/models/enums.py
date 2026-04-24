@@ -22,7 +22,7 @@ def classify_conversion_likelihood(profile: dict[str, Any] | None, edge: dict[st
     """
     Classify conversion likelihood based on profile completeness and edge data.
 
-    Classification Rules (per ADR-003):
+    Classification Rules (per ADR-002):
     - HIGH: Has headline AND summary AND (added < 7 days) AND (attempts == 0)
     - LOW: Missing headline OR missing summary OR (attempts > 2)
     - MEDIUM: Everything else

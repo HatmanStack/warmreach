@@ -5,6 +5,70 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-04-24
+
+Second audit remediation (plan: `2026-04-23-audit-warmreach-pro`). Full adversarial pipeline across 6 phases produced a VERIFIED verdict.
+
+### Fixed
+
+- **Security:** command-dispatch wraps `json.loads` in try/except — malformed JSON body returns 400 instead of unhandled 500
+- **Security:** Redis rate-limiter INCR + EXPIRE collapsed into an atomic Lua script — closes TOCTTOU gap at window-boundary expiry
+- **Security:** `DEV_MODE=true` emits a warn-once log on activation so a misconfigured prod environment is surfaced
+- **Security:** websocket-connect logs a startup warning when `COGNITO_CLIENT_ID` is unset (cross-application JWT reuse check was silently skipped)
+- **Security:** Pin `nahuelnucera/ministack` CI image to `sha256:499c135a…bc6f7bc6` for supply-chain parity with SHA-pinned GitHub Actions
+- **Backend:** Quota rollback — decrement daily counter when the monthly step fails, so a user at `daily=N monthly=CAP` no longer permanently bleeds a daily unit per failed request
+- **Backend:** command-dispatch status flow is transactional — `TransactWriteItems` binds the rate-limit increment to the command-record write
+- **Backend:** `_handle_summarize_evidence` routes through `svc._openai_responses_create` + `@wrap_llm_errors` so transient OpenAI errors get the shared retry / error-mapping path
+- **Backend:** Narrow `wrap_llm_errors` from `BaseException` to `Exception` — `SystemExit` / `KeyboardInterrupt` / `GeneratorExit` propagate untouched
+- **Backend:** Frontend `VITE_API_TIMEOUT_MS` fallback corrected (was 27 h, now 30 s)
+- **Backend:** Add request timeouts to RAGStack GraphQL client
+- **Backend:** Retry transient OpenAI errors with exponential backoff
+- **Backend:** LLM reserves quota before OpenAI call (closes cost-leak window on client cancellation)
+- **Backend:** WebSocket `$default` and `$disconnect` wrapped in top-level try/except with correlation context
+- **Backend:** Opportunity-tag retry bounded with exponential backoff
+- **Backend:** Stripe webhook idempotency TTL extended from 7 days to 90 days
+- **Backend:** Fire-and-forget paths log errors before swallowing
+- **Backend:** circuit-breaker `set_state` stays best-effort on non-`ClientError`
+- **Backend:** Error response schema normalized across handlers
+- **Backend:** command-dispatch fixed-window rate-limit semantics documented (2× burst at window boundary is an accepted tradeoff)
+- **Client:** Puppeteer `launch()` wrapped with 30 s timeout
+- **Client:** Async logger with bounded queue replaces `fs.*Sync` + unbounded memory
+- **Client:** In-memory rate-limiter map bounded with periodic prune
+- **Client:** Redundant per-request cleanup in `rateLimiter.ts` removed (interval covers it)
+- **Client:** `asOpsContext` renamed to `unsafeAsOpsContext` so the `as unknown as` escape hatch is explicit at call sites
+
+### Added
+
+- **Backend:** `shared_services/protocols.py` — typed `Protocol` definitions for `handler_utils` service DI (`QuotaServiceProto`, `FeatureFlagServiceProto`, `HandlerFn`, `ServiceResolver`)
+- **Backend:** `tests/backend/unit/test_cold_start_imports.py` — subprocess-based import ceilings per hot Lambda to lock in Phase-4 cold-start gains
+- **Backend:** `tests/backend/unit/test_monetization_parity.py` — locks pro / stub public surface (exports + method signatures)
+- **Backend:** `parse_days` helper in `handler_utils.py` (removes 25+ duplications across analytics-insights handlers)
+- **Backend:** `parallel_scan` helper in `handler_utils.py` — `admin-metrics` full-table and tier scans plus `digest-coordinator` paid-users scan use `TotalSegments`
+- **Backend:** Shared services lazy-imported via PEP 562 `__getattr__` — bounded cold-start graph on `analytics-insights`, `edge-crud`, `ragstack-ops`
+- **Platform (SAM):** X-Ray tracing enabled globally (`Tracing: Active`)
+- **Platform (SAM):** DLQs + CloudWatch alarms on every async-invoked Lambda
+- **Platform (SAM):** Reserved concurrency on `command-dispatch` and `llm`
+- **Platform (SAM):** p99 duration and throttle alarms for hot Lambdas
+- **Platform (SAM):** WebSocket connect caches Cognito JWKS (6 h TTL, 24 h stale grace, 2 s fetch timeout, single retry)
+- **Platform (SAM):** API Gateway access-log format redacts `queryStringParameters.token`
+- **CI:** Coverage floors wired for frontend, client, and admin Vitest workspaces at current baselines
+- **CI:** `scripts/check-overlay-drift.sh` — pull-request gate across the 64-entry `.sync/config.json overlay_mappings`
+- **CI:** `scripts/check-skipped-tests.sh` — `.skip` / `xit` / `@pytest.mark.skip` require `TODO(#NNN)` or issue/PR URL on the same or previous line
+- **CI:** `docs-lint.yml` — markdownlint-cli2 + lychee, non-blocking initially (flip-required target 2026-04-30)
+- **Frontend:** `Dashboard.tsx` smoke test (renders, tabs, sign-out)
+- **Docs:** 8 ADRs formalized with canonical numbering — SSRF-safe URL validation, conversion-likelihood classification, RAGStack rate-limit sleep, SSM-backed secret TTL cache, followup default thresholds, JWT signature-not-verified tradeoff, client-side filtering for non-ingested connections, browser-side timezone auto-detection
+- **Docs:** `docs/DEVELOPMENT.md` bash fix, `docs/API_REFERENCE.md` tier-marker legend, `docs/CONFIGURATION.md` Cognito parity / RAGStack per-Lambda / `VITE_AWS_REGION` optional / `VITE_API_TIMEOUT_MS` / feature-flag catalog (28 flags), `docs/DEPLOYMENT.md` Bedrock region caveat + SAM parameter table with `RagstackGraphqlEndpoint` / `RagstackApiKey` / `AdminUserSub`, `docs/TROUBLESHOOTING.md` WebSocket (6 failure modes), admin, environment-parity sections
+- **Docs:** `docs/plans/README.md` status index across every dated plan folder
+- **Hygiene:** Removed tracked `.coverage` / `linkedin-inspect.log` artifacts and `electron-release.yml.disabled`
+
+### Changed
+
+- **Backend:** `handler_utils.py` service-DI signatures use `Protocol` types instead of `Any`
+- **Backend:** `LLMService._openai_responses_create` is the single OpenAI retry entry point; `_summarize_evidence_openai_call` routes through it
+- **Backend:** circuit-breaker `.state` docstring documents that `open -> half_open` is race-safe only under a single-threaded executor
+- **Client:** `search` and `profile` controllers fully typed (drop `unknown` casts in LinkedIn service DI)
+- **Frontend:** `posts` service response schema-validated
+
 ## [1.13.0] - 2026-04-16
 
 ### Fixed

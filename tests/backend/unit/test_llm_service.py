@@ -2,6 +2,10 @@
 
 Community LLM overlay returns error dicts instead of raising exceptions,
 has no analyze_tone method, and no per-call timeout support.
+
+Pro-side additions in this PR (Phase 5 retry-decorator tests, skipped-test
+lint gates) are not ported because the community overlay exercises a
+different error surface — the retry/wrap semantics do not apply here.
 """
 from unittest.mock import MagicMock
 

@@ -70,5 +70,12 @@ def write_activity(
 
         table.put_item(Item=item)
 
-    except Exception as e:
-        logger.warning('Failed to write activity record: %s', e)
+    except Exception:
+        logger.exception(
+            'Failed to write activity record',
+            extra={
+                'subsystem': 'activity_writer',
+                'user_id': user_id,
+                'event_type': event_type,
+            },
+        )

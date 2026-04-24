@@ -181,7 +181,7 @@ class IngestionService:
         Upload content to S3 via presigned URL.
 
         Synchronous retry in Lambda. Max block time: ~0.9 seconds (2 retries with exponential backoff).
-        WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
+        WARNING: time.sleep() blocks the Lambda execution thread. See ADR-003.
         Consider Step Functions for long-running operations.
 
         Args:
@@ -234,7 +234,7 @@ class IngestionService:
                 last_error = UploadError(f'S3 upload request failed: {e}')
                 logger.warning('Upload error on attempt %s: %s', attempt + 1, e)
 
-            # WARNING: time.sleep() blocks the Lambda execution thread. See ADR-3.
+            # WARNING: time.sleep() blocks the Lambda execution thread. See ADR-003.
             # Exponential backoff before retry
             if attempt < self.max_upload_retries - 1:
                 delay = self.upload_retry_delay * (2**attempt)

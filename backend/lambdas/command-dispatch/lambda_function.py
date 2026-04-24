@@ -23,6 +23,8 @@ WEBSOCKET_ENDPOINT = os.environ.get('WEBSOCKET_ENDPOINT', '')
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(TABLE_NAME)
+# Low-level client used for TransactWriteItems (atomic rate-limit + create).
+ddb_client = boto3.client('dynamodb')
 
 # Command TTL: 24 hours
 COMMAND_TTL_SECONDS = 86400
@@ -36,6 +38,10 @@ _ALLOWED_METHODS = 'GET,POST,OPTIONS'
 
 class RateLimitUnavailableError(Exception):
     """Raised when the rate limit check fails due to a backend error (not actual rate limiting)."""
+
+
+class RateLimitExceededError(Exception):
+    """Raised when the rate limit would be exceeded (surfaced as 429 by handler)."""
 
 
 def lambda_handler(event, context):
@@ -67,61 +73,139 @@ def lambda_handler(event, context):
     return api_response(404, {'error': 'Not found'}, event, allowed_methods=_ALLOWED_METHODS)
 
 
-def _check_rate_limit(user_sub):
-    """Check per-user command rate limit using DynamoDB atomic counter.
+def _reserve_and_create_command(user_sub, command_id, command_type, payload):
+    """Atomically reserve a rate-limit slot and create the pending command record.
 
-    Returns True if allowed, False if rate-limited.
-    Raises RateLimitUnavailableError on backend failures (fail closed).
+    Uses DynamoDB TransactWriteItems so the rate-limit counter increment and the
+    command record write either both succeed or both fail. This closes the gap
+    where a rate-limit increment could commit without a corresponding command
+    record (or vice versa).
+
+    Returns the created command record (dict) on success.
+
+    Raises:
+        RateLimitExceededError: rate-limit condition failed; no writes committed.
+        RateLimitUnavailableError: DynamoDB call failed for reasons other than
+            the rate-limit condition (fail closed).
     """
+    from boto3.dynamodb.types import TypeSerializer
+    from botocore.exceptions import ClientError
+
     now = int(time.time())
-    window_key = now // RATE_LIMIT_WINDOW  # bucket per minute
+    # Fixed-window bucket (epoch-aligned). A burst at the boundary can span two
+    # buckets and observe up to 2x RATE_LIMIT_MAX — this is an accepted tradeoff
+    # for a simple, atomic DynamoDB-backed counter. Do not "fix" by switching
+    # windows without also switching to a sliding-window algorithm.
+    window_key = now // RATE_LIMIT_WINDOW
+    item = {
+        'PK': f'COMMAND#{command_id}',
+        'SK': '#METADATA',
+        'commandId': command_id,
+        'cognitoSub': user_sub,
+        'type': command_type,
+        'payload': payload,
+        'status': 'pending',
+        'createdAt': now,
+        'ttl': now + COMMAND_TTL_SECONDS,
+    }
+
+    serializer = TypeSerializer()
+    serialized_item = {k: serializer.serialize(v) for k, v in item.items()}
 
     try:
-        from botocore.exceptions import ClientError
-
-        table.update_item(
-            Key={'PK': f'USER#{user_sub}', 'SK': f'RATELIMIT#cmd#{window_key}'},
-            UpdateExpression='ADD #count :inc SET #ttl = if_not_exists(#ttl, :ttl)',
-            ConditionExpression='attribute_not_exists(#count) OR #count < :limit',
-            ExpressionAttributeNames={'#count': 'count', '#ttl': 'ttl'},
-            ExpressionAttributeValues={
-                ':inc': 1,
-                ':ttl': now + RATE_LIMIT_WINDOW + 60,  # TTL with buffer
-                ':limit': RATE_LIMIT_MAX,
-            },
+        ddb_client.transact_write_items(
+            TransactItems=[
+                {
+                    'Update': {
+                        'TableName': TABLE_NAME,
+                        'Key': {
+                            'PK': {'S': f'USER#{user_sub}'},
+                            'SK': {'S': f'RATELIMIT#cmd#{window_key}'},
+                        },
+                        'UpdateExpression': 'ADD #count :inc SET #ttl = if_not_exists(#ttl, :ttl)',
+                        'ConditionExpression': 'attribute_not_exists(#count) OR #count < :limit',
+                        'ExpressionAttributeNames': {'#count': 'count', '#ttl': 'ttl'},
+                        'ExpressionAttributeValues': {
+                            ':inc': {'N': '1'},
+                            ':ttl': {'N': str(now + RATE_LIMIT_WINDOW + 60)},
+                            ':limit': {'N': str(RATE_LIMIT_MAX)},
+                        },
+                    }
+                },
+                {
+                    'Put': {
+                        'TableName': TABLE_NAME,
+                        'Item': serialized_item,
+                        # Defensive: guarantees idempotency if a retry reuses a uuid.
+                        'ConditionExpression': 'attribute_not_exists(PK)',
+                    }
+                },
+            ]
         )
-        return True
+        return item
     except ClientError as e:
-        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-            return False
-        logger.exception('Rate limit check DynamoDB error')
+        code = e.response.get('Error', {}).get('Code', '')
+        if code == 'TransactionCanceledException':
+            reasons = e.response.get('CancellationReasons') or []
+            # Index 0 = rate-limit update; ConditionalCheckFailed => rate-limited.
+            if reasons and reasons[0].get('Code') == 'ConditionalCheckFailed':
+                raise RateLimitExceededError() from e
+            logger.exception('Command transaction cancelled: %s', reasons)
+            raise RateLimitUnavailableError(str(e)) from e
+        logger.exception('Command transaction DynamoDB error')
         raise RateLimitUnavailableError(str(e)) from e
+    except RateLimitExceededError:
+        raise
     except Exception as e:
-        logger.exception('Rate limit check error')
+        logger.exception('Command transaction error')
         raise RateLimitUnavailableError(str(e)) from e
 
 
 def _create_command(event, user_sub):
-    body = json.loads(event.get('body', '{}')) if event.get('body') else {}
+    raw_body = event.get('body')
+    if raw_body:
+        try:
+            body = json.loads(raw_body)
+        except json.JSONDecodeError:
+            return api_response(400, {'error': 'Invalid JSON body'}, event, allowed_methods=_ALLOWED_METHODS)
+    else:
+        body = {}
     command_type = body.get('type')
     payload = body.get('payload', {})
 
     if not command_type:
         return api_response(400, {'error': 'type is required'}, event, allowed_methods=_ALLOWED_METHODS)
 
-    # Rate limit check
+    from shared_services.websocket_service import WebSocketService
+
+    ws_service = WebSocketService(table, WEBSOCKET_ENDPOINT)
+
+    # Look up user's agent connection before reserving a rate-limit slot, so
+    # we don't consume quota on guaranteed-409s.
+    agent_conns = ws_service.get_user_connections(user_sub, 'agent')
+    if not agent_conns:
+        return api_response(409, {'error': 'No agent connected'}, event, allowed_methods=_ALLOWED_METHODS)
+
+    agent_conn = agent_conns[0]
+    command_id = str(uuid.uuid4())
+
+    # Atomically reserve a rate-limit slot AND persist the pending command record.
+    # TransactWriteItems guarantees the two writes commit together or not at all,
+    # so we can never burn a rate-limit increment without a corresponding record
+    # (or vice versa).
     try:
-        if not _check_rate_limit(user_sub):
-            return api_response(
-                429,
-                {
-                    'error': 'Too many commands. Please wait before sending more.',
-                    'code': 'RATE_LIMITED',
-                    'retryAfter': RATE_LIMIT_WINDOW,
-                },
-                event,
-                allowed_methods=_ALLOWED_METHODS,
-            )
+        _reserve_and_create_command(user_sub, command_id, command_type, payload)
+    except RateLimitExceededError:
+        return api_response(
+            429,
+            {
+                'error': 'Too many commands. Please wait before sending more.',
+                'code': 'RATE_LIMITED',
+                'retryAfter': RATE_LIMIT_WINDOW,
+            },
+            event,
+            allowed_methods=_ALLOWED_METHODS,
+        )
     except RateLimitUnavailableError:
         return api_response(
             503,
@@ -132,34 +216,6 @@ def _create_command(event, user_sub):
             event,
             allowed_methods=_ALLOWED_METHODS,
         )
-
-    from shared_services.websocket_service import WebSocketService
-
-    ws_service = WebSocketService(table, WEBSOCKET_ENDPOINT)
-
-    # Look up user's agent connection
-    agent_conns = ws_service.get_user_connections(user_sub, 'agent')
-    if not agent_conns:
-        return api_response(409, {'error': 'No agent connected'}, event, allowed_methods=_ALLOWED_METHODS)
-
-    agent_conn = agent_conns[0]
-    command_id = str(uuid.uuid4())
-    now = int(time.time())
-
-    # Create command record
-    table.put_item(
-        Item={
-            'PK': f'COMMAND#{command_id}',
-            'SK': '#METADATA',
-            'commandId': command_id,
-            'cognitoSub': user_sub,
-            'type': command_type,
-            'payload': payload,
-            'status': 'pending',
-            'createdAt': now,
-            'ttl': now + COMMAND_TTL_SECONDS,
-        }
-    )
 
     # Dispatch to agent
     sent = ws_service.send_to_connection(

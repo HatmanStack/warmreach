@@ -79,7 +79,25 @@ cd frontend && npx vitest run src/features/auth/hooks/useAuthFlow.test.ts
 cd tests/backend && . .venv/bin/activate && python -m pytest unit/test_llm.py -v --tb=short
 ```
 
-**Coverage threshold**: Backend requires 75% coverage.
+**Coverage threshold**: Backend requires 75% coverage. Frontend, client, and
+admin workspaces enforce their own floors in each `vitest.config.{ts,js}`.
+
+## Documentation Linting
+
+Markdown files are checked by `markdownlint-cli2` and `lychee` (link checker). Both run in CI via `.github/workflows/docs-lint.yml` and are currently non-blocking while the baseline stabilizes. Run locally before pushing doc changes:
+
+```bash
+npm run lint:docs
+```
+
+Markdown auto-fixes run through `lint-staged` on `**/*.md` during commit. Configs live at `.markdownlint-cli2.jsonc` and `lychee.toml` at the repo root.
+
+## Two-Repo Sync: Overlay Drift
+
+When you modify a file listed in `.sync/config.json overlay_mappings`, you
+must also update the corresponding overlay in `.sync/overlays/` in the same
+PR. CI runs `scripts/check-overlay-drift.sh` and fails the build if the
+overlay is stale. This keeps the community edition in parity with pro.
 
 ## Pull Request Process
 

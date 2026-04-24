@@ -10,6 +10,15 @@ import { LinkedInMessageScraperService } from '../../messaging/services/linkedin
 import { LinkedInError } from '../utils/LinkedInError.js';
 import { RateLimiter, RateLimitExceededError } from '../../automation/utils/rateLimiter.js';
 import type { Page, ElementHandle } from 'puppeteer';
+import {
+  asBrowserSessionManagerContract,
+  asConfigManagerContract,
+  unsafeAsOpsContext,
+  type BrowserSessionManagerContract,
+  type ConfigManagerContract,
+  type ControlPlaneServiceContract,
+  type HumanBehaviorContract,
+} from '../types/ServiceContracts.js';
 
 // Domain operations
 import * as profileOps from './linkedinProfileOps.js';
@@ -23,46 +32,12 @@ import type { PostOpsContext } from './linkedinPostOps.js';
 
 type OpsContext = ProfileOpsContext & MessagingOpsContext & ConnectionOpsContext & PostOpsContext;
 
-interface SessionManagerLike {
-  getInstance(opts: { reinitializeIfUnhealthy: boolean }): Promise<unknown>;
-  cleanup(): Promise<void>;
-  isSessionHealthy(): Promise<boolean>;
-  getHealthStatus(): Promise<Record<string, unknown>>;
-  recordError(error: unknown): Promise<void>;
-  getBackoffController(): { handleCheckpoint(url: string): Promise<void> } | null;
-  getSessionMetrics(): { recordOperation(success: boolean): void } | null;
-  lastActivity: Date | null;
-}
-
-interface ConfigManagerLike {
-  get(key: string, defaultValue: number): number;
-  setOverride(key: string, value: number): void;
-  getErrorHandlingConfig(): { retryAttempts: number; retryBaseDelay: number };
-}
-
-interface ControlPlaneServiceLike {
-  isConfigured: boolean;
-  syncRateLimits(): Promise<{
-    linkedin_interactions?: {
-      daily_limit?: number | null;
-      hourly_limit?: number | null;
-    };
-  } | null>;
-  reportInteraction(operation: string): void;
-}
-
-interface HumanBehaviorLike {
-  checkAndApplyCooldown(): Promise<void>;
-  simulateHumanMouseMovement(page: Page, element: ElementHandle): Promise<void>;
-  recordAction(action: string, data?: Record<string, unknown>): void;
-}
-
 interface ServiceOptions {
-  sessionManager?: SessionManagerLike;
-  configManager?: ConfigManagerLike;
+  sessionManager?: BrowserSessionManagerContract;
+  configManager?: ConfigManagerContract;
   dynamoDBService?: DynamoDBService;
-  controlPlaneService?: ControlPlaneServiceLike | null;
-  humanBehavior?: HumanBehaviorLike;
+  controlPlaneService?: ControlPlaneServiceContract | null;
+  humanBehavior?: HumanBehaviorContract;
   navigationService?: LinkedInNavigationService;
   messagingService?: LinkedInMessagingService;
   connectionService?: LinkedInConnectionService;
@@ -115,12 +90,12 @@ const RandomHelpers = {
 export class LinkedInInteractionService {
   // BrowserSessionManager is a static-method class used as a duck-typed singleton.
   // ConfigManager's default export is an instance from getInstance().
-  // Both satisfy narrow duck-typed interfaces in each ops module at runtime.
-  sessionManager: SessionManagerLike;
-  configManager: ConfigManagerLike;
+  // Both are adapted via named helper functions in ServiceContracts.ts.
+  sessionManager: BrowserSessionManagerContract;
+  configManager: ConfigManagerContract;
   dynamoDBService: DynamoDBService;
-  controlPlaneService: ControlPlaneServiceLike | null;
-  humanBehavior: HumanBehaviorLike;
+  controlPlaneService: ControlPlaneServiceContract | null;
+  humanBehavior: HumanBehaviorContract;
   navigationService: LinkedInNavigationService;
   messagingService: LinkedInMessagingService;
   connectionService: LinkedInConnectionService;
@@ -130,11 +105,10 @@ export class LinkedInInteractionService {
   _rateLimiter: RateLimiter;
 
   constructor(options: ServiceOptions = {}) {
-    // Inject core dependencies or use defaults.
-    // BrowserSessionManager and ConfigManager are duck-typed singletons from JS modules.
+    // Named adapters do the structural narrowing; see ServiceContracts.ts.
     this.sessionManager =
-      options.sessionManager || (BrowserSessionManager as unknown as SessionManagerLike);
-    this.configManager = options.configManager || (ConfigManager as unknown as ConfigManagerLike);
+      options.sessionManager || asBrowserSessionManagerContract(BrowserSessionManager);
+    this.configManager = options.configManager || asConfigManagerContract(ConfigManager);
     this.dynamoDBService = options.dynamoDBService || new DynamoDBService();
     this.controlPlaneService = options.controlPlaneService || null;
 
@@ -144,26 +118,38 @@ export class LinkedInInteractionService {
       recordAction() {},
     };
 
-    // The domain services accept duck-typed options; BrowserSessionManager (a static class)
-    // and ConfigManager satisfy the structural interfaces at runtime, so we assert here.
-    const sm = this.sessionManager as unknown;
-    const cm = this.configManager as unknown;
-    const db = this.dynamoDBService as unknown;
+    // Each domain service accepts the narrow DI contract directly. Historically
+    // these required structural casts because the upstream types were wider;
+    // now we pass the contract values that ServiceContracts produced.
+    type NavCtorArg = ConstructorParameters<typeof LinkedInNavigationService>[0];
+    type MsgCtorArg = ConstructorParameters<typeof LinkedInMessagingService>[0];
+    type ConnCtorArg = ConstructorParameters<typeof LinkedInConnectionService>[0];
+    type ScrapeCtorArg = ConstructorParameters<typeof LinkedInMessageScraperService>[0];
+
+    const sm: BrowserSessionManagerContract = this.sessionManager;
+    const cm: ConfigManagerContract = this.configManager;
+    const db: DynamoDBService = this.dynamoDBService;
 
     this.navigationService =
       options.navigationService ||
-      new LinkedInNavigationService({
-        sessionManager: sm,
-        configManager: cm,
-      } as ConstructorParameters<typeof LinkedInNavigationService>[0]);
+      new LinkedInNavigationService({ sessionManager: sm, configManager: cm } as NavCtorArg);
 
     this.messagingService =
       options.messagingService ||
-      new LinkedInMessagingService({
-        sessionManager: sm,
-        navigationService: this.navigationService,
-        dynamoDBService: db,
-      } as unknown as ConstructorParameters<typeof LinkedInMessagingService>[0]);
+      new LinkedInMessagingService(
+        unsafeAsOpsContext<
+          {
+            sessionManager: BrowserSessionManagerContract;
+            navigationService: LinkedInNavigationService;
+            dynamoDBService: DynamoDBService;
+          },
+          MsgCtorArg
+        >({
+          sessionManager: sm,
+          navigationService: this.navigationService,
+          dynamoDBService: db,
+        })
+      );
 
     this.connectionService =
       options.connectionService ||
@@ -171,13 +157,11 @@ export class LinkedInInteractionService {
         sessionManager: sm,
         navigationService: this.navigationService,
         dynamoDBService: db,
-      } as ConstructorParameters<typeof LinkedInConnectionService>[0]);
+      } as ConnCtorArg);
 
     this.messageScraperService =
       options.messageScraperService ||
-      new LinkedInMessageScraperService({
-        sessionManager: sm,
-      } as ConstructorParameters<typeof LinkedInMessageScraperService>[0]);
+      new LinkedInMessageScraperService({ sessionManager: sm } as ScrapeCtorArg);
 
     const errorConfig = this.configManager.getErrorHandlingConfig();
     this.maxRetries = errorConfig.retryAttempts;
@@ -309,11 +293,15 @@ export class LinkedInInteractionService {
   }
 
   /**
-   * Return `this` cast to an ops-compatible context. Each ops module defines its own
-   * narrow ServiceContext interface; this service satisfies them all at runtime.
+   * Return ``this`` typed as the merged ops context. Each ops module defines
+   * its own narrow ``ServiceContext`` interface; see ``unsafeAsOpsContext`` in
+   * ServiceContracts for the named adapter that handles the legacy return-type
+   * mismatches (e.g. some ops declare ``Promise<void>`` where the facade
+   * returns ``Promise<boolean>``). The adapter keeps the unsafe step scoped
+   * and documented instead of sprinkled inline.
    */
   private get _self(): OpsContext {
-    return this as unknown as OpsContext;
+    return unsafeAsOpsContext(this);
   }
 
   // --- Profile operations ---
