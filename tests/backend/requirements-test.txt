@@ -1,5 +1,5 @@
 # Locked versions: see requirements-test.lock
-pytest>=7.0.0
+pytest>=9.0.3
 pytest-mock>=3.0.0
 pytest-cov>=4.0.0
 moto>=4.0.0
