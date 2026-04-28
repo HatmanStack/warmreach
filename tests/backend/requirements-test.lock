@@ -59,7 +59,7 @@ markupsafe==3.0.3
     #   werkzeug
 moto==5.1.21
     # via -r requirements-test.txt
-openai==2.20.0
+openai==2.33.0
     # via -r requirements-test.txt
 packaging==26.0
     # via pytest
