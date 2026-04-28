@@ -16,7 +16,7 @@
     "start": "node --import tsx src/server.js",
     "dev": "nodemon --exec 'node --import tsx' src/server.js",
     "electron:dev": "electron --import tsx electron-main.js",
-    "electron:build": "npm run build:ts && electron-builder && npm run clean:ts",
+    "electron:build": "npm run build:ts && electron-builder --publish never && npm run clean:ts",
     "build:ts": "tsc -p tsconfig.build.json && node scripts/copy-emitted.mjs",
     "clean:ts": "find src config routes -name '*.ts' ! -name '*.test.ts' -exec sh -c 'rm -f \"${0%.ts}.js\"' {} \\; && rm -rf build-tsc",
     "build": "tsc --noEmit",
