@@ -5,6 +5,7 @@ quota paths) are kept in the pro source copy and are not ported here because
 the corresponding handlers do not exist in the community LLM Lambda.
 """
 import json
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -41,16 +42,21 @@ def mock_services(llm_module):
     orig_quota = llm_module._quota_service
     orig_ff = llm_module._feature_flag_service
     orig_llm = llm_module._llm_service
+    orig_llm_created = llm_module._llm_service_created_at
     llm_module._quota_service = mock_quota
     llm_module._feature_flag_service = mock_ff
     # Set a stub LLM service so lazy-init doesn't try to fetch SSM secrets.
     # Tests that need specific LLM behavior override _llm_service themselves.
+    # The TTL timestamp must be fresh too — the default 0.0 makes the cache
+    # appear stale, so _get_llm_service would rebuild and call _get_openai_client.
     if llm_module._llm_service is None:
         llm_module._llm_service = MagicMock()
+    llm_module._llm_service_created_at = time.time()
     yield {'quota': mock_quota, 'feature_flags': mock_ff}
     llm_module._quota_service = orig_quota
     llm_module._feature_flag_service = orig_ff
     llm_module._llm_service = orig_llm
+    llm_module._llm_service_created_at = orig_llm_created
 
 
 def test_unauthorized_returns_401(lambda_context, llm_module):
