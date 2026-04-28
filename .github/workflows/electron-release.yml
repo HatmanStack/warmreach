@@ -4,10 +4,11 @@ name: Electron Release (Linux AppImage)
 # release on HatmanStack/warmreach (the community repo, which is where
 # electron-updater is configured to fetch from).
 #
-# Triggered when a release is published on warmreach-pro. The companion
-# Release Sync workflow runs in parallel and creates the warmreach
-# release; this workflow waits for that release to exist before
-# uploading artifacts.
+# Invoked by release.yml via workflow_call after the GitHub release is
+# created (release-sync.yml fans the release out to the community repo
+# in parallel; we wait for that to land before uploading artifacts).
+# Also runnable via workflow_dispatch for backfilling artifacts on past
+# tags.
 #
 # Required secrets:
 #   WARMREACH_PUBLIC_PAT — Fine-grained PAT with contents:write on
@@ -15,8 +16,15 @@ name: Electron Release (Linux AppImage)
 #                          release-sync.yml).
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag to build for (e.g. v1.14.0)'
+        required: true
+        type: string
+    secrets:
+      WARMREACH_PUBLIC_PAT:
+        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -34,11 +42,7 @@ jobs:
       - name: Determine tag
         id: tag
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            TAG="${{ github.event.release.tag_name }}"
-          fi
+          TAG="${{ inputs.tag }}"
           if [ -z "$TAG" ]; then
             echo "No tag provided"
             exit 1

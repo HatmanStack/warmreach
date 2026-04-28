@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      skip: ${{ steps.version.outputs.skip }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -24,16 +27,19 @@ jobs:
           VERSION=$(grep -m1 '^## \[' CHANGELOG.md | sed 's/^## \[\(.*\)\].*/\1/')
           if [ -z "$VERSION" ]; then
             echo "No version found in CHANGELOG.md"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Check if tag already exists
-          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
-            echo "Tag v${VERSION} already exists, skipping"
+          # Check if release already exists
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "Release v${VERSION} already exists, skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Create tag if needed
         if: steps.version.outputs.skip != 'true' && steps.version.outputs.tag != ''
@@ -63,3 +69,12 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --notes-file /tmp/release-notes.md
+
+  electron:
+    needs: release
+    if: needs.release.outputs.skip != 'true' && needs.release.outputs.tag != ''
+    uses: ./.github/workflows/electron-release.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets:
+      WARMREACH_PUBLIC_PAT: ${{ secrets.WARMREACH_PUBLIC_PAT }}
