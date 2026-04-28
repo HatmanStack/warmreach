@@ -49,7 +49,7 @@ export function buildConnectionsCsvContent(
   const rows = connections.map((conn) => {
     const lastMessageDate =
       conn.message_history && conn.message_history.length > 0
-        ? conn.message_history[conn.message_history.length - 1].timestamp
+        ? (conn.message_history[conn.message_history.length - 1]?.timestamp ?? '')
         : '';
 
     const messageCount = conn.messages ?? conn.message_history?.length ?? 0;

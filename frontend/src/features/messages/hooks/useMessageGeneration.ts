@@ -194,6 +194,7 @@ export function useMessageGeneration({
       }
 
       const connection = selectedConnectionsData[i];
+      if (!connection) continue;
       const connectionName = `${connection.first_name} ${connection.last_name}`;
 
       progressTracker.updateProgress(i, connectionName, 'generating');

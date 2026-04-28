@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Renderer CSP: tighten gradually. Inline style/script are still allowed
+      because main.html embeds both directly; the long-term plan is to extract
+      them to separate files and drop 'unsafe-inline'. connect-src 'self' is
+      sufficient because all IPC goes through the preload bridge, not fetch.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:"
+    />
+    <title>WarmReach Agent</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        margin: 0;
+        padding: 20px;
+        font-size: 13px;
+        color: #1f2937;
+        background: #f9fafb;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          color: #e5e7eb;
+          background: #111827;
+        }
+        .card {
+          background: #1f2937;
+          border-color: #374151;
+        }
+        .label {
+          color: #9ca3af;
+        }
+        button {
+          background: #374151;
+          color: #e5e7eb;
+          border-color: #4b5563;
+        }
+        button:hover {
+          background: #4b5563;
+        }
+        button.primary {
+          background: #2563eb;
+          border-color: #2563eb;
+          color: white;
+        }
+        button.primary:hover {
+          background: #1d4ed8;
+        }
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 16px;
+      }
+      .version {
+        color: #6b7280;
+        font-size: 11px;
+        margin-bottom: 16px;
+      }
+      .card {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 12px;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 0;
+      }
+      .label {
+        color: #6b7280;
+        font-size: 12px;
+      }
+      .value {
+        font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+        font-size: 12px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .pill.green {
+        background: #d1fae5;
+        color: #065f46;
+      }
+      .pill.gray {
+        background: #e5e7eb;
+        color: #374151;
+      }
+      .pill.amber {
+        background: #fef3c7;
+        color: #92400e;
+      }
+      .pill.red {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 4px;
+      }
+      button {
+        padding: 8px 12px;
+        font-size: 13px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        background: white;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      button:hover {
+        background: #f3f4f6;
+      }
+      button.primary {
+        background: #2563eb;
+        border-color: #2563eb;
+        color: white;
+      }
+      button.primary:hover {
+        background: #1d4ed8;
+      }
+      button.danger {
+        color: #b91c1c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WarmReach Agent</h1>
+    <div class="version" id="version">v…</div>
+
+    <div class="card">
+      <div class="row">
+        <span class="label">WebSocket</span>
+        <span><span id="ws-pill" class="pill gray">…</span></span>
+      </div>
+      <div class="row">
+        <span class="label">Automation</span>
+        <span><span id="auto-pill" class="pill gray">…</span></span>
+      </div>
+      <div class="row">
+        <span class="label">Backend</span>
+        <span class="value" id="backend">http://localhost:3001</span>
+      </div>
+      <div class="row">
+        <span class="label">Threat level</span>
+        <span class="value" id="threat">0/60</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="open-app">Open WarmReach</button>
+      <button id="settings">Settings</button>
+      <button id="check-updates">Check for Updates</button>
+      <button id="toggle-pause">Pause Automation</button>
+    </div>
+    <div style="margin-top: 8px">
+      <button class="danger" id="quit" style="width: 100%">Quit</button>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      function paint(s) {
+        $('version').textContent = 'v' + (s.version || '?');
+        $('backend').textContent = 'http://localhost:' + (s.backendPort || 3001);
+        $('threat').textContent = (s.threatLevel || 0) + '/60';
+
+        const ws = $('ws-pill');
+        ws.className = 'pill ' + (s.wsConnected ? 'green' : s.wsConfigured ? 'amber' : 'gray');
+        ws.textContent = s.wsConnected
+          ? 'Connected'
+          : s.wsConfigured
+            ? 'Disconnected'
+            : 'Sign in to connect';
+
+        const auto = $('auto-pill');
+        auto.className = 'pill ' + (s.automationPaused ? 'red' : 'green');
+        auto.textContent = s.automationPaused ? 'Paused' : 'Running';
+
+        $('toggle-pause').textContent = s.automationPaused ? 'Resume Automation' : 'Pause Automation';
+      }
+
+      $('open-app').addEventListener('click', () => window.mainAPI.openApp());
+      $('settings').addEventListener('click', () => window.mainAPI.openSettings());
+      $('check-updates').addEventListener('click', () => window.mainAPI.checkUpdates());
+      $('toggle-pause').addEventListener('click', () => window.mainAPI.togglePause());
+      $('quit').addEventListener('click', () => window.mainAPI.quit());
+
+      window.mainAPI.onStatus(paint);
+      window.mainAPI.getStatus().then(paint);
+    </script>
+  </body>
+</html>

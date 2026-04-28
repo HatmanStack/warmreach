@@ -198,16 +198,18 @@ const ConnectionCard = ({
     }
     const reservedForMore = 6; // approx chars for "… more"
     const effectiveBudget = Math.max(0, tagCharBudget - reservedForMore);
+    const validTags = allTags
+      .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+      .map((t) => t.trim());
     let used = 0;
     const visible: string[] = [];
-    for (let i = 0; i < allTags.length; i++) {
-      const tag = allTags[i];
+    for (const tag of validTags) {
       const cost = tag.length + 2; // crude width for padding/gap
       if (used + cost > effectiveBudget) break;
       visible.push(tag);
       used += cost;
     }
-    return { visible, hasMore: visible.length < allTags.length };
+    return { visible, hasMore: visible.length < validTags.length, totalValid: validTags.length };
   };
 
   // Summary handling: place "more" inline at end of second line (approximate via char budget) and remove trailing ellipsis
@@ -439,7 +441,7 @@ const ConnectionCard = ({
           {(connection.tags?.length || connection.common_interests?.length) &&
             (() => {
               const allTags = (connection.tags || connection.common_interests || []) as string[];
-              const { visible, hasMore } = getVisibleTagsByCharacterBudget(allTags);
+              const { visible, hasMore, totalValid } = getVisibleTagsByCharacterBudget(allTags);
               return (
                 <div className="mb-2">
                   <div className="flex items-center overflow-hidden flex-nowrap gap-2 max-w-full whitespace-nowrap leading-7 min-h-[28px] py-0.5">
@@ -464,7 +466,7 @@ const ConnectionCard = ({
                         className="cursor-pointer text-xs border-slate-400/30 text-slate-400 flex-shrink-0 ml-1 transition-all duration-200 hover:scale-[1.2] hover:bg-slate-500/20 hover:border-slate-400/50 hover:text-slate-200"
                         onClick={handleOpenTags}
                       >
-                        +{allTags.length - visible.length} more
+                        +{(totalValid ?? allTags.length) - visible.length} more
                       </Badge>
                     )}
                   </div>

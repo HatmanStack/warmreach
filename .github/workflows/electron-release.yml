@@ -1,0 +1,107 @@
+name: Electron Release (Linux AppImage)
+
+# Builds the WarmReach Agent AppImage and attaches it to the matching
+# release on HatmanStack/warmreach (the community repo, which is where
+# electron-updater is configured to fetch from).
+#
+# Triggered when a release is published on warmreach-pro. The companion
+# Release Sync workflow runs in parallel and creates the warmreach
+# release; this workflow waits for that release to exist before
+# uploading artifacts.
+#
+# Required secrets:
+#   WARMREACH_PUBLIC_PAT — Fine-grained PAT with contents:write on
+#                          HatmanStack/warmreach (already used by
+#                          release-sync.yml).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build for (e.g. v1.14.0)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "No tag provided"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install root deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Install client deps
+        working-directory: client
+        run: npm ci --no-audit --no-fund
+
+      - name: Sync client version with tag
+        working-directory: client
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Build AppImage
+        working-directory: client
+        env:
+          # GH_TOKEN is consumed by electron-builder when --publish is on,
+          # which we don't use here — we upload manually below to keep the
+          # publish path explicit and idempotent.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run electron:build
+
+      - name: Wait for warmreach release to exist
+        env:
+          GH_TOKEN: ${{ secrets.WARMREACH_PUBLIC_PAT }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          for i in $(seq 1 30); do
+            if gh release view "$TAG" --repo HatmanStack/warmreach >/dev/null 2>&1; then
+              echo "Release $TAG found on HatmanStack/warmreach"
+              exit 0
+            fi
+            echo "Waiting for release $TAG on HatmanStack/warmreach (attempt $i/30)..."
+            sleep 10
+          done
+          echo "Release $TAG was not created on HatmanStack/warmreach within timeout"
+          exit 1
+
+      - name: Upload AppImage and update metadata
+        env:
+          GH_TOKEN: ${{ secrets.WARMREACH_PUBLIC_PAT }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          gh release upload "$TAG" \
+            --repo HatmanStack/warmreach \
+            --clobber \
+            client/dist/WarmReach-Agent-${{ steps.tag.outputs.version }}.AppImage \
+            client/dist/latest-linux.yml

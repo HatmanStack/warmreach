@@ -1,5 +1,5 @@
 import express from 'express';
-import LinkedInInteractionController from '../src/domains/linkedin/controllers/linkedinInteractionController.js';
+import { LinkedInInteractionController } from '../src/domains/linkedin/controllers/linkedinInteractionController.js';
 import { logger } from '#utils/logger.js';
 
 const router = express.Router();

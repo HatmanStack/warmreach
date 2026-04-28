@@ -52,7 +52,7 @@ function _shouldSendTelemetry(message: string): boolean {
   // Rate limit: sliding window counter
   while (
     _telemetrySendTimestamps.length > 0 &&
-    now - _telemetrySendTimestamps[0] > TELEMETRY_WINDOW_MS
+    now - _telemetrySendTimestamps[0]! > TELEMETRY_WINDOW_MS
   ) {
     _telemetrySendTimestamps.shift();
   }

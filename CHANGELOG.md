@@ -5,7 +5,30 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.14.0] - 2026-04-24
+## [1.15.0] - 2026-04-28
+
+Desktop client ready for distribution: buildable Linux AppImage, ChromeOS-compatible control window, and CI pipeline that publishes artifacts to the public release.
+
+### Added
+
+- **Client:** Linux AppImage build pipeline — `tsconfig.build.json` + `scripts/copy-emitted.mjs` compile TypeScript sources to JavaScript at package time so `.ts`-imports resolve inside the asar
+- **Client:** Control window UI (`src/window/main.html`, `mainPreload.ts`) — status pills (WebSocket, automation, threat level), backend port, and buttons for Open WarmReach / Settings / Check for Updates / Pause-Resume / Quit. Always opens on launch; on tray-capable platforms doubles as a quick status pane, on platforms without tray (ChromeOS Crostini, headless Linux) it's the only UI and closing quits the app
+- **Client:** Production WebSocket + Amplify defaults baked into `electron-main.js` (still env-overridable via `WARMREACH_WS_URL` / `WARMREACH_APP_URL`)
+- **Client:** App icon wired into both BrowserWindows so the title bar shows the WarmReach mark instead of the platform default
+- **CI:** `.github/workflows/electron-release.yml` — fires on release publish, builds the AppImage on `ubuntu-latest`, waits for `release-sync.yml` to create the matching release on `HatmanStack/warmreach`, then uploads `WarmReach-Agent-${version}.AppImage` + `latest-linux.yml`. Reuses the existing `WARMREACH_PUBLIC_PAT` secret. `workflow_dispatch` form supports backfilling artifacts on past tags
+
+### Fixed
+
+- **Client:** `app.use('*', ...)` 404 handler in `src/server.ts` rewritten as a no-path middleware — Express 5 + path-to-regexp v6 reject the bare `*` wildcard, which crashed the packaged app at startup
+- **Client:** `import { autoUpdater } from 'electron-updater'` — `electron-updater` is CommonJS, switched to default import + destructure
+- **Client:** Three route files (`searchRoutes.js`, `profileInitRoutes.js`, `linkedinInteractionRoutes.js`) used default imports against controllers that export named classes; tsx tolerated the mismatch in dev but Node ESM rejected it in the packaged build
+- **Client:** `uncaughtException` handler in `src/server.ts` writes the stack synchronously to stderr before `process.exit(1)` so errors actually surface (winston is async and was being killed before it flushed)
+- **Client:** `autoUpdater.logger = null` — silences electron-updater's built-in stack-trace logging when the GitHub release isn't there yet (we surface failures via the dialog instead)
+
+### Changed
+
+- **Client:** Settings window no longer exposes the WebSocket URL field — operators self-deploying configure via env var; end users never need to touch it
+- **Client:** `electron-builder.yml` `files:` includes `config/`, `routes/`, `schemas/`, and `electron-resources/`; excludes `*.ts` source from the final asar
 
 Second audit remediation (plan: `2026-04-23-audit-warmreach-pro`). Full adversarial pipeline across 6 phases produced a VERIFIED verdict.
 
@@ -68,6 +91,48 @@ Second audit remediation (plan: `2026-04-23-audit-warmreach-pro`). Full adversar
 - **Backend:** circuit-breaker `.state` docstring documents that `open -> half_open` is race-safe only under a single-threaded executor
 - **Client:** `search` and `profile` controllers fully typed (drop `unknown` casts in LinkedIn service DI)
 - **Frontend:** `posts` service response schema-validated
+
+Initial cloud deployment of the platform: SAM backend hardening, frontend build unblock + Tailwind v4 migration, on-device LinkedIn credentials architecture (never transmitted), and a centralized desktop-client gate that prompts for download whenever an automation action is attempted without the agent running.
+
+### Added
+
+- **Deploy:** `scripts/deploy/deploy-sam.js` — interactive backend deploy with `us-east-1` region pin, SSM SecureString flow for OpenAI/Stripe/Stripe-webhook secrets (passes ARNs as template params), and pre-flight checks (AWS creds, SAM CLI, Docker, Bedrock model access, SES verified-identity status, Lambda concurrency headroom). Captures stack outputs into root `.env`, `frontend/.env`, and `admin/.env`.
+- **Deploy:** `scripts/deploy/teardown.sh` — idempotent teardown that discovers warmreach resources dynamically (Cognito, DynamoDB, S3, S3 Vectors, IAM CloudWatch role orphans, the CFN stack) and handles versioning-enabled buckets via explicit version + delete-marker cleanup. Wired as `npm run teardown` / `npm run teardown:dry`.
+- **Backend:** `lambdas/client-downloads/` Lambda + `/client-downloads` HTTP route — public endpoint returning per-platform desktop-client download URLs from `ClientDownload{Mac,Win,Linux,Version}Url` template parameters. Accepts both `https://` (pass-through) and `s3://bucket/key` (mints 5-min presigned URL on each request). Operators swap hosting locations by re-running `npm run deploy` without a frontend rebuild.
+- **Frontend:** `<DesktopClientDownloadPrompt />` (`features/profile/components/`) — fetches `/client-downloads`, detects platform from `navigator.userAgent`, surfaces native binary as primary CTA with the others as fallbacks. Empty platforms render "(coming soon)" disabled buttons.
+- **Frontend:** `<ClientRequiredDialogProvider>` + `<ClientRequiredDialog>` + `useRequireDesktopClient()` (`shared/contexts/`, `shared/components/`) — centralized gate that opens a modal whenever a Puppeteer-dependent action is attempted without the desktop agent running. Auto-closes when `agentConnected` flips true. Mounted once at the app root inside `WebSocketProvider`.
+- **Frontend:** `useCommand` gained a `silent` option for background/auto-fire dispatches that should fail quietly instead of popping the modal. `ConnectedAccounts.statusCommand` (background GitHub-status poll) opts in.
+- **Platform (SAM):** Account-level CloudWatch Logs role + `AWS::ApiGateway::Account` config — the one-time per-account setting required for any API Gateway access logging (v1 or v2). Retained on stack delete so other stacks in the same account keep their logging.
+- **Platform (SAM):** `EnableDigests` parameter (default `false`) gates digest Lambdas + their EventBridge schedules so first deploys don't immediately start firing.
+- **Platform (SAM):** `RagstackTemplateUrl` parameter — defaults to the public RAGStack quicklaunch bucket, swappable per-deploy. Replaces the hardcoded account-suffixed URL that never had a publish pipeline behind it.
+
+### Fixed
+
+- **Deploy:** `samconfig.toml` capabilities now `CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND` (was missing `_NAMED_IAM` and `_AUTO_EXPAND` — first deploy failed at changeset creation).
+- **Deploy:** SAM-deploy bucket name includes the account ID (`sam-deploy-warmreach-{account}-{region}`) so multiple deployers in different accounts don't collide on the global S3 namespace.
+- **Deploy:** External-RAGStack path (`DeployRAGStack=false`) prompts for `RagstackGraphqlEndpoint` + `RagstackApiKey` (was silently skipped, deploy ran with empty values).
+- **Deploy:** Bedrock-access pre-flight queries `list-inference-profiles --type-equals SYSTEM_DEFINED` for `us.*` cross-region IDs with fallback to `list-foundation-models`.
+- **Deploy:** SES-sandbox warning only fires when the identity isn't verified (was firing on every run).
+- **Deploy:** Post-deploy `update-function-configuration` for `admin-metrics` reads existing env vars and merges `HTTP_API_ID` instead of replacing the whole block — no longer wipes `ALLOWED_ORIGINS` / `DYNAMODB_TABLE_NAME` injected by SAM Globals.
+- **Platform (SAM):** Removed duplicate `SharedPythonLayer` reference on `WebSocketConnect/Disconnect/Default` and `CommandDispatch` Lambdas (was listed in both `Globals.Function.Layers` and per-function — Lambda rejected create with "Two different versions of the same layer").
+- **Platform (SAM):** `AdminMetricsFunction` no longer references `!Ref HttpApi` in `Environment.Variables` — that ref produced a circular dependency with `HttpApi` / `HttpApiStage` once `HasAdmin` flipped true. Deploy script populates `HTTP_API_ID` post-deploy via `update-function-configuration`.
+- **Platform (SAM):** Bedrock model defaults updated from stale Llama 3.2 / Claude 3 Sonnet to `us.anthropic.claude-sonnet-4-5-20250929-v1:0` cross-region inference profile in both pro and community templates and the `llm_service.py` runtime fallback.
+- **Backend:** `request_utils.py` strips trailing slashes from `ALLOWED_ORIGINS` entries — browsers never include them in the `Origin` header but operators frequently paste URLs with one.
+- **Backend:** Globals `ALLOWED_ORIGINS` `!Sub` expression had a missing comma between `localhost:3000` and `${ProductionOrigins}`, producing concatenated origin strings like `localhost:3000https://...`.
+- **Backend:** `admin-metrics` Lambda short-circuits OPTIONS preflight to 204 before the auth check (was returning 403 for valid CORS preflights from authorized origins).
+- **Frontend (admin):** `apiClient.ts` URL join normalizes leading/trailing slashes, fixing `…/prodadmin/metrics` (missing slash) when `VITE_API_GATEWAY_URL` ends in `/prod`.
+- **Frontend:** Build unblocked — `tsc -b` excludes tests + `test-utils` from the production typecheck (vitest has its own quality gate); 66 strict-mode source errors fixed (`noUncheckedIndexedAccess` violations, Lambda-proxy response unwrap casts, `Record<string, unknown>` index-signature mismatches, optional-to-required type drift).
+- **Frontend:** Tailwind v3 → v4 CSS-first migration — `@import "tailwindcss"` + `@theme` block in `src/index.css`, swap `tailwindcss-animate` (v3-only) for `tw-animate-css` (v4-native), delete `tailwind.config.ts`.
+- **Frontend:** `usePendingDrafts` query gated on `isFeatureEnabled('comment_concierge')` so the LLM Lambda doesn't return 403 `FEATURE_GATED` on every Dashboard mount for tiers without the feature.
+- **Hygiene:** Deleted stale `backend/scripts/deploy.js` (duplicate, missing capabilities, plaintext OpenAI key) and orphaned `backend/lambdas/registration/` (zero template references).
+
+### Changed
+
+- **Architecture:** LinkedIn credentials live exclusively on-device in the desktop client, encrypted with libsodium Sealbox. The cloud no longer accepts, returns, or stores them. The web app's role at credential entry is to direct the user to install the desktop client.
+- **Backend:** `dynamodb-api` Lambda no longer accepts, returns, or validates `linkedin_credentials` (silently dropped from update payloads, omitted from get-profile responses).
+- **Frontend:** `Profile.tsx` save flow only persists profile metadata (name, headline, company, etc.) — credential encryption + transmission removed. `<LinkedInCredentials />` form replaced with `<DesktopClientDownloadPrompt />`. `useLinkedInCredentials` hook + the credential-entry component deleted.
+- **Frontend (onboarding):** `LinkedInCredentialStep` rewritten as a download prompt; users with an existing Sealbox ciphertext can advance immediately via "I already have it installed →".
+- **Sync:** Community overlay `OpenAIApiKey` plaintext parameter switched to `OpenAIApiKeyArn` SSM SecureString pattern (matches pro). Community `llm/lambda_function.py` overlay updated to use `SSMCachedSecret` for key resolution. Removes the security-model regression where pro and community handled secrets differently.
 
 ## [1.13.0] - 2026-04-16
 

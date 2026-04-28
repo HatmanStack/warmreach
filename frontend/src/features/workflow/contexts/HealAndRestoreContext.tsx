@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { HealAndRestoreModal } from '@/features/workflow';
 import { healAndRestoreService } from '@/features/workflow';
 import type { HealAndRestoreNotification } from '@/features/workflow';
+import { useRequireDesktopClient } from '@/shared/contexts/ClientRequiredDialogContext';
 import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('HealAndRestoreContext');
@@ -27,6 +28,7 @@ interface HealAndRestoreProviderProps {
 }
 
 export const HealAndRestoreProvider: React.FC<HealAndRestoreProviderProps> = ({ children }) => {
+  const { requireDesktopClient } = useRequireDesktopClient();
   const [isListening, setIsListening] = useState(false);
   const [currentNotification, setCurrentNotification] = useState<HealAndRestoreNotification | null>(
     null
@@ -59,6 +61,16 @@ export const HealAndRestoreProvider: React.FC<HealAndRestoreProviderProps> = ({ 
 
   const handleAuthorize = async (autoApprove: boolean) => {
     if (currentNotification) {
+      // Edge case: if the agent disconnected between sending heal_request
+      // and the user clicking authorize, the reply would dispatch into
+      // the void. Gate it through the centralized client check; if the
+      // gate blocks, close the modal locally so the UI doesn't get stuck
+      // open behind the install dialog.
+      if (!requireDesktopClient()) {
+        setShowModal(false);
+        setCurrentNotification(null);
+        return;
+      }
       const success = await healAndRestoreService.authorizeHealAndRestore(
         currentNotification.sessionId,
         autoApprove
@@ -77,6 +89,13 @@ export const HealAndRestoreProvider: React.FC<HealAndRestoreProviderProps> = ({ 
 
   const handleCancel = async () => {
     if (currentNotification?.sessionId) {
+      if (!requireDesktopClient()) {
+        // Same edge case as authorize. If the agent is gone, just close
+        // locally — there's nothing to cancel server-side.
+        setShowModal(false);
+        setCurrentNotification(null);
+        return;
+      }
       // Inform backend and locally ignore this session id to prevent re-trigger
       await healAndRestoreService.cancelHealAndRestore(currentNotification.sessionId);
     }

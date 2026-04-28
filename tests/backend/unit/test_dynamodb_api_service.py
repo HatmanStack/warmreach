@@ -69,7 +69,11 @@ class TestGetUserProfile:
         assert result['lastName'] == 'User'
 
     def test_returns_default_when_no_profile(self):
-        """Should return default profile when neither SK exists."""
+        """Should return default profile when neither SK exists.
+
+        linkedin_credentials is intentionally absent: credentials live
+        on-device in the desktop client, never in DynamoDB.
+        """
         mock_table = MagicMock()
         mock_table.get_item.return_value = {}
         service = DynamoDBApiService(table=mock_table)
@@ -79,7 +83,7 @@ class TestGetUserProfile:
         assert result['email'] == ''
         assert result['firstName'] == ''
         assert result['lastName'] == ''
-        assert result['linkedin_credentials'] is None
+        assert 'linkedin_credentials' not in result
         assert 'createdAt' in result
         assert 'updatedAt' in result
 
@@ -149,27 +153,37 @@ class TestUpdateUserSettings:
         assert 'error' in result
         assert 'profile_url' in result['error']
 
-    def test_linkedin_credentials_accepts_string(self):
+    def test_linkedin_credentials_silently_dropped(self):
+        """linkedin_credentials in the request body is silently ignored.
+
+        Credentials live on-device in the desktop client only and the
+        cloud must never accept a write of this field. With no other
+        fields present, update_user_settings has nothing to persist and
+        does not call update_item.
+        """
         mock_table = MagicMock()
         service = DynamoDBApiService(table=mock_table)
 
-        result = service.update_user_settings('user-123', {
-            'linkedin_credentials': 'sealbox_x25519:b64:encrypted_data',
-        })
+        result = service.update_user_settings(
+            'user-123',
+            {'linkedin_credentials': 'sealbox_x25519:b64:encrypted_data'},
+        )
 
         assert result == {'success': True}
-        mock_table.update_item.assert_called_once()
+        mock_table.update_item.assert_not_called()
 
-    def test_linkedin_credentials_accepts_dict(self):
+    def test_linkedin_credentials_dict_silently_dropped(self):
+        """Same as above for the legacy dict shape — also dropped."""
         mock_table = MagicMock()
         service = DynamoDBApiService(table=mock_table)
 
-        result = service.update_user_settings('user-123', {
-            'linkedin_credentials': {'token': 'encrypted'},
-        })
+        result = service.update_user_settings(
+            'user-123',
+            {'linkedin_credentials': {'token': 'encrypted'}},
+        )
 
         assert result == {'success': True}
-        mock_table.update_item.assert_called_once()
+        mock_table.update_item.assert_not_called()
 
 
 class TestCreateBadContactProfile:
@@ -309,18 +323,20 @@ class TestGetUserSettings:
 
     def test_found(self):
         mock_table = MagicMock()
+        # LinkedIn credentials are device-only and must never enter
+        # DynamoDB. The mock and assertion exercise actual settings fields.
         mock_table.get_item.return_value = {
             'Item': {
                 'PK': 'USER#user-123',
                 'SK': '#SETTINGS',
-                'linkedin_credentials': 'encrypted',
+                'firstName': 'Jane',
             }
         }
         service = DynamoDBApiService(table=mock_table)
         result = service.get_user_settings('user-123')
 
         assert result is not None
-        assert result['linkedin_credentials'] == 'encrypted'
+        assert result['firstName'] == 'Jane'
 
     def test_not_found(self):
         mock_table = MagicMock()
@@ -401,16 +417,14 @@ class TestValidateProfileField:
         service = DynamoDBApiService(table=MagicMock())
         assert service.validate_profile_field('unknown_field', 'value') is False
 
-    def test_linkedin_credentials_string(self):
-        service = DynamoDBApiService(table=MagicMock())
-        assert service.validate_profile_field('linkedin_credentials', 'encrypted') is True
+    def test_linkedin_credentials_unknown_field(self):
+        """linkedin_credentials is no longer a known field — validator rejects.
 
-    def test_linkedin_credentials_dict(self):
+        Credentials live on-device in the desktop client only.
+        """
         service = DynamoDBApiService(table=MagicMock())
-        assert service.validate_profile_field('linkedin_credentials', {'key': 'val'}) is True
-
-    def test_linkedin_credentials_list_rejected(self):
-        service = DynamoDBApiService(table=MagicMock())
+        assert service.validate_profile_field('linkedin_credentials', 'encrypted') is False
+        assert service.validate_profile_field('linkedin_credentials', {'key': 'val'}) is False
         assert service.validate_profile_field('linkedin_credentials', ['bad']) is False
 
     def test_ai_generated_ideas_accepts_variants(self):

@@ -46,7 +46,6 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
       logger.info('Profile fetch result', {
         success: response.success,
         hasData: !!response.data,
-        hasCredentials: !!response.data?.linkedin_credentials,
         error: response.error,
       });
       if (response.success && response.data) {
@@ -66,15 +65,10 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
           // Ignore timezone detection errors
         }
 
-        // Also set LinkedIn credentials if available
-        if (response.data.linkedin_credentials) {
-          setCiphertextState(response.data.linkedin_credentials);
-          try {
-            sessionStorage.setItem('li_credentials_ciphertext', response.data.linkedin_credentials);
-          } catch {
-            // Ignore storage errors
-          }
-        }
+        // LinkedIn credentials live exclusively in the desktop client
+        // (Sealbox-encrypted, on-device). The API no longer returns them
+        // and the web context no longer hydrates them from any cloud
+        // source.
         try {
           sessionStorage.setItem('profile_fetched', 'true');
         } catch {

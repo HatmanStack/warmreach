@@ -1,5 +1,5 @@
 import express from 'express';
-import ProfileInitController from '../src/domains/profile/controllers/profileInitController.js';
+import { ProfileInitController } from '../src/domains/profile/controllers/profileInitController.js';
 import { logger } from '#utils/logger.js';
 
 const router = express.Router();

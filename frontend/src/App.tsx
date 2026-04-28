@@ -10,6 +10,8 @@ import { UserProfileProvider } from '@/features/profile';
 import { HealAndRestoreProvider } from '@/features/workflow';
 import { PostComposerProvider } from '@/features/posts';
 import { WebSocketProvider } from '@/shared/contexts/WebSocketContext';
+import { ClientRequiredDialogProvider } from '@/shared/contexts/ClientRequiredDialogContext';
+import { ClientRequiredDialog } from '@/shared/components/ClientRequiredDialog';
 import { queryClient } from '@/shared/lib/queryClient';
 
 const Index = lazy(() => import('@/pages/Index'));
@@ -25,39 +27,42 @@ const App = () => (
       <Sonner />
       <AuthProvider>
         <WebSocketProvider>
-          <TierProvider>
-            <UserProfileProvider>
-              <PostComposerProvider>
-                <HealAndRestoreProvider>
-                  <BrowserRouter>
-                    <Suspense fallback={null}>
-                      <Routes>
-                        <Route path="/" element={<Index />} />
-                        <Route path="/auth" element={<Auth />} />
-                        <Route
-                          path="/dashboard"
-                          element={
-                            <ProtectedRoute>
-                              <Dashboard />
-                            </ProtectedRoute>
-                          }
-                        />
-                        <Route
-                          path="/profile"
-                          element={
-                            <ProtectedRoute>
-                              <Profile />
-                            </ProtectedRoute>
-                          }
-                        />
-                        <Route path="*" element={<NotFound />} />
-                      </Routes>
-                    </Suspense>
-                  </BrowserRouter>
-                </HealAndRestoreProvider>
-              </PostComposerProvider>
-            </UserProfileProvider>
-          </TierProvider>
+          <ClientRequiredDialogProvider>
+            <TierProvider>
+              <UserProfileProvider>
+                <PostComposerProvider>
+                  <HealAndRestoreProvider>
+                    <BrowserRouter>
+                      <Suspense fallback={null}>
+                        <ClientRequiredDialog />
+                        <Routes>
+                          <Route path="/" element={<Index />} />
+                          <Route path="/auth" element={<Auth />} />
+                          <Route
+                            path="/dashboard"
+                            element={
+                              <ProtectedRoute>
+                                <Dashboard />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/profile"
+                            element={
+                              <ProtectedRoute>
+                                <Profile />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route path="*" element={<NotFound />} />
+                        </Routes>
+                      </Suspense>
+                    </BrowserRouter>
+                  </HealAndRestoreProvider>
+                </PostComposerProvider>
+              </UserProfileProvider>
+            </TierProvider>
+          </ClientRequiredDialogProvider>
         </WebSocketProvider>
       </AuthProvider>
     </TooltipProvider>

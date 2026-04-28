@@ -176,7 +176,7 @@ class MessageGenerationService {
     if (results.size === 0 && errors.size > 0) {
       const firstError = Array.from(errors.values())[0];
       throw new MessageGenerationError({
-        message: `Batch generation failed: ${firstError.message}`,
+        message: `Batch generation failed: ${firstError?.message ?? 'unknown error'}`,
         code: 'BATCH_GENERATION_FAILED',
       });
     }
@@ -203,7 +203,8 @@ class MessageGenerationService {
     ];
 
     // Randomly select a mock message
-    const selectedMessage = mockMessages[Math.floor(Math.random() * mockMessages.length)];
+    const selectedMessage =
+      mockMessages[Math.floor(Math.random() * mockMessages.length)] ?? mockMessages[0]!;
 
     // Occasionally simulate an error for testing
     if (Math.random() < 0.1) {

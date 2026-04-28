@@ -22,7 +22,7 @@ User settings and profile CRUD.
 | Operation | Description |
 |-----------|-------------|
 | `create` | Create a bad-contact profile entry |
-| `update_user_settings` | Update user settings (linkedin_credentials, preferences) |
+| `update_user_settings` | Update user profile fields and preferences |
 | `update_profile_picture` | Update user profile picture |
 
 > Tier management and billing operations are available in WarmReach Pro.

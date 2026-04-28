@@ -17,13 +17,37 @@ from shared_services.monetization import (
 )
 from shared_services.observability import setup_correlation_context
 from shared_services.request_utils import api_response, extract_user_id
+from shared_services.ssm_cache import SSMCachedSecret
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Clients
 OPENAI_TIMEOUT = int(os.environ.get('OPENAI_TIMEOUT', '60'))  # Optional: defaults to 60s
-openai_client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'), timeout=OPENAI_TIMEOUT)
+
+# OPENAI_API_KEY_ARN is required at runtime. We don't raise at module import
+# (a missing var here would fail every cold start before the handler can
+# return a structured error) — but we DO refuse to mint an OpenAI client
+# without it.
+_OPENAI_API_KEY_ARN = os.environ.get('OPENAI_API_KEY_ARN', '')
+_openai_secret = SSMCachedSecret(_OPENAI_API_KEY_ARN) if _OPENAI_API_KEY_ARN else None
+
+
+def _get_openai_client() -> OpenAI:
+    """Build an OpenAI client lazily, fetching the key from SSM each call.
+
+    SSMCachedSecret has its own TTL so this isn't an SSM round-trip per
+    invocation; the lazy build means warm containers pick up rotated keys
+    after the cache expires (matches pro). Module-load resolution would
+    bake the key in until cold start.
+    """
+    if _openai_secret is None:
+        raise RuntimeError(
+            'OPENAI_API_KEY_ARN is not configured — cannot build OpenAI client'
+        )
+    return OpenAI(api_key=_openai_secret.get_value(), timeout=OPENAI_TIMEOUT)
+
+
 _bedrock_client = None
 
 
@@ -39,8 +63,27 @@ def _get_bedrock_client():
 table_name = os.environ.get('DYNAMODB_TABLE_NAME')
 table = boto3.resource('dynamodb').Table(table_name) if table_name else None
 
-# Module-level LLMService for warm container reuse
-_llm_service = LLMService(openai_client=openai_client, bedrock_client=_get_bedrock_client(), table=table)
+# LLMService rebuilt periodically so rotated OpenAI keys propagate (mirrors
+# pro's pattern). Within the TTL window the cached service is reused for
+# warm-container performance.
+_llm_service: LLMService | None = None
+_llm_service_created_at: float = 0.0
+_LLM_SERVICE_TTL_SECONDS = 300  # 5 minutes
+
+
+def _get_llm_service() -> LLMService:
+    global _llm_service, _llm_service_created_at
+    import time
+
+    now = time.time()
+    if _llm_service is None or (now - _llm_service_created_at) > _LLM_SERVICE_TTL_SECONDS:
+        _llm_service = LLMService(
+            openai_client=_get_openai_client(),
+            bedrock_client=_get_bedrock_client(),
+            table=table,
+        )
+        _llm_service_created_at = now
+    return _llm_service
 
 OPS = {
     'generate_ideas',
@@ -220,7 +263,7 @@ def lambda_handler(event, _context):
         # Dispatch via routing table
         handler = HANDLERS[op]
         try:
-            result = handler(body, user_id, _llm_service)
+            result = handler(body, user_id, _get_llm_service())
         except Exception:
             if reserved and _quota_service:
                 try:

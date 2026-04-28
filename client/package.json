@@ -1,8 +1,8 @@
 {
   "name": "warmreach-client",
-  "version": "1.0.0",
+  "version": "1.14.0",
   "description": "WarmReach client — Electron tray app with Puppeteer automation",
-  "main": "src/server.js",
+  "main": "electron-main.js",
   "type": "module",
   "imports": {
     "#utils/*": "./src/shared/utils/*",
@@ -16,7 +16,9 @@
     "start": "node --import tsx src/server.js",
     "dev": "nodemon --exec 'node --import tsx' src/server.js",
     "electron:dev": "electron --import tsx electron-main.js",
-    "electron:build": "electron-builder",
+    "electron:build": "npm run build:ts && electron-builder && npm run clean:ts",
+    "build:ts": "tsc -p tsconfig.build.json && node scripts/copy-emitted.mjs",
+    "clean:ts": "find src config routes -name '*.ts' ! -name '*.test.ts' -exec sh -c 'rm -f \"${0%.ts}.js\"' {} \\; && rm -rf build-tsc",
     "build": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
@@ -55,13 +57,6 @@
     "typescript-eslint": "^8.57.1",
     "vitest": "^4.0.16"
   },
-  "keywords": [
-    "linkedin",
-    "automation",
-    "puppeteer",
-    "search",
-    "scraping"
-  ],
   "author": "Your Name",
   "license": "Apache-2.0",
   "engines": {

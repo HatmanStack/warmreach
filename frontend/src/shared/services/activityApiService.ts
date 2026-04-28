@@ -26,7 +26,7 @@ class ActivityApiService {
     const result = await httpClient.makeRequest<ActivityTimelineResponse>(
       'edges',
       'get_activity_timeline',
-      params
+      params as unknown as Record<string, unknown>
     );
 
     if (!result.success) {

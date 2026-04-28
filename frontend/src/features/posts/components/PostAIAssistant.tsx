@@ -54,7 +54,7 @@ const PostAIAssistant = ({
   useEffect(() => {
     const selectedTexts = Array.from(selectedIndices)
       .map((idx) => localIdeas[idx])
-      .filter(Boolean);
+      .filter((s): s is string => Boolean(s));
     updateSelectedIdeas(selectedTexts);
   }, [selectedIndices, localIdeas, updateSelectedIdeas]);
 
@@ -116,7 +116,9 @@ const PostAIAssistant = ({
 
     // If we have selected ideas, research those
     if (hasSelected) {
-      const selectedIdeasList = Array.from(selectedIndices).map((index) => localIdeas[index]);
+      const selectedIdeasList = Array.from(selectedIndices)
+        .map((index) => localIdeas[index])
+        .filter((s): s is string => Boolean(s));
       onResearchTopics(selectedIdeasList);
       return;
     }

@@ -35,6 +35,8 @@
     "test:e2e:ui": "npx playwright test --ui",
     "deploy": "node scripts/deploy/deploy-sam.js",
     "deploy:ragstack": "node scripts/deploy/deploy-ragstack.js",
+    "teardown": "bash scripts/deploy/teardown.sh",
+    "teardown:dry": "bash scripts/deploy/teardown.sh --dry-run",
     "prepare": "husky"
   },
   "author": "HatmanStack",

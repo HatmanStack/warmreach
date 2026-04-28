@@ -1,679 +1,800 @@
 #!/usr/bin/env node
 /**
- * SAM Deployment Script
+ * WarmReach SAM Deployment
  *
- * Deploys the WarmReach backend via SAM.
- * - Prompts for configuration if not present
- * - Generates samconfig.toml
- * - Executes SAM build and deploy
- * - Captures outputs to .env file
+ * One-shot backend deploy:
+ *   - Runs pre-flight checks (AWS creds, SAM CLI, Docker, Bedrock access, SES, concurrency)
+ *   - Prompts for all template inputs; stores secrets as SSM SecureStrings and passes ARNs
+ *   - Generates samconfig.toml
+ *   - Runs `sam build --use-container` + `sam deploy`
+ *   - Captures stack outputs into root .env, frontend/.env, admin/.env
+ *   - Prints manual next-step instructions for frontend/admin deploys
+ *
+ * Region is pinned to us-east-1 (CloudFront/ACM, Bedrock cross-region inference,
+ * and the RAGStack nested stack all require it).
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { createInterface } from 'readline';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-// Derive PROJECT_ROOT from script location, not cwd()
+// ----------------------------------------------------------------------------
+// Constants
+// ----------------------------------------------------------------------------
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const PROJECT_ROOT = resolve(__dirname, '..', '..');  // scripts/deploy -> root
+const PROJECT_ROOT = resolve(__dirname, '..', '..');
 const BACKEND_DIR = join(PROJECT_ROOT, 'backend');
-const CONFIG_FILE = '.deploy-config.json';
 
-/**
- * Prompts user for input with optional secret masking
- */
-function prompt(question, defaultValue = '', isSecret = false) {
-  return new Promise((resolve) => {
-    const displayQuestion = defaultValue && !isSecret
-      ? `${question} [${defaultValue}]: `
-      : `${question}: `;
+const REGION = 'us-east-1';
+const CLAUDE_MODEL_ID = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
+const CONFIG_FILE = join(PROJECT_ROOT, '.deploy-config.json');
+const SAMCONFIG_FILE = join(BACKEND_DIR, 'samconfig.toml');
 
-    if (isSecret) {
-      // Secret input - mask with asterisks
-      process.stdout.write(displayQuestion);
-      let input = '';
+const DRY_RUN = process.argv.includes('--dry-run');
 
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(true);
-      }
-      process.stdin.resume();
-      process.stdin.setEncoding('utf8');
+// ----------------------------------------------------------------------------
+// IO helpers
+// ----------------------------------------------------------------------------
 
-      const onData = (char) => {
-        if (char === '\n' || char === '\r') {
-          process.stdin.setRawMode && process.stdin.setRawMode(false);
-          process.stdin.removeListener('data', onData);
-          process.stdin.pause();
-          process.stdout.write('\n');
-          resolve(input.trim() || defaultValue);
-        } else if (char === '\u0003') {
-          // Ctrl+C
-          process.exit(1);
-        } else if (char === '\u007F' || char === '\b') {
-          // Backspace
-          if (input.length > 0) {
-            input = input.slice(0, -1);
-            process.stdout.write('\b \b');
-          }
-        } else {
-          input += char;
-          process.stdout.write('*');
-        }
-      };
-
-      process.stdin.on('data', onData);
-    } else {
-      // Normal input
-      const rl = createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-
-      rl.question(displayQuestion, (answer) => {
-        rl.close();
-        resolve(answer.trim() || defaultValue);
-      });
-    }
-  });
-}
-
-/**
- * Parses existing samconfig.toml and extracts parameter overrides
- */
-function parseSamConfig() {
-  const samConfigPath = join(BACKEND_DIR, 'samconfig.toml');
-
-  if (!existsSync(samConfigPath)) {
-    return null;
-  }
-
+function exec(cmd, { quiet = false, ignoreError = false } = {}) {
   try {
-    const content = readFileSync(samConfigPath, 'utf-8');
-    const config = {
-      stackName: '',
-      region: '',
-      s3Bucket: '',
-      environment: '',
-      openaiApiKey: '',
-      deployRAGStack: 'true',
-      adminEmail: '',
-      ragstackEndpoint: '',
-      ragstackApiKey: '',
-    };
-
-    // Extract stack_name
-    const stackMatch = content.match(/stack_name\s*=\s*"([^"]+)"/);
-    if (stackMatch) config.stackName = stackMatch[1];
-
-    // Extract region
-    const regionMatch = content.match(/region\s*=\s*"([^"]+)"/);
-    if (regionMatch) config.region = regionMatch[1];
-
-    // Extract s3_bucket
-    const s3Match = content.match(/s3_bucket\s*=\s*"([^"]+)"/);
-    if (s3Match) config.s3Bucket = s3Match[1];
-
-    // Extract parameter_overrides - handle both array format [...] and string format "..."
-    const arrayParamMatch = content.match(/parameter_overrides\s*=\s*\[([\s\S]*?)\]/);
-    const stringParamMatch = content.match(/parameter_overrides\s*=\s*"([^"]+)"/);
-
-    let params = '';
-    if (arrayParamMatch) {
-      // Array format: extract all quoted strings and join them
-      const arrayContent = arrayParamMatch[1];
-      const items = arrayContent.match(/"([^"]+)"/g);
-      if (items) {
-        params = items.map((s) => s.replace(/"/g, '')).join(' ');
-      }
-    } else if (stringParamMatch) {
-      params = stringParamMatch[1];
-    }
-
-    if (params) {
-      const envMatch = params.match(/Environment=(\S+)/);
-      if (envMatch) config.environment = envMatch[1];
-
-      const openaiMatch = params.match(/OpenAIApiKey=(\S+)/);
-      if (openaiMatch) config.openaiApiKey = openaiMatch[1];
-
-      const deployRAGStackMatch = params.match(/DeployRAGStack=(true|false)/);
-      if (deployRAGStackMatch) config.deployRAGStack = deployRAGStackMatch[1];
-
-      const adminEmailMatch = params.match(/AdminEmail=(\S+)/);
-      if (adminEmailMatch) config.adminEmail = adminEmailMatch[1];
-
-      const ragEndpointMatch = params.match(/RagstackGraphqlEndpoint=(\S+)/);
-      if (ragEndpointMatch) config.ragstackEndpoint = ragEndpointMatch[1];
-
-      const ragKeyMatch = params.match(/RagstackApiKey=(\S+)/);
-      if (ragKeyMatch) config.ragstackApiKey = ragKeyMatch[1];
-    }
-
-    return config;
-  } catch (error) {
-    console.warn('⚠ Failed to parse existing samconfig.toml:', error.message);
-    return null;
+    return execSync(cmd, { encoding: 'utf-8', stdio: quiet ? 'pipe' : 'inherit' });
+  } catch (err) {
+    if (ignoreError) return '';
+    throw err;
   }
 }
 
-/**
- * Loads existing configuration or returns defaults
- */
-function loadConfig() {
-  // First try to load from existing samconfig.toml (preserves secrets)
-  const samConfig = parseSamConfig();
-  if (samConfig && samConfig.stackName) {
-    console.log('✓ Loaded existing configuration from backend/samconfig.toml');
-    return samConfig;
-  }
-
-  // Fall back to .deploy-config.json
-  const configPath = join(PROJECT_ROOT, CONFIG_FILE);
-
-  if (existsSync(configPath)) {
-    try {
-      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      console.log('✓ Loaded existing configuration from', CONFIG_FILE);
-      return config;
-    } catch (error) {
-      console.warn('⚠ Failed to parse existing config, starting fresh');
-    }
-  }
-
-  return {
-    stackName: 'warmreach',
-    region: 'us-east-1',  // Default to us-east-1 for Nova Multimodal Embeddings
-    s3Bucket: '',
-    environment: 'prod',
-    openaiApiKey: '',
-    deployRAGStack: 'true',  // New: deploy nested RAGStack
-    adminEmail: '',  // New: admin email for RAGStack
-    ragstackEndpoint: '',
-    ragstackApiKey: '',
-  };
+function execCapture(cmd) {
+  return execSync(cmd, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-/**
- * Saves configuration to file (excludes secrets)
- */
-function saveConfig(config) {
-  const configPath = join(PROJECT_ROOT, CONFIG_FILE);
-  // Don't persist secrets to disk
-  const safeConfig = {
-    stackName: config.stackName,
-    region: config.region,
-    environment: config.environment,
-  };
-  writeFileSync(configPath, JSON.stringify(safeConfig, null, 2));
-  console.log('✓ Configuration saved to', CONFIG_FILE);
-}
-
-/**
- * Gets AWS account ID
- */
-function getAwsAccountId() {
-  try {
-    const result = execSync('aws sts get-caller-identity --query Account --output text', {
-      encoding: 'utf-8',
-    });
-    return result.trim();
-  } catch (error) {
-    throw new Error('Failed to get AWS account ID. Ensure AWS CLI is configured.');
-  }
-}
-
-/**
- * Validates AWS credentials
- */
-function validateAwsCredentials() {
-  console.log('\n🔐 Validating AWS credentials...');
-  try {
-    const identity = execSync('aws sts get-caller-identity --output json', {
-      encoding: 'utf-8',
-    });
-    const parsed = JSON.parse(identity);
-    console.log(`✓ Authenticated as: ${parsed.Arn}`);
-    return true;
-  } catch (error) {
-    throw new Error('AWS credentials not configured or invalid. Run `aws configure` first.');
-  }
-}
-
-/**
- * Validates SAM CLI is installed
- */
-function validateSamCli() {
-  console.log('\n🔧 Checking SAM CLI...');
-  try {
-    const version = execSync('sam --version', { encoding: 'utf-8' });
-    console.log(`✓ SAM CLI: ${version.trim()}`);
-    return true;
-  } catch (error) {
-    throw new Error('SAM CLI not found. Install from https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html');
-  }
-}
-
-/**
- * Escapes a string for safe inclusion in TOML
- * Handles backslashes, double quotes, and special characters
- */
-function escapeTomlValue(value) {
-  if (value === null || value === undefined) return '';
-  return String(value)
-    .replace(/\\/g, '\\\\')  // Escape backslashes first
-    .replace(/"/g, '\\"')    // Escape double quotes
-    .replace(/\n/g, '\\n')   // Escape newlines
-    .replace(/\r/g, '\\r')   // Escape carriage returns
-    .replace(/\t/g, '\\t');  // Escape tabs
-}
-
-/**
- * Generates samconfig.toml for deployment
- */
-function generateSamConfig(config, accountId) {
-  const paramOverrides = [
-    `Environment=${escapeTomlValue(config.environment)}`,
-  ];
-
-  if (config.openaiApiKey) {
-    paramOverrides.push(`OpenAIApiKey=${escapeTomlValue(config.openaiApiKey)}`);
-  }
-
-  // RAGStack nested stack parameters
-  if (config.deployRAGStack) {
-    paramOverrides.push(`DeployRAGStack=${escapeTomlValue(config.deployRAGStack)}`);
-  }
-  if (config.adminEmail && config.deployRAGStack === 'true') {
-    paramOverrides.push(`AdminEmail=${escapeTomlValue(config.adminEmail)}`);
-  }
-
-  // External RAGStack parameters (used only if DeployRAGStack=false)
-  if (config.ragstackEndpoint && config.deployRAGStack === 'false') {
-    paramOverrides.push(`RagstackGraphqlEndpoint=${escapeTomlValue(config.ragstackEndpoint)}`);
-  }
-  if (config.ragstackApiKey && config.deployRAGStack === 'false') {
-    paramOverrides.push(`RagstackApiKey=${escapeTomlValue(config.ragstackApiKey)}`);
-  }
-
-  // Use existing s3_bucket or fall back to resolve_s3
-  const s3Config = config.s3Bucket
-    ? `s3_bucket = "${escapeTomlValue(config.s3Bucket)}"`
-    : `resolve_s3 = true\ns3_prefix = "${escapeTomlValue(config.stackName)}"`;
-
-  const samConfig = `# Auto-generated by deploy-sam.js
-# Do not edit manually
-
-version = 0.1
-
-[default.deploy.parameters]
-stack_name = "${escapeTomlValue(config.stackName)}"
-${s3Config}
-region = "${escapeTomlValue(config.region)}"
-confirm_changeset = false
-capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
-parameter_overrides = "${paramOverrides.join(' ')}"
-disable_rollback = false
-
-[default.build.parameters]
-cached = true
-parallel = true
-`;
-
-  const samConfigPath = join(BACKEND_DIR, 'samconfig.toml');
-  writeFileSync(samConfigPath, samConfig);
-  console.log('✓ Generated samconfig.toml');
-  return samConfigPath;
-}
-
-/**
- * Runs SAM build
- */
-async function runSamBuild() {
-  console.log('\n📦 Running SAM build...');
-
+function streamExec(cmd, args, cwd) {
   return new Promise((resolve, reject) => {
-    const proc = spawn('sam', ['build'], {
-      cwd: BACKEND_DIR,
-      stdio: 'inherit',
-    });
-
-    proc.on('close', (code) => {
-      if (code === 0) {
-        console.log('✓ SAM build completed');
-        resolve();
-      } else {
-        reject(new Error(`SAM build failed with code ${code}`));
-      }
-    });
-
-    proc.on('error', (error) => {
-      reject(new Error(`Failed to start SAM build: ${error.message}`));
-    });
+    const proc = spawn(cmd, args, { cwd, stdio: 'inherit' });
+    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+    proc.on('error', reject);
   });
 }
 
-/**
- * Runs SAM deploy
- */
-async function runSamDeploy() {
-  console.log('\n🚀 Running SAM deploy...');
-
-  return new Promise((resolve, reject) => {
-    const proc = spawn('sam', ['deploy', '--no-confirm-changeset'], {
-      cwd: BACKEND_DIR,
-      stdio: 'inherit',
-    });
-
-    proc.on('close', (code) => {
-      if (code === 0) {
-        console.log('✓ SAM deploy completed');
-        resolve();
-      } else {
-        reject(new Error(`SAM deploy failed with code ${code}`));
-      }
-    });
-
-    proc.on('error', (error) => {
-      reject(new Error(`Failed to start SAM deploy: ${error.message}`));
-    });
-  });
-}
-
-/**
- * Validates AWS stack name (alphanumeric, hyphens, underscores, 1-128 chars)
- */
-function isValidStackName(name) {
-  return /^[a-zA-Z0-9_-]{1,128}$/.test(name);
-}
-
-/**
- * Validates AWS region format (e.g., us-west-2, eu-central-1)
- */
-function isValidRegion(region) {
-  return /^[a-z]{2}-[a-z]+-\d{1}$/.test(region);
-}
-
-/**
- * Retrieves CloudFormation stack outputs
- */
-function getStackOutputs(stackName, region) {
-  console.log('\n📋 Retrieving stack outputs...');
-
-  // Validate inputs to prevent shell injection
-  if (!isValidStackName(stackName)) {
-    throw new Error(`Invalid stack name: ${stackName}. Must be alphanumeric with hyphens/underscores, 1-128 chars.`);
-  }
-  if (!isValidRegion(region)) {
-    throw new Error(`Invalid region: ${region}. Must be a valid AWS region (e.g., us-west-2).`);
-  }
-
-  try {
-    const result = execSync(
-      `aws cloudformation describe-stacks --stack-name ${stackName} --region ${region} --query "Stacks[0].Outputs" --output json`,
-      { encoding: 'utf-8' }
-    );
-
-    const outputs = JSON.parse(result);
-    const outputMap = {};
-
-    for (const output of outputs) {
-      outputMap[output.OutputKey] = output.OutputValue;
-    }
-
-    return outputMap;
-  } catch (error) {
-    throw new Error(`Failed to get stack outputs: ${error.message}`);
-  }
-}
-
-/**
- * Updates or creates .env file with stack outputs
- */
-function updateEnvFile(outputs, config) {
-  const envPath = join(PROJECT_ROOT, '.env');
-  let existingEnv = {};
-
-  // Read existing .env if it exists
-  if (existsSync(envPath)) {
-    const content = readFileSync(envPath, 'utf-8');
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [key, ...valueParts] = trimmed.split('=');
-        if (key) {
-          existingEnv[key] = valueParts.join('=');
-        }
-      }
-    }
-  }
-
-  // Update with new values
-  const updates = {
-    VITE_API_GATEWAY_URL: outputs.ApiUrl || '',
-    VITE_AWS_REGION: config.region,
-    VITE_COGNITO_USER_POOL_ID: outputs.UserPoolId || '',
-    VITE_COGNITO_USER_POOL_WEB_CLIENT_ID: outputs.UserPoolClientId || '',
-    API_GATEWAY_BASE_URL: outputs.ApiUrl || '',
-    AWS_REGION: config.region,
-    DYNAMODB_TABLE: outputs.DynamoDBTableName || '',
-  };
-
-  // Add RAGStack outputs if deployed as nested stack
-  if (config.deployRAGStack === 'true') {
-    if (outputs.RAGStackGraphQLEndpoint) {
-      updates.RAGSTACK_GRAPHQL_ENDPOINT = outputs.RAGStackGraphQLEndpoint;
-    }
-    if (outputs.RAGStackDashboardUrl) {
-      updates.RAGSTACK_DASHBOARD_URL = outputs.RAGStackDashboardUrl;
-    }
-    // API key is injected into Lambda env vars from the nested stack output.
-    // Retrieve it from a Lambda's configuration if needed for manual testing.
-    console.log('\n📝 RAGStack deployed as nested stack. Retrieve API key from Lambda env vars:');
-    console.log(`   aws lambda get-function-configuration --function-name linkedin-edge-processing-${config.environment || 'prod'} --query 'Environment.Variables.RAGSTACK_API_KEY' --output text`);
-  }
-
-  // Merge with existing
-  const merged = { ...existingEnv, ...updates };
-
-  // Write back
-  const envContent = Object.entries(merged)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('\n');
-
-  writeFileSync(envPath, envContent + '\n');
-  console.log('✓ Environment variables written to .env');
-
-  // Display updates
-  console.log('\n📝 Updated .env with:');
-  for (const [key, value] of Object.entries(updates)) {
-    if (value) {
-      console.log(`  ${key}=${value.substring(0, 50)}${value.length > 50 ? '...' : ''}`);
-    }
-  }
-}
-
-/**
- * Prompts for a secret with masked default display
- */
-async function promptSecret(question, existingValue) {
-  const maskedDefault = existingValue ? '***' : '';
-  const displayQuestion = maskedDefault
-    ? `${question} [${maskedDefault}]: `
-    : `${question}: `;
-
-  process.stdout.write(displayQuestion);
-  let input = '';
-
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.resume();
-  process.stdin.setEncoding('utf8');
-
+function prompt(question, defaultValue = '') {
+  const display = defaultValue ? `${question} [${defaultValue}]: ` : `${question}: `;
   return new Promise((resolve) => {
-    const onData = (char) => {
-      if (char === '\n' || char === '\r') {
-        process.stdin.setRawMode && process.stdin.setRawMode(false);
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(display, (answer) => {
+      rl.close();
+      resolve(answer.trim() || defaultValue);
+    });
+  });
+}
+
+function promptSecret(question, hasExisting = false) {
+  const display = hasExisting ? `${question} [***, Enter to keep]: ` : `${question} (Enter to skip): `;
+  process.stdout.write(display);
+  return new Promise((resolve) => {
+    let input = '';
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+
+    const onData = (ch) => {
+      if (ch === '\n' || ch === '\r') {
+        if (process.stdin.isTTY) process.stdin.setRawMode(false);
         process.stdin.removeListener('data', onData);
         process.stdin.pause();
         process.stdout.write('\n');
-        // If empty input, keep existing value
-        resolve(input.trim() || existingValue || '');
-      } else if (char === '\u0003') {
-        // Ctrl+C
+        resolve(input);
+      } else if (ch === '\x03') {
         process.exit(1);
-      } else if (char === '\u007F' || char === '\b') {
-        // Backspace
+      } else if (ch === '\x7f' || ch === '\b') {
         if (input.length > 0) {
           input = input.slice(0, -1);
           process.stdout.write('\b \b');
         }
       } else {
-        input += char;
+        input += ch;
         process.stdout.write('*');
       }
     };
-
     process.stdin.on('data', onData);
   });
 }
 
-/**
- * Prompts for configuration values
- */
-async function collectConfiguration(config) {
-  console.log('\n📝 SAM Deployment Configuration\n');
+function banner(title) {
+  const line = '═'.repeat(60);
+  console.log(`\n${line}\n${title}\n${line}`);
+}
 
-  // Collect and validate stack name
-  config.stackName = await prompt('Stack name', config.stackName);
-  if (!isValidStackName(config.stackName)) {
-    throw new Error(`Invalid stack name: "${config.stackName}". Must be alphanumeric with hyphens/underscores, 1-128 chars.`);
+function ok(msg) {
+  console.log(`  ✓ ${msg}`);
+}
+
+function warn(msg) {
+  console.log(`  ⚠ ${msg}`);
+}
+
+function fail(msg) {
+  console.error(`  ✗ ${msg}`);
+  process.exit(1);
+}
+
+// ----------------------------------------------------------------------------
+// Config load/save (non-secret defaults only)
+// ----------------------------------------------------------------------------
+
+function defaults() {
+  return {
+    stackName: 'warmreach',
+    environment: 'prod',
+    sesVerifiedEmail: '',
+    alarmNotificationEmail: '',
+    adminEmail: '',
+    adminUserSub: '',
+    deployRAGStack: 'true',
+    ragstackEndpoint: '',
+    productionOrigins: '',
+    includeDevOrigins: 'true',
+    enableDigests: 'false',
+    // Desktop client download URLs (https:// or s3://bucket/key — leave blank
+    // for "coming soon"; can be updated by re-running deploy without a
+    // frontend rebuild)
+    clientDownloadMacUrl: '',
+    clientDownloadWinUrl: '',
+    clientDownloadLinuxUrl: '',
+    clientDownloadVersion: '',
+    // Secret ARNs (populated from SSM PutParameter output; safe to persist)
+    openaiApiKeyArn: '',
+    stripeSecretKeyArn: '',
+    stripeWebhookSecretArn: '',
+  };
+}
+
+function loadConfig() {
+  if (!existsSync(CONFIG_FILE)) return defaults();
+  try {
+    return { ...defaults(), ...JSON.parse(readFileSync(CONFIG_FILE, 'utf-8')) };
+  } catch {
+    warn('.deploy-config.json could not be parsed, using defaults');
+    return defaults();
+  }
+}
+
+function saveConfig(config) {
+  // Persist everything except raw secret values. ARN-backed secrets are
+  // safe (the value lives in SSM SecureString). The external-RAGStack
+  // API key is the one plaintext secret in this flow — strip it from
+  // the on-disk config so a $WORKDIR/.deploy-config.json leak doesn't
+  // expose it. The user is prompted for it again on each deploy when
+  // deployRAGStack=false.
+  const { ragstackApiKey: _unused, ...safeConfig } = config;
+  void _unused;
+  writeFileSync(CONFIG_FILE, JSON.stringify(safeConfig, null, 2));
+  ok(`Saved ${CONFIG_FILE}`);
+}
+
+// ----------------------------------------------------------------------------
+// Pre-flight checks
+// ----------------------------------------------------------------------------
+
+function checkAwsCli() {
+  try {
+    const identity = JSON.parse(execCapture('aws sts get-caller-identity --output json'));
+    ok(`AWS: ${identity.Arn}`);
+    return identity.Account;
+  } catch {
+    fail('AWS CLI not configured. Run `aws configure` first.');
+  }
+}
+
+function checkSamCli() {
+  try {
+    const v = execCapture('sam --version');
+    ok(`SAM CLI: ${v}`);
+  } catch {
+    fail('SAM CLI not installed. See https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html');
+  }
+}
+
+function checkDocker() {
+  try {
+    execCapture('docker info');
+    ok('Docker running (required for sam build --use-container)');
+  } catch {
+    fail('Docker is not running. Start Docker Desktop or the docker daemon.');
+  }
+}
+
+function checkBedrockAccess() {
+  // us.* IDs are system-defined cross-region inference profiles; the
+  // underlying foundation model (without the prefix) is what model-access
+  // grants operate on. Query both so we fail soft on either path.
+  const isInferenceProfile = CLAUDE_MODEL_ID.startsWith('us.');
+  const underlying = CLAUDE_MODEL_ID.replace(/^us\./, '');
+  try {
+    if (isInferenceProfile) {
+      const profiles = execCapture(
+        `aws bedrock list-inference-profiles --region ${REGION} --type-equals SYSTEM_DEFINED ` +
+          `--query "inferenceProfileSummaries[?inferenceProfileId=='${CLAUDE_MODEL_ID}'].inferenceProfileId" --output text`,
+      );
+      if (profiles) {
+        ok(`Bedrock inference profile available: ${CLAUDE_MODEL_ID}`);
+        return;
+      }
+    }
+    const fm = execCapture(
+      `aws bedrock list-foundation-models --region ${REGION} ` +
+        `--query "modelSummaries[?modelId=='${underlying}'].modelId" --output text`,
+    );
+    if (fm) {
+      ok(`Bedrock foundation model visible: ${underlying}`);
+    } else {
+      warn(`Bedrock model not visible in account: ${CLAUDE_MODEL_ID}`);
+      warn('Request access at: https://us-east-1.console.aws.amazon.com/bedrock/home#/modelaccess');
+      warn('Lambda will fail on first invoke until access is granted.');
+    }
+  } catch {
+    warn('Could not query Bedrock. Skipping model-access check.');
+  }
+}
+
+function checkLambdaConcurrency() {
+  try {
+    const out = execCapture(
+      `aws service-quotas get-service-quota --service-code lambda --quota-code L-B99A9384 ` +
+        `--region ${REGION} --query "Quota.Value" --output text`,
+    );
+    const limit = parseFloat(out);
+    if (Number.isFinite(limit) && limit < 200) {
+      warn(
+        `Lambda unreserved concurrency limit is ${limit}. Template reserves ~150; request a limit increase if you hit throttling.`,
+      );
+    } else {
+      ok(`Lambda concurrency headroom: ${limit}`);
+    }
+  } catch {
+    warn('Could not check Lambda concurrency quota.');
+  }
+}
+
+function checkSesIdentity(email) {
+  if (!email) return;
+  try {
+    const out = execCapture(
+      `aws ses get-identity-verification-attributes --region ${REGION} --identities ${email} --output json`,
+    );
+    const parsed = JSON.parse(out);
+    const status = parsed?.VerificationAttributes?.[email]?.VerificationStatus;
+    if (status === 'Success') {
+      ok(`SES identity verified: ${email}`);
+    } else {
+      warn(`SES identity ${email} status: ${status || 'not found'}. Verify in SES console before enabling digests.`);
+      warn('If SES is in sandbox mode, recipients must also be verified until a production-access request is approved.');
+    }
+  } catch {
+    warn('Could not check SES identity.');
+  }
+}
+
+function checkRagstackTemplateUrl(deployRAGStack) {
+  if (deployRAGStack !== 'true') return;
+  const url = 'https://ragstack-quicklaunch-public.s3.us-east-1.amazonaws.com/ragstack-template.yaml';
+  try {
+    const code = execCapture(`curl -sS -o /dev/null -w "%{http_code}" "${url}"`);
+    if (code === '200') {
+      ok(`RAGStack nested-stack template reachable: ${url}`);
+    } else {
+      warn(`RAGStack template URL returned HTTP ${code}: ${url}`);
+      warn('Nested stack will fail. Override RagstackTemplateUrl or set DeployRAGStack=false.');
+    }
+  } catch {
+    warn('Could not reach the RAGStack template URL. Nested stack may fail.');
+  }
+}
+
+function checkDomainWarning() {
+  warn(
+    'No custom domain configured. Stack will issue *.execute-api, *.cloudfront.net, and whatever your Amplify apps use. Revisit once a domain is purchased.',
+  );
+}
+
+async function ensureDeployBucket(account) {
+  // S3 bucket names are globally unique; include the account ID so multiple
+  // deployers in different accounts do not collide.
+  const bucketName = `sam-deploy-warmreach-${account}-${REGION}`;
+  try {
+    execCapture(`aws s3 ls s3://${bucketName} --region ${REGION}`);
+    ok(`Deploy bucket exists: ${bucketName}`);
+  } catch {
+    try {
+      exec(`aws s3 mb s3://${bucketName} --region ${REGION}`, { quiet: true });
+      ok(`Created deploy bucket: ${bucketName}`);
+    } catch (err) {
+      fail(`Could not create deploy bucket ${bucketName}: ${err.message}`);
+    }
+  }
+  return bucketName;
+}
+
+// ----------------------------------------------------------------------------
+// SSM SecureString flow
+// ----------------------------------------------------------------------------
+
+function ssmParamName(stackName, key) {
+  return `/warmreach/${stackName}/${key}`;
+}
+
+async function ensureUnsubscribeSecret(environment) {
+  // The template's UNSUBSCRIBE_SECRET env var resolves
+  // /warmreach/${Environment}/unsubscribe-secret at deploy time. Note the
+  // path uses ${Environment} (e.g. 'prod'), NOT the user-chosen stackName,
+  // because CFN dynamic refs can't compose stack-name into the path.
+  const paramPath = `/warmreach/${environment}/unsubscribe-secret`;
+  try {
+    execCapture(
+      `aws ssm get-parameter --region ${REGION} --name ${paramPath} --with-decryption --query "Parameter.Name" --output text`,
+    );
+    ok(`Unsubscribe secret already present: ${paramPath}`);
+    return;
+  } catch {
+    /* not found — create */
+  }
+  // 32 random bytes -> base64 (43 chars, > 256 bits of entropy)
+  const { randomBytes } = await import('node:crypto');
+  const value = randomBytes(32).toString('base64');
+  putSsmSecureString(paramPath, value);
+  ok(`Generated unsubscribe secret: ${paramPath}`);
+}
+
+function ssmParamArn(account, name) {
+  // SSM ARN shape: arn:aws:ssm:<region>:<account>:parameter<name>
+  // Name includes the leading slash, which must not be duplicated.
+  return `arn:aws:ssm:${REGION}:${account}:parameter${name}`;
+}
+
+function putSsmSecureString(name, value) {
+  // Use --cli-input-json to avoid shell-escape issues on arbitrary secret characters.
+  const payload = JSON.stringify({
+    Name: name,
+    Value: value,
+    Type: 'SecureString',
+    Overwrite: true,
+    Tier: 'Standard',
+  });
+  // Write payload to a temp file to avoid command-line size issues and argument logging.
+  const tmp = `/tmp/warmreach-ssm-${Date.now()}.json`;
+  writeFileSync(tmp, payload, { mode: 0o600 });
+  try {
+    exec(`aws ssm put-parameter --region ${REGION} --cli-input-json file://${tmp}`, { quiet: true });
+  } finally {
+    try {
+      execCapture(`rm -f ${tmp}`);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function ensureSecret({ label, key, existingArn, account, stackName }) {
+  const hasExisting = !!existingArn;
+  const value = await promptSecret(`${label}`, hasExisting);
+  if (!value) {
+    // User left blank: keep whatever ARN we had (possibly empty).
+    return existingArn;
+  }
+  const name = ssmParamName(stackName, key);
+  putSsmSecureString(name, value);
+  const arn = ssmParamArn(account, name);
+  ok(`Stored ${label} in SSM: ${name}`);
+  return arn;
+}
+
+// ----------------------------------------------------------------------------
+// Collect config
+// ----------------------------------------------------------------------------
+
+async function collectConfig(existing, account) {
+  banner('Configuration');
+
+  const config = { ...existing };
+
+  config.stackName = await prompt('Stack name', existing.stackName);
+  if (!/^[a-zA-Z0-9-]{1,128}$/.test(config.stackName)) {
+    fail(`Invalid stack name: ${config.stackName} (alphanumeric + hyphen, 1-128 chars)`);
   }
 
-  // Collect and validate region
-  config.region = await prompt('AWS region', config.region);
-  if (!isValidRegion(config.region)) {
-    throw new Error(`Invalid region: "${config.region}". Must be a valid AWS region (e.g., us-west-2).`);
-  }
+  config.environment = await prompt('Environment (dev/prod)', existing.environment);
 
-  config.environment = await prompt('Environment (dev/prod)', config.environment);
+  banner('Secrets (stored as SSM SecureString, only ARN kept in samconfig)');
 
-  // RAGStack deployment option
-  console.log('\n🔍 RAGStack Integration (semantic search for profiles)\n');
-  const deployChoice = await prompt('Deploy RAGStack as nested stack? (true/false)', config.deployRAGStack);
-  config.deployRAGStack = deployChoice.toLowerCase() === 'true' ? 'true' : 'false';
+  config.openaiApiKeyArn = await ensureSecret({
+    label: 'OpenAI API key',
+    key: 'openai-api-key',
+    existingArn: existing.openaiApiKeyArn,
+    account,
+    stackName: config.stackName,
+  });
 
-  if (config.deployRAGStack === 'true') {
-    // Nested stack deployment - need admin email
-    console.log('\n📧 RAGStack Configuration (nested stack)\n');
-    config.adminEmail = await prompt('Admin email for RAGStack', config.adminEmail || '');
+  config.stripeSecretKeyArn = await ensureSecret({
+    label: 'Stripe secret key (blank to deploy without Stripe)',
+    key: 'stripe-secret-key',
+    existingArn: existing.stripeSecretKeyArn,
+    account,
+    stackName: config.stackName,
+  });
 
-    // Validate email if provided
-    if (config.adminEmail && !config.adminEmail.match(/^[\w.+-]+@([\w-]+\.)+[\w-]{2,6}$/)) {
-      throw new Error(`Invalid email format: ${config.adminEmail}`);
+  config.stripeWebhookSecretArn = await ensureSecret({
+    label: 'Stripe webhook signing secret (blank on first deploy; register URL with Stripe then re-run)',
+    key: 'stripe-webhook-secret',
+    existingArn: existing.stripeWebhookSecretArn,
+    account,
+    stackName: config.stackName,
+  });
+
+  banner('Operational settings');
+
+  config.sesVerifiedEmail = await prompt('SES verified sender email (blank to skip)', existing.sesVerifiedEmail);
+  config.alarmNotificationEmail = await prompt(
+    'CloudWatch alarm notification email (blank to skip)',
+    existing.alarmNotificationEmail,
+  );
+  config.adminEmail = await prompt('Admin email (RAGStack + admin dashboard)', existing.adminEmail);
+  config.adminUserSub = await prompt(
+    'Admin user Cognito sub (fill in on second deploy after first sign-up)',
+    existing.adminUserSub,
+  );
+  config.deployRAGStack = await prompt('Deploy RAGStack nested stack? (true/false)', existing.deployRAGStack);
+
+  // External RAGStack path — only used when deployRAGStack=false. Prompted
+  // every deploy (the API key is NOT persisted to .deploy-config.json; the
+  // template still takes the key as a NoEcho plaintext parameter. Migrating
+  // this to the SSM ARN pattern would require template + Lambda changes in
+  // 3 functions — tracked separately).
+  config.ragstackApiKey = '';
+  if (config.deployRAGStack === 'false') {
+    config.ragstackEndpoint = await prompt(
+      'External RAGStack GraphQL endpoint',
+      existing.ragstackEndpoint,
+    );
+    config.ragstackApiKey = await promptSecret('External RAGStack API key', false);
+    if (!config.ragstackEndpoint || !config.ragstackApiKey) {
+      warn('External RAGStack endpoint or API key missing — the stack will deploy with empty values and RAGStack-dependent features will fail at runtime.');
     }
   } else {
-    // External RAGStack - need endpoint and API key
-    console.log('\n🔗 External RAGStack Configuration\n');
-
-    // Check for .env.ragstack file first
-    const ragstackEnvPath = join(PROJECT_ROOT, '.env.ragstack');
-    if (existsSync(ragstackEnvPath)) {
-      console.log('✓ Found .env.ragstack - loading external RAGStack configuration');
-      const ragstackEnv = readFileSync(ragstackEnvPath, 'utf-8');
-
-      const cleanEnvValue = (value) => {
-        const trimmed = value.trim();
-        return trimmed.replace(/^["']|["']$/g, '');
-      };
-
-      for (const line of ragstackEnv.split('\n')) {
-        if (line.startsWith('RAGSTACK_GRAPHQL_ENDPOINT=')) {
-          config.ragstackEndpoint = cleanEnvValue(line.substring(line.indexOf('=') + 1));
-        }
-        if (line.startsWith('RAGSTACK_API_KEY=')) {
-          config.ragstackApiKey = cleanEnvValue(line.substring(line.indexOf('=') + 1));
-        }
-      }
-    } else {
-      config.ragstackEndpoint = await prompt('RAGStack GraphQL endpoint', config.ragstackEndpoint || '');
-      config.ragstackApiKey = await promptSecret('RAGStack API key', config.ragstackApiKey);
-    }
+    config.ragstackEndpoint = '';
   }
 
-  console.log('\n📦 Optional: API Keys (press Enter to keep existing)\n');
-  config.openaiApiKey = await promptSecret('OpenAI API key', config.openaiApiKey);
+  config.productionOrigins = await prompt(
+    'Production CORS origins (comma-separated, blank if none)',
+    existing.productionOrigins,
+  );
+  config.includeDevOrigins = await prompt('Include localhost origins in CORS? (true/false)', existing.includeDevOrigins);
+  config.enableDigests = await prompt(
+    'Enable weekly digest lambdas? (true/false; requires SES email)',
+    existing.enableDigests,
+  );
+
+  banner('Desktop client downloads (blank = "coming soon")');
+  console.log(
+    '  URLs accept either https:// (e.g. GitHub Releases asset)\n' +
+      '  or s3://bucket/key (Lambda mints a 5-min presigned URL on each request).\n',
+  );
+  config.clientDownloadMacUrl = await prompt('macOS download URL', existing.clientDownloadMacUrl);
+  config.clientDownloadWinUrl = await prompt('Windows download URL', existing.clientDownloadWinUrl);
+  config.clientDownloadLinuxUrl = await prompt(
+    'Linux download URL',
+    existing.clientDownloadLinuxUrl,
+  );
+  config.clientDownloadVersion = await prompt(
+    'Version label (optional, shown next to download buttons)',
+    existing.clientDownloadVersion,
+  );
 
   return config;
 }
 
-/**
- * Check for --dry-run flag
- */
-function isDryRun() {
-  return process.argv.includes('--dry-run');
+// ----------------------------------------------------------------------------
+// samconfig.toml generation
+// ----------------------------------------------------------------------------
+
+function buildParamOverrides(config) {
+  const pairs = [];
+  const push = (k, v) => {
+    if (v !== undefined && v !== null && v !== '') pairs.push([k, String(v)]);
+  };
+  push('Environment', config.environment);
+  push('IncludeDevOrigins', config.includeDevOrigins);
+  push('ProductionOrigins', config.productionOrigins);
+  push('DeployRAGStack', config.deployRAGStack);
+  push('AdminEmail', config.adminEmail);
+  push('SESVerifiedEmail', config.sesVerifiedEmail);
+  push('AlarmNotificationEmail', config.alarmNotificationEmail);
+  push('AdminUserSub', config.adminUserSub);
+  push('EnableDigests', config.enableDigests);
+  push('OpenAIApiKeyArn', config.openaiApiKeyArn);
+  push('StripeSecretKeyArn', config.stripeSecretKeyArn);
+  push('StripeWebhookSecretArn', config.stripeWebhookSecretArn);
+  // External RAGStack — only when deployRAGStack=false. Plaintext NoEcho param
+  // until we migrate to SSM ARN pattern.
+  push('RagstackGraphqlEndpoint', config.ragstackEndpoint);
+  push('RagstackApiKey', config.ragstackApiKey);
+  // Desktop client download URLs.
+  push('ClientDownloadMacUrl', config.clientDownloadMacUrl);
+  push('ClientDownloadWinUrl', config.clientDownloadWinUrl);
+  push('ClientDownloadLinuxUrl', config.clientDownloadLinuxUrl);
+  push('ClientDownloadVersion', config.clientDownloadVersion);
+  return pairs;
 }
 
-/**
- * Main deployment flow
- */
-async function main() {
-  console.log('╔════════════════════════════════════════════════════════════╗');
-  console.log('║            WarmReach - SAM Deployment                     ║');
-  console.log('╚════════════════════════════════════════════════════════════╝\n');
+function generateSamConfig(config, deployBucket) {
+  const overrides = buildParamOverrides(config)
+    .map(
+      ([k, v]) =>
+        // Escape backslash first, then double quotes — TOML treats both
+        // as escapable characters and we'd otherwise corrupt secrets
+        // containing either (e.g., "foo\bar" or 'a"b').
+        `    "${k}=${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
+    )
+    .join(',\n');
 
-  try {
-    // Load existing configuration (from samconfig.toml or .deploy-config.json)
-    let config = loadConfig();
+  const content = `# Generated by scripts/deploy/deploy-sam.js — do not edit by hand.
+version = 0.1
 
-    // Always prompt for configuration, using existing values as defaults
-    config = await collectConfiguration(config);
+[default.deploy.parameters]
+stack_name = "${config.stackName}"
+s3_bucket = "${deployBucket}"
+s3_prefix = "${config.stackName}"
+region = "${REGION}"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
+confirm_changeset = false
+fail_on_empty_changeset = false
+parameter_overrides = [
+${overrides}
+]
 
-    // Validate prerequisites
-    validateAwsCredentials();
-    const accountId = getAwsAccountId();
-    validateSamCli();
+[default.build.parameters]
+cached = true
+parallel = true
+use_container = true
+`;
+  writeFileSync(SAMCONFIG_FILE, content);
+  ok(`Generated ${SAMCONFIG_FILE}`);
+}
 
-    // Save configuration (non-secrets only)
-    saveConfig(config);
+// ----------------------------------------------------------------------------
+// Build + deploy
+// ----------------------------------------------------------------------------
 
-    // Generate SAM config
-    generateSamConfig(config, accountId);
+async function runSamBuild() {
+  banner('sam build --use-container');
+  await streamExec('sam', ['build', '--use-container'], BACKEND_DIR);
+}
 
-    if (isDryRun()) {
-      console.log('\n🔍 Dry run mode - skipping actual deployment');
-      console.log('✓ Configuration validated');
-      console.log('✓ samconfig.toml generated');
-      return;
-    }
+async function runSamDeploy() {
+  banner('sam deploy');
+  // confirm_changeset=false is set in samconfig.toml, no CLI flag needed.
+  await streamExec('sam', ['deploy'], BACKEND_DIR);
+}
 
-    // Build and deploy
-    await runSamBuild();
-    await runSamDeploy();
+// ----------------------------------------------------------------------------
+// Stack outputs → env files
+// ----------------------------------------------------------------------------
 
-    // Capture outputs
-    const outputs = getStackOutputs(config.stackName, config.region);
-    updateEnvFile(outputs, config);
+function getStackOutputs(stackName) {
+  const raw = execCapture(
+    `aws cloudformation describe-stacks --region ${REGION} --stack-name ${stackName} --query "Stacks[0].Outputs" --output json`,
+  );
+  const arr = JSON.parse(raw);
+  const map = {};
+  for (const o of arr) map[o.OutputKey] = o.OutputValue;
+  return map;
+}
 
-    console.log('\n╔════════════════════════════════════════════════════════════╗');
-    console.log('║                  Deployment Complete!                       ║');
-    console.log('╚════════════════════════════════════════════════════════════╝\n');
+function readEnvFile(path) {
+  if (!existsSync(path)) return {};
+  const out = {};
+  for (const line of readFileSync(path, 'utf-8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq > 0) out[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
+  }
+  return out;
+}
 
-    console.log('Stack Name:', config.stackName);
-    console.log('Region:', config.region);
-    console.log('Environment:', config.environment);
-    console.log('\nAPI URL:', outputs.ApiUrl);
-    console.log('\nNext steps:');
-    console.log('1. Start frontend: npm run dev');
-    console.log('2. Start client backend: npm run dev:client');
-  } catch (error) {
-    console.error('\n❌ Deployment failed:', error.message);
-    process.exit(1);
+function writeEnvFile(path, updates, { preserveExisting = true } = {}) {
+  const existing = preserveExisting ? readEnvFile(path) : {};
+  const merged = { ...existing };
+  for (const [k, v] of Object.entries(updates)) {
+    if (v !== undefined && v !== null && v !== '') merged[k] = v;
+  }
+  const body = Object.entries(merged)
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n');
+  writeFileSync(path, body + '\n');
+  ok(`Wrote ${path}`);
+}
+
+function writeThreeEnvFiles(outputs) {
+  const apiUrl = outputs.ApiUrl || '';
+  const userPoolId = outputs.UserPoolId || '';
+  const clientId = outputs.UserPoolClientId || '';
+  const wsUrl = outputs.WebSocketApiUrl || '';
+  const ddbTable = outputs.DynamoDBTableName || '';
+  const issuer = userPoolId ? `https://cognito-idp.${REGION}.amazonaws.com/${userPoolId}` : '';
+
+  // Root .env — serves client/Express backend + legacy frontend lookup.
+  writeEnvFile(join(PROJECT_ROOT, '.env'), {
+    VITE_API_GATEWAY_URL: apiUrl,
+    VITE_COGNITO_USER_POOL_ID: userPoolId,
+    VITE_COGNITO_USER_POOL_WEB_CLIENT_ID: clientId,
+    VITE_WEBSOCKET_URL: wsUrl,
+    VITE_AWS_REGION: REGION,
+    API_GATEWAY_BASE_URL: apiUrl,
+    AWS_REGION: REGION,
+    DYNAMODB_TABLE: ddbTable,
+    COGNITO_ISSUER: issuer,
+    COGNITO_CLIENT_ID: clientId,
+  });
+
+  // frontend/.env — web app (Vite picks up from workspace dir).
+  writeEnvFile(join(PROJECT_ROOT, 'frontend', '.env'), {
+    VITE_API_GATEWAY_URL: apiUrl,
+    VITE_COGNITO_USER_POOL_ID: userPoolId,
+    VITE_COGNITO_USER_POOL_WEB_CLIENT_ID: clientId,
+    VITE_WEBSOCKET_URL: wsUrl,
+    VITE_AWS_REGION: REGION,
+  });
+
+  // admin/.env — admin dashboard (matches admin/.env.example keys exactly).
+  writeEnvFile(join(PROJECT_ROOT, 'admin', '.env'), {
+    VITE_API_GATEWAY_URL: apiUrl,
+    VITE_COGNITO_USER_POOL_ID: userPoolId,
+    VITE_COGNITO_USER_POOL_WEB_CLIENT_ID: clientId,
+  });
+}
+
+// ----------------------------------------------------------------------------
+// Handoff
+// ----------------------------------------------------------------------------
+
+function printHandoff(outputs, config) {
+  const apiUrl = outputs.ApiUrl || '(unknown)';
+  const webhookUrl = `${apiUrl.replace(/\/$/, '')}/webhooks/stripe`;
+
+  banner('Next steps (manual)');
+  console.log(`
+  Frontend:
+    cd frontend && npm run build
+    aws s3 cp --recursive dist/ s3://<your-frontend-s3-bucket>/
+    (trigger Amplify deployment in console if not auto-polling)
+
+  Admin dashboard:
+    cd admin && npm run build
+    aws s3 cp --recursive dist/ s3://<your-admin-s3-bucket>/
+    (trigger Amplify deployment in console if not auto-polling)
+
+  Stripe webhook URL (register in Stripe dashboard, then re-run this script to
+  provide the signing secret):
+    ${webhookUrl}
+
+  Outputs written to:
+    .env             (root — client/Electron backend)
+    frontend/.env    (web app)
+    admin/.env       (admin dashboard)
+  `);
+
+  if (!config.stripeWebhookSecretArn) {
+    warn('Stripe webhook secret was empty. Stripe-dependent lambdas are conditional on StripeSecretKeyArn — re-deploy after registering the webhook URL.');
+  }
+  if (config.enableDigests === 'true' && !config.sesVerifiedEmail) {
+    warn('EnableDigests=true but no SESVerifiedEmail — digest lambdas will not be created.');
   }
 }
 
-// Run if executed directly
-main();
+// ----------------------------------------------------------------------------
+// main
+// ----------------------------------------------------------------------------
+
+async function main() {
+  banner('WarmReach — SAM Deploy');
+  console.log(`  Region: ${REGION} (pinned)`);
+  console.log(`  Dry run: ${DRY_RUN ? 'yes' : 'no'}`);
+
+  banner('Pre-flight checks');
+  const account = checkAwsCli();
+  checkSamCli();
+  checkDocker();
+  checkBedrockAccess();
+  checkLambdaConcurrency();
+  checkDomainWarning();
+
+  const existing = loadConfig();
+  const config = await collectConfig(existing, account);
+
+  if (config.sesVerifiedEmail) {
+    banner('SES identity');
+    checkSesIdentity(config.sesVerifiedEmail);
+  }
+
+  banner('RAGStack template reachability');
+  checkRagstackTemplateUrl(config.deployRAGStack);
+
+  // The digest unsubscribe secret is referenced via dynamic SSM resolution
+  // in the template (DigestPerUserFunction's UNSUBSCRIBE_SECRET env var).
+  // CloudFormation resolves it at deploy time, so the parameter MUST exist
+  // before `sam deploy` runs when EnableDigests=true. Generate one if
+  // missing — the value is opaque to operators (used for HMAC-signing
+  // unsubscribe links), so auto-creation is the right ergonomic.
+  if (config.enableDigests === 'true') {
+    await ensureUnsubscribeSecret(config.environment);
+  }
+
+  saveConfig(config);
+
+  const deployBucket = await ensureDeployBucket(account);
+  generateSamConfig(config, deployBucket);
+
+  if (DRY_RUN) {
+    banner('Dry run complete');
+    console.log(`  samconfig.toml written. No AWS state changed beyond SSM secret writes.`);
+    return;
+  }
+
+  await runSamBuild();
+  await runSamDeploy();
+
+  banner('Fetching stack outputs');
+  const outputs = getStackOutputs(config.stackName);
+  for (const [k, v] of Object.entries(outputs)) {
+    const shown = v.length > 60 ? `${v.slice(0, 60)}…` : v;
+    console.log(`  ${k} = ${shown}`);
+  }
+
+  banner('Writing env files');
+  writeThreeEnvFiles(outputs);
+
+  // The admin-metrics Lambda needs HTTP_API_ID for narrow CloudWatch
+  // metrics, but referencing it via !Ref HttpApi in the template creates
+  // a circular dependency in CFN. Populate it post-deploy here.
+  //
+  // update-function-configuration --environment REPLACES the env block, so
+  // we read the current vars first and merge HTTP_API_ID in. Otherwise we
+  // wipe ALLOWED_ORIGINS / DYNAMODB_TABLE_NAME / LOG_LEVEL injected via
+  // SAM Globals.
+  if (config.adminUserSub && outputs.ApiUrl) {
+    const apiId = outputs.ApiUrl.match(/https:\/\/([^.]+)\./)?.[1];
+    if (apiId) {
+      try {
+        const fnName = `warmreach-admin-metrics-${config.environment}`;
+        const currentJson = execCapture(
+          `aws lambda get-function-configuration --region ${REGION} --function-name ${fnName} --query "Environment.Variables" --output json`,
+        );
+        const current = JSON.parse(currentJson);
+        const merged = { ...current, HTTP_API_ID: apiId };
+        // Pass via JSON file to avoid shell-escaping issues with values that
+        // contain commas (ALLOWED_ORIGINS) or other special chars.
+        const tmp = `/tmp/warmreach-lambda-env-${Date.now()}.json`;
+        writeFileSync(tmp, JSON.stringify({ Variables: merged }), { mode: 0o600 });
+        execCapture(
+          `aws lambda update-function-configuration --region ${REGION} --function-name ${fnName} --environment file://${tmp}`,
+        );
+        try { execCapture(`rm -f ${tmp}`); } catch { /* ignore */ }
+        ok(`Populated HTTP_API_ID=${apiId} on ${fnName} (preserved ${Object.keys(current).length} other vars)`);
+      } catch (e) {
+        warn(`Could not populate HTTP_API_ID on admin-metrics Lambda: ${e.message}`);
+      }
+    }
+  }
+
+  printHandoff(outputs, config);
+  banner('Deployment complete');
+}
+
+main().catch((err) => {
+  console.error('\n✗ Deployment failed:', err.message);
+  process.exit(1);
+});

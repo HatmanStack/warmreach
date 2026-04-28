@@ -34,5 +34,12 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitReturns": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/test-utils",
+    "src/test-utils/**/*",
+    "src/setupTests.ts"
+  ]
 }

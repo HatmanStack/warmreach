@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { OnboardingOverlay } from './OnboardingOverlay';
 
 // Mock useOnboarding
@@ -44,10 +45,18 @@ vi.mock('@/shared/utils/crypto', () => ({
 }));
 
 const renderOverlay = () => {
+  // OnboardingOverlay → LinkedInCredentialStep → DesktopClientDownloadPrompt
+  // uses useQuery to fetch /client-downloads, so a QueryClientProvider is
+  // required at the test root.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
-    <MemoryRouter>
-      <OnboardingOverlay />
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <OnboardingOverlay />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 };
 
@@ -71,7 +80,7 @@ describe('OnboardingOverlay', () => {
   it('renders LinkedInCredentialStep when currentStep is 0', () => {
     mockOnboardingValue = { ...defaultOnboarding, currentStep: 0 };
     renderOverlay();
-    expect(screen.getByText('Connect Your LinkedIn Account')).toBeInTheDocument();
+    expect(screen.getByText('Connect your LinkedIn account')).toBeInTheDocument();
   });
 
   it('renders ImportConnectionsStep when currentStep is 1', () => {
@@ -87,6 +96,7 @@ describe('OnboardingOverlay', () => {
   });
 
   it('renders nothing for out-of-bounds step', () => {
+    // Community edition has 3 steps; TierComparisonStep is Pro-only.
     mockOnboardingValue = { ...defaultOnboarding, currentStep: 3 };
     const { container } = renderOverlay();
     expect(container.firstChild).toBeNull();

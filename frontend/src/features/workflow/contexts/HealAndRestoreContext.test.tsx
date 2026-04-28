@@ -3,6 +3,23 @@ import { HealAndRestoreProvider, useHealAndRestore } from './HealAndRestoreConte
 import { healAndRestoreService } from '@/features/workflow';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// HealAndRestoreProvider gates authorize/cancel through the desktop-client
+// check. The mock is configurable per test so the denial path (gate
+// returns false → modal closes without calling the service) can be
+// exercised alongside the allowed path.
+const mockUseRequireDesktopClient = vi.fn(() => ({
+  requireDesktopClient: () => true,
+  openDialog: vi.fn(),
+  closeDialog: vi.fn(),
+  agentConnected: true,
+  isOpen: false,
+}));
+
+vi.mock('@/shared/contexts/ClientRequiredDialogContext', () => ({
+  useRequireDesktopClient: () => mockUseRequireDesktopClient(),
+  ClientRequiredDialogProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 vi.mock('@/features/workflow', async (importActual) => {
   const actual = await importActual<any>();
   return {
@@ -38,6 +55,13 @@ const TestConsumer = () => {
 describe('HealAndRestoreContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseRequireDesktopClient.mockReturnValue({
+      requireDesktopClient: () => true,
+      openDialog: vi.fn(),
+      closeDialog: vi.fn(),
+      agentConnected: true,
+      isOpen: false,
+    });
   });
 
   it('should start and stop listening', () => {
@@ -137,6 +161,39 @@ describe('HealAndRestoreContext', () => {
     });
 
     expect(healAndRestoreService.cancelHealAndRestore).toHaveBeenCalledWith('s1');
+    expect(screen.queryByTestId('mock-modal')).not.toBeInTheDocument();
+  });
+
+  it('closes the modal without calling the service when desktop-client gate denies', async () => {
+    const closeDialog = vi.fn();
+    mockUseRequireDesktopClient.mockReturnValue({
+      requireDesktopClient: () => false,
+      openDialog: vi.fn(),
+      closeDialog,
+      agentConnected: false,
+      isOpen: false,
+    });
+
+    let listener: any;
+    vi.mocked(healAndRestoreService.addListener).mockImplementation((l) => {
+      listener = l;
+    });
+
+    render(
+      <HealAndRestoreProvider>
+        <TestConsumer />
+      </HealAndRestoreProvider>
+    );
+
+    act(() => {
+      listener({ sessionId: 's1' });
+    });
+
+    await act(async () => {
+      screen.getByText('Authorize').click();
+    });
+
+    expect(healAndRestoreService.authorizeHealAndRestore).not.toHaveBeenCalled();
     expect(screen.queryByTestId('mock-modal')).not.toBeInTheDocument();
   });
 

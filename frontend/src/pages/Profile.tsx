@@ -7,16 +7,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { useUserProfile, ActivityTimeline } from '@/features/profile';
 import { useProfileForm } from '@/features/profile/hooks/useProfileForm';
-import { useLinkedInCredentials } from '@/features/profile/hooks/useLinkedInCredentials';
 import { ProfileForm } from '@/features/profile/components/ProfileForm';
 import { InterestsEditor } from '@/features/profile/components/InterestsEditor';
-import { LinkedInCredentials } from '@/features/profile/components/LinkedInCredentials';
+import { DesktopClientDownloadPrompt } from '@/features/profile/components/DesktopClientDownloadPrompt';
 import { ProfilePreview } from '@/features/profile/components/ProfilePreview';
 import { ExportData } from '@/features/profile/components/ExportData';
 import { useTier } from '@/features/tier';
 import { exportConnectionsCsv } from '@/features/connections/utils/csvExport';
 import { queryKeys } from '@/shared/lib/queryKeys';
-import { encryptWithSealboxB64 } from '@/shared/utils/crypto';
 import { createLogger } from '@/shared/utils/logger';
 import type { Connection } from '@/shared/types';
 
@@ -25,7 +23,7 @@ const logger = createLogger('Profile');
 const Profile = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { ciphertext, setCiphertext, userProfile, updateUserProfile } = useUserProfile();
+  const { userProfile, updateUserProfile } = useUserProfile();
   const queryClient = useQueryClient();
   const { isFeatureEnabled } = useTier();
 
@@ -40,69 +38,22 @@ const Profile = () => {
     removeInterest,
   } = useProfileForm(userProfile as Record<string, unknown> | null);
 
-  const {
-    linkedinCredentials,
-    setLinkedinCredentials,
-    showPassword,
-    setShowPassword,
-    hasStoredCredentials,
-    setHasStoredCredentials,
-    handleLinkedinCredentialsChange,
-  } = useLinkedInCredentials(ciphertext, userProfile as Record<string, unknown> | null);
+  // Credentials live in the desktop client, not the web app. There's no
+  // ciphertext in the web tab to inspect — the previous "Connected" pill
+  // derived from React state would have always been wrong post-architecture
+  // change. ProfilePreview accordingly no longer receives a connectivity
+  // signal from this page; an explicit client-health handshake can be
+  // wired in later if we want to display real desktop-client status.
 
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      let combinedPayload: Record<string, unknown> = {};
-
-      if (linkedinCredentials.email && linkedinCredentials.password) {
-        const payload: { linkedin_credentials: string } = { linkedin_credentials: '' };
-
-        const sealboxPubB64 = import.meta.env.VITE_CRED_SEALBOX_PUBLIC_KEY_B64 as
-          | string
-          | undefined;
-        logger.debug('Save credentials - public key check', {
-          hasPublicKey: !!sealboxPubB64,
-          keyType: typeof sealboxPubB64,
-          keyLength: sealboxPubB64 ? sealboxPubB64.length : 0,
-          keyPreview: sealboxPubB64 ? sealboxPubB64.substring(0, 20) + '...' : 'undefined',
-        });
-
-        if (sealboxPubB64 && typeof sealboxPubB64 === 'string') {
-          logger.debug('Encrypting credentials with Sealbox');
-          const json = JSON.stringify({
-            email: linkedinCredentials.email,
-            password: linkedinCredentials.password,
-          });
-          logger.debug('JSON to encrypt', { length: json.length });
-
-          const ciphertextB64 = await encryptWithSealboxB64(json, sealboxPubB64);
-          logger.debug('Encryption complete', { ciphertextLength: ciphertextB64.length });
-
-          payload.linkedin_credentials = `sealbox_x25519:b64:${ciphertextB64}`;
-          logger.debug('Full credentials prepared', {
-            credentialsLength: payload.linkedin_credentials.length,
-          });
-
-          setCiphertext(payload.linkedin_credentials);
-          logger.debug('Credentials set in context');
-        } else {
-          logger.warn('No public key found, using plaintext fallback');
-          payload.linkedin_credentials = JSON.stringify({
-            email: linkedinCredentials.email,
-            password: linkedinCredentials.password,
-          });
-        }
-
-        setHasStoredCredentials(true);
-        setLinkedinCredentials((prev) => ({ ...prev, password: '' }));
-        combinedPayload.linkedin_credentials = payload.linkedin_credentials;
-      }
-
+      // LinkedIn credentials are NOT handled here — they live exclusively in
+      // the desktop client on the user's machine. This save flow only
+      // touches profile metadata (name, headline, company, etc.).
       const [firstName, ...rest] = profile.name.trim().split(/\s+/);
       const lastName = rest.join(' ').trim();
-      combinedPayload = {
-        ...combinedPayload,
+      const combinedPayload: Record<string, unknown> = {
         first_name: firstName || undefined,
         last_name: lastName || undefined,
         headline: profile.title || undefined,
@@ -115,10 +66,11 @@ const Profile = () => {
       };
 
       await updateUserProfile(combinedPayload);
+      logger.debug('Profile saved');
 
       toast({
         title: 'Profile updated!',
-        description: 'Your profile information and credentials status have been saved securely.',
+        description: 'Your profile has been saved.',
       });
       navigate('/dashboard', { replace: true });
     } catch (error) {
@@ -172,9 +124,7 @@ const Profile = () => {
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-white mb-2">Your Profile</h1>
-          <p className="text-slate-300">
-            Update your profile information and LinkedIn credentials.
-          </p>
+          <p className="text-slate-300">Update your profile information.</p>
         </div>
 
         <div className="grid lg:grid-cols-3 gap-8">
@@ -190,13 +140,7 @@ const Profile = () => {
               onRemoveInterest={removeInterest}
             />
 
-            <LinkedInCredentials
-              credentials={linkedinCredentials}
-              showPassword={showPassword}
-              hasStoredCredentials={hasStoredCredentials}
-              onCredentialsChange={handleLinkedinCredentialsChange}
-              onTogglePassword={() => setShowPassword(!showPassword)}
-            />
+            <DesktopClientDownloadPrompt hideAlreadyInstalled />
 
             <Button
               data-testid="save-profile-button"
@@ -210,11 +154,7 @@ const Profile = () => {
           </div>
 
           {/* Profile Preview */}
-          <ProfilePreview
-            profile={profile}
-            hasStoredCredentials={hasStoredCredentials}
-            linkedinCredentials={linkedinCredentials}
-          />
+          <ProfilePreview profile={profile} hasStoredCredentials={false} />
         </div>
 
         <Separator className="bg-white/10 my-8" />

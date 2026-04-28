@@ -277,7 +277,9 @@ const NewConnectionsTab = ({
                     <VirtualConnectionList
                       connections={sortedConnections}
                       isNewConnection={true}
-                      onRemove={handleRemoveConnection}
+                      onRemove={
+                        handleRemoveConnection as (connectionId: string, newStatus: string) => void
+                      }
                       onTagClick={handleTagClick}
                       activeTags={activeTags}
                       className="min-h-[80vh]"

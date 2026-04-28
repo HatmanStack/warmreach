@@ -7,7 +7,11 @@ import json
 import os
 
 ALLOWED_ORIGINS_ENV = os.environ.get('ALLOWED_ORIGINS', 'http://localhost:5173')
-_DEFAULT_ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_ENV.split(',') if o.strip()]
+# Normalize: strip whitespace AND trailing slashes. Browsers never send a
+# trailing slash in the Origin header, but operators commonly paste URLs
+# with one (because address bars display them that way). Tolerate both
+# forms in the allowlist so a typo doesn't break CORS for an entire app.
+_DEFAULT_ALLOWED_ORIGINS = [o.strip().rstrip('/') for o in ALLOWED_ORIGINS_ENV.split(',') if o.strip()]
 
 
 def _get_origin(event):
@@ -46,7 +50,15 @@ def cors_headers(event, allowed_origins=None, allowed_methods='POST,OPTIONS'):
     Returns:
         Dict of CORS headers.
     """
-    origins = allowed_origins if allowed_origins is not None else _DEFAULT_ALLOWED_ORIGINS
+    if allowed_origins is not None:
+        # Apply the same trim + trailing-slash strip used for the env-var
+        # default so explicit overrides match the browser's Origin header
+        # byte-for-byte. Without this an override of
+        # ['https://app.example.com/'] silently fails CORS the same way
+        # raw env-var entries with trailing slashes did.
+        origins = [o.strip().rstrip('/') for o in allowed_origins if o and o.strip()]
+    else:
+        origins = _DEFAULT_ALLOWED_ORIGINS
     origin = _get_origin(event) if event else None
 
     headers = {

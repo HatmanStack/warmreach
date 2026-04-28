@@ -9,6 +9,12 @@ directories:
 files:
   - electron-main.js
   - src/**/*
+  - config/**/*
+  - routes/**/*
+  - schemas/**/*
+  - electron-resources/**/*
+  - "!**/*.ts"
+  - "!**/*.tsx"
   - package.json
   - "!src/**/*.test.*"
   - "!src/**/__tests__/**"

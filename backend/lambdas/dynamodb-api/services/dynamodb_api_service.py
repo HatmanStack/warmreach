@@ -54,7 +54,6 @@ class DynamoDBApiService(BaseService):
                 'email': '',
                 'firstName': '',
                 'lastName': '',
-                'linkedin_credentials': None,
                 'createdAt': now,
                 'updatedAt': now,
             }
@@ -71,7 +70,6 @@ class DynamoDBApiService(BaseService):
             'current_position': item.get('current_position', ''),
             'summary': item.get('summary', ''),
             'interests': item.get('interests', ''),
-            'linkedin_credentials': item.get('linkedin_credentials'),
             'unpublished_post_content': item.get('unpublished_post_content', ''),
             'ai_generated_ideas': item.get('ai_generated_ideas'),
             'ai_generated_research': item.get('ai_generated_research'),
@@ -82,8 +80,14 @@ class DynamoDBApiService(BaseService):
         }
 
     def update_user_settings(self, user_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Update user profile info and/or linkedin_credentials.
+        """Update user profile info.
         Profile fields are stored under PK=USER#{sub}, SK=#SETTINGS.
+
+        LinkedIn credentials are NOT accepted here. They live exclusively
+        on-device in the desktop client (encrypted with libsodium Sealbox)
+        and are never transmitted to or stored in DynamoDB. Any
+        linkedin_credentials field in the request body is silently
+        ignored — see allowed_profile_fields below.
         """
         current_time = datetime.now(UTC).isoformat()
 
@@ -102,7 +106,8 @@ class DynamoDBApiService(BaseService):
             'company',
             'interests',
             'unpublished_post_content',
-            'linkedin_credentials',
+            # 'linkedin_credentials' intentionally excluded — credentials live
+            # on-device in the desktop client only (Sealbox-encrypted).
             'ai_generated_ideas',
             'ai_generated_research',
             'ai_generated_post_hook',
@@ -234,7 +239,7 @@ class DynamoDBApiService(BaseService):
         return {'message': 'Profile picture updated', 'profileId': profile_id_b64}
 
     def get_user_settings(self, user_id: str) -> dict[str, Any] | None:
-        """Get user settings item (e.g., encrypted linkedin_credentials).
+        """Get user settings item.
         Key: PK=USER#<sub>, SK=#SETTINGS
         """
         response = self.table.get_item(Key={'PK': f'USER#{user_id}', 'SK': '#SETTINGS'})
@@ -264,7 +269,6 @@ class DynamoDBApiService(BaseService):
             'company': lambda v: isinstance(v, str) and len(v) <= 100,
             'interests': lambda v: isinstance(v, (str, list)) and len(str(v)) <= 1000,
             'unpublished_post_content': lambda v: isinstance(v, str) and len(v) <= 3000,
-            'linkedin_credentials': lambda v: isinstance(v, (str, dict)),
             'ai_generated_ideas': lambda v: isinstance(v, (str, list, dict)),
             'ai_generated_research': lambda v: isinstance(v, (str, list, dict)),
             'ai_generated_post_hook': lambda v: isinstance(v, str) and len(v) <= 500,

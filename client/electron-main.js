@@ -1,12 +1,13 @@
 /**
- * Electron main process — tray-only app, no window.
+ * Electron main process — tray app with control-window fallback.
  *
- * Starts the WebSocket transport and command router.
- * Tray menu provides: Open WarmReach, Settings, About, Check for Updates, Quit.
+ * On platforms with system-tray support (Windows, macOS, most Linux desktops),
+ * runs as a tray-only app. On platforms without it (notably ChromeOS Crostini),
+ * falls back to a small control window exposing the same actions.
  */
 
 import { app, Tray, Menu, BrowserWindow, ipcMain, nativeImage, shell, dialog } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import electronUpdater from 'electron-updater';
 import Store from 'electron-store';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -14,26 +15,52 @@ import { WsClient } from './src/transport/wsClient.js';
 import { handleExecuteCommand } from './src/transport/commandRouter.js';
 import { CredentialStore } from './src/credentials/credentialStore.js';
 import { BrowserSessionManager } from './src/domains/session/services/browserSessionManager.js';
-// Import server.js first — it registers unhandledRejection/uncaughtException
-// handlers using the structured logger. No need to duplicate them here.
+// Imports server.js for its side effect: starts the Express backend on
+// localhost:3001 and registers structured-log error handlers.
 import './src/server.js';
 
+const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const store = new Store({ encryptionKey: 'warmreach-local-v1' });
 const credentialStore = new CredentialStore(store);
 
-const WS_URL = store.get('wsUrl') || process.env.WARMREACH_WS_URL || '';
-const APP_URL = store.get('appUrl') || process.env.WARMREACH_APP_URL || 'https://app.warmreach.com';
+// URLs are read at call time so saving from the settings window takes
+// effect immediately (no restart needed). Order: stored override → env
+// override → production default.
+function getWsUrl() {
+  return (
+    store.get('wsUrl') ||
+    process.env.WARMREACH_WS_URL ||
+    'wss://xy7bvlt6rh.execute-api.us-east-1.amazonaws.com/prod'
+  );
+}
+function getAppUrl() {
+  return (
+    store.get('appUrl') ||
+    process.env.WARMREACH_APP_URL ||
+    'https://prod.d88r3mhl0c0db.amplifyapp.com'
+  );
+}
+const BACKEND_PORT = parseInt(process.env.PORT, 10) || 3001;
 
 let tray = null;
 let wsClient = null;
+let wsConnected = false;
 let settingsWindow = null;
+let mainWindow = null;
+let usingFallbackWindow = false;
+
+const APP_ICON_PATH = path.join(__dirname, 'electron-resources', 'icon.png');
 
 // --- Auto-updater setup ---
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
+// Silence electron-updater's built-in logger — we surface failures via
+// the "Check for Updates" dialog instead. Without this, every failed
+// check (e.g. when no GitHub release exists yet) prints a stack trace.
+autoUpdater.logger = null;
 
 autoUpdater.on('update-available', (info) => {
   tray?.setToolTip(`WarmReach Agent — Downloading update v${info.version}...`);
@@ -54,8 +81,30 @@ autoUpdater.on('update-downloaded', (info) => {
 });
 
 autoUpdater.on('error', () => {
-  // Silently ignore update errors — non-critical for tray app operation
+  // Silently ignore update errors — non-critical
 });
+
+// --- Status helpers ---
+
+function getStatus() {
+  const controller = BrowserSessionManager.getBackoffController();
+  const status = controller?.getStatus() || { threatLevel: 0 };
+  const pauseStatus = status.pauseStatus || { paused: false, reason: null };
+  return {
+    version: app.getVersion(),
+    backendPort: BACKEND_PORT,
+    wsConfigured: Boolean(getWsUrl() && store.get('auth.accessToken')),
+    wsConnected,
+    automationPaused: Boolean(pauseStatus.paused),
+    threatLevel: status.threatLevel || 0,
+  };
+}
+
+function broadcastStatus() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('main:status', getStatus());
+  }
+}
 
 // --- Settings window ---
 
@@ -72,9 +121,11 @@ function openSettingsWindow() {
     minimizable: false,
     maximizable: false,
     title: 'WarmReach Agent Settings',
+    icon: APP_ICON_PATH,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       preload: path.join(__dirname, 'src', 'credentials', 'settingsPreload.js'),
     },
   });
@@ -87,60 +138,75 @@ function openSettingsWindow() {
   });
 }
 
+// --- Main control window (tray fallback) ---
+
+function openMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  mainWindow = new BrowserWindow({
+    width: 420,
+    height: 480,
+    resizable: false,
+    title: 'WarmReach Agent',
+    icon: APP_ICON_PATH,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      preload: path.join(__dirname, 'src', 'window', 'mainPreload.js'),
+    },
+  });
+
+  mainWindow.loadFile(path.join(__dirname, 'src', 'window', 'main.html'));
+  mainWindow.setMenuBarVisibility(false);
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+}
+
 // --- Tray ---
+
+function togglePause() {
+  const controller = BrowserSessionManager.getBackoffController();
+  const status = controller?.getStatus()?.pauseStatus || { paused: false };
+  if (status.paused) {
+    controller?.resume();
+  } else {
+    controller?.pause('Manual pause');
+  }
+}
 
 function updateTrayMenu() {
   if (!tray) return;
 
-  const controller = BrowserSessionManager.getBackoffController();
-  const status = controller?.getStatus() || { queuePaused: false, threatLevel: 0 };
-  const pauseStatus = status.pauseStatus || { paused: false, reason: null };
+  const s = getStatus();
 
   const menuTemplate = [
-    {
-      label: `Automation: ${pauseStatus.paused ? 'PAUSED' : 'Running'}`,
-      enabled: false,
-    },
+    { label: `Automation: ${s.automationPaused ? 'PAUSED' : 'Running'}`, enabled: false },
   ];
 
-  if (pauseStatus.paused) {
-    menuTemplate.push({
-      label: `Reason: ${pauseStatus.reason || 'Manual'}`,
-      enabled: false,
-    });
-    menuTemplate.push({
-      label: 'Resume Automation',
-      click: async () => {
-        await controller?.resume();
-        updateTrayMenu();
-      },
-    });
-  } else {
-    menuTemplate.push({
-      label: 'Pause Automation',
-      click: () => {
-        controller?.pause('Manual pause from tray');
-        updateTrayMenu();
-      },
-    });
-  }
+  menuTemplate.push({
+    label: s.automationPaused ? 'Resume Automation' : 'Pause Automation',
+    click: () => {
+      togglePause();
+      updateTrayMenu();
+      broadcastStatus();
+    },
+  });
 
-  if (status.threatLevel > 0) {
-    menuTemplate.push({
-      label: `Threat Level: ${status.threatLevel}/60`,
-      enabled: false,
-    });
+  if (s.threatLevel > 0) {
+    menuTemplate.push({ label: `Threat Level: ${s.threatLevel}/60`, enabled: false });
   }
 
   menuTemplate.push({ type: 'separator' });
-  menuTemplate.push({
-    label: 'Open WarmReach',
-    click: () => shell.openExternal(APP_URL),
-  });
-  menuTemplate.push({
-    label: 'Settings',
-    click: () => openSettingsWindow(),
-  });
+  menuTemplate.push({ label: 'Show Status Window', click: openMainWindow });
+  menuTemplate.push({ label: 'Open WarmReach', click: () => shell.openExternal(getAppUrl()) });
+  menuTemplate.push({ label: 'Settings', click: openSettingsWindow });
   menuTemplate.push({ type: 'separator' });
   menuTemplate.push({
     label: 'About WarmReach Agent',
@@ -176,31 +242,34 @@ function updateTrayMenu() {
     },
   });
 
-  const contextMenu = Menu.buildFromTemplate(menuTemplate);
-  tray.setContextMenu(contextMenu);
+  tray.setContextMenu(Menu.buildFromTemplate(menuTemplate));
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'electron-resources', 'trayIcon.png'));
+  const icon = nativeImage.createFromPath(
+    path.join(__dirname, 'electron-resources', 'trayIcon.png')
+  );
   tray = new Tray(icon);
   tray.setToolTip('WarmReach Agent');
-
   updateTrayMenu();
-  
-  // Periodically update the menu to reflect backoff status
-  setInterval(updateTrayMenu, 10000);
+  setInterval(() => {
+    updateTrayMenu();
+    broadcastStatus();
+  }, 10000);
 }
+
 
 // --- WebSocket ---
 
 function startWebSocket() {
   const token = store.get('auth.accessToken');
-  if (!token || !WS_URL) {
+  const wsUrl = getWsUrl();
+  if (!token || !wsUrl) {
     return;
   }
 
   wsClient = new WsClient({
-    url: WS_URL,
+    url: wsUrl,
     token,
     clientType: 'agent',
     onMessage: (msg) => {
@@ -209,57 +278,108 @@ function startWebSocket() {
       }
     },
     onConnect: () => {
+      wsConnected = true;
       tray?.setToolTip('WarmReach Agent — Connected');
+      broadcastStatus();
     },
     onDisconnect: () => {
+      wsConnected = false;
       tray?.setToolTip('WarmReach Agent — Disconnected');
+      broadcastStatus();
     },
   });
 
   wsClient.connect();
 }
 
-// --- IPC handlers for settings window ---
+// --- IPC: settings window ---
 
 ipcMain.handle('settings:get-credentials', () => {
   const creds = credentialStore.getCredentials();
   return creds ? { email: creds.email } : null;
 });
-
-ipcMain.handle('settings:save-credentials', (_event, email, password) => {
-  credentialStore.setCredentials(email, password);
-});
-
-ipcMain.handle('settings:clear-credentials', () => {
-  credentialStore.clearCredentials();
-});
-
-ipcMain.handle('settings:get-ws-url', () => {
-  return store.get('wsUrl') || '';
-});
-
-ipcMain.handle('settings:save-ws-url', (_event, url) => {
+ipcMain.handle('settings:save-credentials', (_e, email, password) =>
+  credentialStore.setCredentials(email, password)
+);
+ipcMain.handle('settings:clear-credentials', () => credentialStore.clearCredentials());
+ipcMain.handle('settings:get-ws-url', () => store.get('wsUrl') || '');
+ipcMain.handle('settings:save-ws-url', (_e, url) => {
   store.set('wsUrl', url);
+  // Tear down the existing WS and reconnect against the new endpoint so
+  // the change applies immediately.
+  if (wsClient) {
+    try {
+      wsClient.close?.();
+    } catch {
+      /* best effort */
+    }
+    wsClient = null;
+    wsConnected = false;
+  }
+  startWebSocket();
+  broadcastStatus();
+});
+
+// --- IPC: main control window ---
+
+ipcMain.handle('main:get-status', () => getStatus());
+ipcMain.handle('main:open-app', () => shell.openExternal(getAppUrl()));
+ipcMain.handle('main:open-settings', () => openSettingsWindow());
+ipcMain.handle('main:check-updates', async () => {
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (err) {
+    dialog.showMessageBox({
+      type: 'error',
+      title: 'Update Check Failed',
+      message: 'Could not check for updates.',
+      detail: err.message,
+    });
+  }
+});
+ipcMain.handle('main:toggle-pause', () => {
+  togglePause();
+  updateTrayMenu();
+  broadcastStatus();
+});
+ipcMain.handle('main:quit', () => {
+  wsClient?.close();
+  app.quit();
 });
 
 // --- App lifecycle ---
 
 app.whenReady().then(() => {
-  // Hide dock icon on macOS (tray-only app)
-  if (process.platform === 'darwin') {
-    app.dock?.hide();
+  let trayOk = false;
+  try {
+    createTray();
+    trayOk = true;
+  } catch (err) {
+    // eslint-disable-next-line no-console -- main-process startup, before any logger is wired
+    console.error('[electron-main] tray creation failed:', err);
   }
 
-  createTray();
+  // Always open the control window on launch. On tray-capable platforms it
+  // doubles as a quick status pane; closing hides to tray. On platforms
+  // without a tray (ChromeOS Crostini, headless Linux), it's the only UI
+  // and closing quits the app.
+  usingFallbackWindow = !trayOk;
+  if (process.platform === 'darwin' && trayOk) {
+    app.dock?.hide();
+  }
+  openMainWindow();
+
   startWebSocket();
 
-  // Check for updates after a short delay (don't block startup)
   setTimeout(() => {
     autoUpdater.checkForUpdatesAndNotify().catch(() => {});
   }, 5000);
 });
 
 app.on('window-all-closed', (e) => {
-  // Prevent default quit — we're a tray app
-  e.preventDefault();
+  // Tray platforms: keep running in background.
+  // No-tray platforms: closing the only window quits.
+  if (!usingFallbackWindow) {
+    e.preventDefault();
+  }
 });

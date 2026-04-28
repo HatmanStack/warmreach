@@ -17,6 +17,7 @@ import { User, Building, MapPin, Tag, X, Loader2, CheckCircle, UserPlus } from '
 import { useToast } from '@/hooks/use-toast';
 import { connectionsApiService } from '@/shared/services/connectionsApiService';
 import { commandService } from '@/shared/services/commandService';
+import { useRequireDesktopClient } from '@/shared/contexts/ClientRequiredDialogContext';
 import { transformErrorForUser, getToastVariant, ERROR_MESSAGES } from '@/utils/errorHandling';
 import { createLogger } from '@/shared/utils/logger';
 import { buildLinkedInProfileUrl } from '@/shared/utils/linkedinUrl';
@@ -47,6 +48,7 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
   onTagClick,
   activeTags = [],
 }) => {
+  const { requireDesktopClient } = useRequireDesktopClient();
   const [isRemoving, setIsRemoving] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -206,16 +208,19 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
     }
     const reservedForMore = 6; // approx chars for "+ more"
     const effectiveBudget = Math.max(0, tagCharBudget - reservedForMore);
+    // See ConnectionCard.tsx — pre-count, don't increment inside the loop.
+    const validTags = allTags
+      .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+      .map((t) => t.trim());
     let used = 0;
     const visible: string[] = [];
-    for (let i = 0; i < allTags.length; i++) {
-      const tag = allTags[i];
+    for (const tag of validTags) {
       const cost = tag.length + 2; // crude width for padding/gap
       if (used + cost > effectiveBudget) break;
       visible.push(tag);
       used += cost;
     }
-    return { visible, hasMore: visible.length < allTags.length };
+    return { visible, hasMore: visible.length < validTags.length, totalValid: validTags.length };
   };
 
   /**
@@ -242,6 +247,9 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
       if (onRemove) onRemove(connection.id, 'outgoing');
       return;
     }
+    // Sending a connection request runs in the desktop client. Open the
+    // download dialog and abort if the agent isn't connected.
+    if (!requireDesktopClient()) return;
     setIsConnecting(true);
 
     try {
@@ -443,7 +451,7 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
           {(connection.tags?.length || connection.common_interests?.length) &&
             (() => {
               const allTags = (connection.tags || connection.common_interests || []) as string[];
-              const { visible, hasMore } = getVisibleTagsByCharacterBudget(allTags);
+              const { visible, hasMore, totalValid } = getVisibleTagsByCharacterBudget(allTags);
               return (
                 <div className="mb-2">
                   <div className="flex items-center overflow-hidden flex-nowrap gap-2 max-w-full whitespace-nowrap leading-7 min-h-[28px] py-0.5">
@@ -471,7 +479,7 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
                           setIsTagsOpen(true);
                         }}
                       >
-                        +{allTags.length - visible.length} more
+                        +{(totalValid ?? allTags.length) - visible.length} more
                       </Badge>
                     )}
                   </div>

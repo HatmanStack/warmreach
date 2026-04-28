@@ -215,7 +215,7 @@ export class CognitoAuthService {
 
           const user: CognitoUserData = {
             id: session.getIdToken().payload.sub,
-            email: userAttributes.email,
+            email: userAttributes.email ?? '',
             firstName: userAttributes.given_name,
             lastName: userAttributes.family_name,
             emailVerified: userAttributes.email_verified === 'true',

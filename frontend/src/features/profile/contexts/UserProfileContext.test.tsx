@@ -95,12 +95,15 @@ describe('UserProfileContext', () => {
 
   describe('profile fetch on mount', () => {
     it('should fetch profile when not previously fetched', async () => {
+      // Credentials are no longer returned by the API — they live exclusively
+      // in the desktop client. The fetch path should populate userProfile
+      // but NOT ciphertext (sessionStorage hydration is the only ciphertext
+      // source on the web).
       mockGetUserProfile.mockResolvedValue({
         success: true,
         data: {
           firstName: 'John',
           lastName: 'Doe',
-          linkedin_credentials: 'sealbox_x25519:b64:creds',
         },
       });
 
@@ -112,7 +115,7 @@ describe('UserProfileContext', () => {
 
       expect(result.current.userProfile).not.toBeNull();
       expect(result.current.userProfile!.firstName).toBe('John');
-      expect(result.current.ciphertext).toBe('sealbox_x25519:b64:creds');
+      expect(result.current.ciphertext).toBeNull();
       expect(mockGetUserProfile).toHaveBeenCalled();
     });
 

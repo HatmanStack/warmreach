@@ -3,19 +3,13 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { User, Building, MapPin } from 'lucide-react';
 import type { ProfileData } from '../hooks/useProfileForm';
-import type { LinkedInCredentialsData } from '../hooks/useLinkedInCredentials';
 
 interface ProfilePreviewProps {
   profile: ProfileData;
   hasStoredCredentials: boolean;
-  linkedinCredentials: LinkedInCredentialsData;
 }
 
-export function ProfilePreview({
-  profile,
-  hasStoredCredentials,
-  linkedinCredentials,
-}: ProfilePreviewProps) {
+export function ProfilePreview({ profile, hasStoredCredentials }: ProfilePreviewProps) {
   return (
     <div className="space-y-6">
       <Card className="bg-white/5 backdrop-blur-md border-white/10">
@@ -76,12 +70,10 @@ export function ProfilePreview({
             <h4 className="text-white font-medium mb-2">LinkedIn Status</h4>
             <div className="flex items-center space-x-2">
               <div
-                className={`w-2 h-2 rounded-full ${hasStoredCredentials || (linkedinCredentials.email && linkedinCredentials.password) ? 'bg-green-500' : 'bg-red-500'}`}
+                className={`w-2 h-2 rounded-full ${hasStoredCredentials ? 'bg-green-500' : 'bg-red-500'}`}
               />
               <span className="text-slate-300 text-sm">
-                {hasStoredCredentials || (linkedinCredentials.email && linkedinCredentials.password)
-                  ? 'Connected'
-                  : 'Not Connected'}
+                {hasStoredCredentials ? 'Connected' : 'Not Connected'}
               </span>
             </div>
           </div>

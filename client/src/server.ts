@@ -24,6 +24,9 @@ process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) =>
 });
 
 process.on('uncaughtException', (error: Error) => {
+  process.stderr.write(
+    '[diag !!] uncaughtException: ' + (error && error.stack ? error.stack : String(error)) + '\n'
+  );
   logger.error('Uncaught exception', { error });
   process.exit(1);
 });
@@ -241,7 +244,7 @@ app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 // 404 handler
-app.use('*', (req: Request, res: Response) => {
+app.use((req: Request, res: Response) => {
   res.status(404).json({
     error: 'Route not found',
     path: req.originalUrl,
@@ -369,4 +372,9 @@ async function startServer(): Promise<void> {
   }
 }
 
-startServer();
+startServer().catch((err) => {
+  process.stderr.write(
+    'startServer rejected: ' + (err instanceof Error ? err.stack : String(err)) + '\n'
+  );
+  process.exit(1);
+});

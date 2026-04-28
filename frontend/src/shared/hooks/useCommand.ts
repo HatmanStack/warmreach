@@ -5,6 +5,7 @@ import {
   type CommandProgress,
 } from '@/shared/services/commandService';
 import type { WebSocketMessage } from '@/shared/services/websocketService';
+import { useRequireDesktopClient } from '@/shared/contexts/ClientRequiredDialogContext';
 
 export interface UseCommandReturn<T = unknown> {
   execute: (payload: Record<string, unknown>) => Promise<void>;
@@ -15,11 +16,39 @@ export interface UseCommandReturn<T = unknown> {
   reset: () => void;
 }
 
+interface UseCommandOptions {
+  /**
+   * When true, dispatches that find the desktop client offline fail
+   * silently (no modal, status='failed'). Use for background/auto-fire
+   * commands where popping a dialog would be aggressive. User-initiated
+   * actions should leave this false (the default) so the user gets a
+   * clear "install the client" prompt.
+   */
+  silent?: boolean;
+}
+
 /**
  * Hook for dispatching a command to the Electron agent and tracking its lifecycle.
+ *
+ * Every dispatch goes through the desktop-client gate: if the agent is not
+ * connected, the global ClientRequiredDialog opens, the command is NOT
+ * dispatched, and `execute()` resolves without changing status. Components
+ * don't need to gate themselves — by architectural decision, every command
+ * type runs in the Electron client.
+ *
+ * Pass `{ silent: true }` to suppress the modal for background/auto-fire
+ * commands; the dispatch still aborts but status flips to 'failed' rather
+ * than nagging the user with a dialog.
+ *
  * @param type - Command type (e.g. 'linkedin:search')
+ * @param options - Optional behavioral overrides
  */
-export function useCommand<T = unknown>(type: string): UseCommandReturn<T> {
+export function useCommand<T = unknown>(
+  type: string,
+  options: UseCommandOptions = {}
+): UseCommandReturn<T> {
+  const { silent = false } = options;
+  const { requireDesktopClient, agentConnected } = useRequireDesktopClient();
   const [status, setStatus] = useState<CommandStatus>('idle');
   const [progress, setProgress] = useState<CommandProgress | null>(null);
   const [result, setResult] = useState<T | null>(null);
@@ -35,6 +64,20 @@ export function useCommand<T = unknown>(type: string): UseCommandReturn<T> {
 
   const execute = useCallback(
     async (payload: Record<string, unknown>) => {
+      // Gate: every command runs in the Electron desktop client.
+      if (silent) {
+        // Background/auto-fire path: don't pop a modal. Set status so the
+        // caller can render a passive indicator instead.
+        if (!agentConnected) {
+          setError('Desktop client not connected');
+          setStatus('failed');
+          return;
+        }
+      } else if (!requireDesktopClient()) {
+        // User-initiated path: open the download dialog and abort.
+        return;
+      }
+
       // Clean up previous command listener
       cleanupRef.current?.();
       cleanupRef.current = null;
@@ -83,7 +126,7 @@ export function useCommand<T = unknown>(type: string): UseCommandReturn<T> {
         throw new Error(message);
       }
     },
-    [type]
+    [type, silent, agentConnected, requireDesktopClient]
   );
 
   const reset = useCallback(() => {
