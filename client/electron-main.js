@@ -133,6 +133,11 @@ function openSettingsWindow() {
   settingsWindow.loadFile(path.join(__dirname, 'src', 'credentials', 'settings.html'));
   settingsWindow.setMenuBarVisibility(false);
 
+  // Surface preload load failures — silent normally, loud when broken.
+  settingsWindow.webContents.on('preload-error', (_e, preloadPath, error) => {
+    process.stderr.write(`[settings:preload-error] ${preloadPath}: ${error?.stack || error}\n`);
+  });
+
   settingsWindow.on('closed', () => {
     settingsWindow = null;
   });
@@ -298,9 +303,9 @@ ipcMain.handle('settings:get-credentials', () => {
   const creds = credentialStore.getCredentials();
   return creds ? { email: creds.email } : null;
 });
-ipcMain.handle('settings:save-credentials', (_e, email, password) =>
-  credentialStore.setCredentials(email, password)
-);
+ipcMain.handle('settings:save-credentials', (_e, email, password) => {
+  credentialStore.setCredentials(email, password);
+});
 ipcMain.handle('settings:clear-credentials', () => credentialStore.clearCredentials());
 ipcMain.handle('settings:get-ws-url', () => store.get('wsUrl') || '');
 ipcMain.handle('settings:save-ws-url', (_e, url) => {
@@ -317,6 +322,38 @@ ipcMain.handle('settings:save-ws-url', (_e, url) => {
     wsConnected = false;
   }
   startWebSocket();
+  broadcastStatus();
+});
+
+// Auth token: the agent needs a Cognito ID token to subscribe to its
+// `agent` channel on the cloud WebSocket. There's no built-in sign-in
+// UI yet, so the user pastes the token from the web app for now.
+ipcMain.handle('settings:has-auth-token', () => Boolean(store.get('auth.accessToken')));
+ipcMain.handle('settings:save-auth-token', (_e, token) => {
+  store.set('auth.accessToken', token);
+  if (wsClient) {
+    try {
+      wsClient.close?.();
+    } catch {
+      /* best effort */
+    }
+    wsClient = null;
+    wsConnected = false;
+  }
+  startWebSocket();
+  broadcastStatus();
+});
+ipcMain.handle('settings:clear-auth-token', () => {
+  store.delete('auth.accessToken');
+  if (wsClient) {
+    try {
+      wsClient.close?.();
+    } catch {
+      /* best effort */
+    }
+    wsClient = null;
+    wsConnected = false;
+  }
   broadcastStatus();
 });
 
