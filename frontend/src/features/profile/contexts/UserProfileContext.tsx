@@ -36,6 +36,31 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
   // This ensures we fetch once (e.g., from Dashboard) and reuse across the app
   // Using sessionStorage check instead of component variable to persist across renders
 
+  // The API returns firstName/lastName in camelCase but every consumer in
+  // the app reads first_name/last_name (snake_case). Without this bridge
+  // the form falls back to placeholders and Dashboard's display name
+  // collapses to email. Emit both casings so existing snake_case readers
+  // keep working without a sweeping rename.
+  const normalizeProfile = (raw: Record<string, unknown>): UserProfile => {
+    const merged: Record<string, unknown> = { ...raw };
+    const aliases: Array<[string, string]> = [
+      ['firstName', 'first_name'],
+      ['lastName', 'last_name'],
+      ['userId', 'user_id'],
+      ['createdAt', 'created_at'],
+      ['updatedAt', 'updated_at'],
+    ];
+    for (const [camel, snake] of aliases) {
+      if (merged[snake] === undefined && merged[camel] !== undefined) {
+        merged[snake] = merged[camel];
+      }
+      if (merged[camel] === undefined && merged[snake] !== undefined) {
+        merged[camel] = merged[snake];
+      }
+    }
+    return merged as UserProfile;
+  };
+
   // Fetch user profile from API
   const fetchUserProfile = async () => {
     if (!user) return;
@@ -49,7 +74,7 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
         error: response.error,
       });
       if (response.success && response.data) {
-        setUserProfile(response.data);
+        setUserProfile(normalizeProfile(response.data as unknown as Record<string, unknown>));
 
         // Auto-detect timezone and save if not yet set or changed (ADR-008)
         try {
