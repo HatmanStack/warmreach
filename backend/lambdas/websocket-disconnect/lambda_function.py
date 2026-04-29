@@ -13,6 +13,7 @@ logger = logging.getLogger()
 logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
 
 TABLE_NAME = os.environ['DYNAMODB_TABLE_NAME']
+WEBSOCKET_ENDPOINT = os.environ.get('WEBSOCKET_ENDPOINT', '')
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(TABLE_NAME)
@@ -35,10 +36,25 @@ def lambda_handler(event, context):
 
         from shared_services.websocket_service import WebSocketService
 
-        ws_service = WebSocketService(table, '')  # No endpoint needed for delete
+        ws_service = WebSocketService(table, WEBSOCKET_ENDPOINT)
 
+        # Capture metadata before deletion so we can notify the user's
+        # frontend(s) if their agent went away.
+        meta = ws_service.get_connection(connection_id) or {}
         ws_service.delete_connection(connection_id)
         logger.info('Disconnected: %s', connection_id)
+
+        try:
+            if meta.get('clientType') == 'agent' and meta.get('userSub') and WEBSOCKET_ENDPOINT:
+                user_sub = meta['userSub']
+                still_online = bool(ws_service.get_user_connections(user_sub, 'agent'))
+                for browser in ws_service.get_user_connections(user_sub, 'browser'):
+                    ws_service.send_to_connection(
+                        browser['connectionId'],
+                        {'action': 'agent_status', 'connected': still_online},
+                    )
+        except Exception:
+            logger.exception('agent_status broadcast on disconnect failed (non-fatal)')
 
         return {'statusCode': 200, 'body': 'Disconnected'}
     except Exception:

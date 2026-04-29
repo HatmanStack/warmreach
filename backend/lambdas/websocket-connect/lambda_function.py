@@ -194,4 +194,23 @@ def lambda_handler(event, context):
     ws_service.store_connection(connection_id, user_sub, client_type)
     logger.info('Connected: %s user=%s type=%s', connection_id, user_sub, client_type)
 
+    # Notify the frontend(s) about agent reachability so the install-prompt
+    # / "no agent" UI can flip without a page reload. Failures are
+    # non-fatal — the connection itself is established.
+    try:
+        if client_type == 'agent':
+            for browser in ws_service.get_user_connections(user_sub, 'browser'):
+                ws_service.send_to_connection(
+                    browser['connectionId'],
+                    {'action': 'agent_status', 'connected': True},
+                )
+        elif client_type == 'browser':
+            agent_online = bool(ws_service.get_user_connections(user_sub, 'agent'))
+            ws_service.send_to_connection(
+                connection_id,
+                {'action': 'agent_status', 'connected': agent_online},
+            )
+    except Exception:
+        logger.exception('agent_status broadcast failed (non-fatal)')
+
     return {'statusCode': 200, 'body': 'Connected'}

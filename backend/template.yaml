@@ -347,6 +347,7 @@ Resources:
         Variables:
           DYNAMODB_TABLE_NAME: !Ref ProfilesTable
           LOG_LEVEL: INFO
+          WEBSOCKET_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
 
   WebSocketDisconnectPermission:
     Type: AWS::Lambda::Permission
