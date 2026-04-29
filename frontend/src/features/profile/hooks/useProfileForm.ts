@@ -10,14 +10,19 @@ export interface ProfileData {
   linkedinUrl: string;
 }
 
+// Empty defaults: never seed demo values into the form. The hydration
+// effect below replaces these with whatever the API returns; until that
+// resolves, fields render with their placeholder text. Anything we put
+// here gets serialised back to DynamoDB on save and looks like a saved
+// value on the next read — see the "TechFlow Inc." regression.
 const DEFAULT_PROFILE: ProfileData = {
-  name: 'Tom, Dick, And Harry',
-  title: 'Senior Software Engineer',
-  company: 'TechFlow Inc.',
-  location: 'San Francisco, CA',
-  bio: 'Passionate about building scalable web applications and exploring AI/ML technologies. Always eager to connect with fellow developers and discuss emerging tech trends.',
-  interests: ['React', 'TypeScript', 'AI/ML', 'Startups', 'Open Source'],
-  linkedinUrl: 'https://linkedin.com/in/tdah',
+  name: '',
+  title: '',
+  company: '',
+  location: '',
+  bio: '',
+  interests: [],
+  linkedinUrl: '',
 };
 
 export function useProfileForm(userProfile: Record<string, unknown> | null) {
@@ -30,28 +35,28 @@ export function useProfileForm(userProfile: Record<string, unknown> | null) {
   };
 
   useEffect(() => {
-    // When user profile context updates, hydrate this page's local editable fields
-    (async () => {
-      try {
-        const data = userProfile;
-        if (!data) return;
-        const firstName = ((data.first_name as string) || '').trim();
-        const lastName = ((data.last_name as string) || '').trim();
-        const derivedName = [firstName, lastName].filter(Boolean).join(' ').trim();
-        setProfile((prev) => ({
-          ...prev,
-          name: derivedName || prev.name,
-          title: (data.headline as string) || (data.current_position as string) || prev.title || '',
-          company: (data.company as string) || prev.company || '',
-          location: (data.location as string) || prev.location || '',
-          bio: (data.summary as string) || prev.bio || '',
-          interests: Array.isArray(data.interests) ? (data.interests as string[]) : prev.interests,
-          linkedinUrl: (data.profile_url as string) || prev.linkedinUrl || '',
-        }));
-      } catch {
-        // Silent fail; do not block profile page if profile isn't initialized yet
-      }
-    })();
+    // When the user-profile context updates, mirror it into editable fields.
+    // Use ?? (nullish coalesce) — an empty string in the API means the user
+    // cleared that field, so we shouldn't silently fall back to stale form
+    // state via ||.
+    try {
+      const data = userProfile;
+      if (!data) return;
+      const firstName = ((data.first_name as string) || '').trim();
+      const lastName = ((data.last_name as string) || '').trim();
+      const derivedName = [firstName, lastName].filter(Boolean).join(' ').trim();
+      setProfile({
+        name: derivedName,
+        title: (data.headline as string) ?? (data.current_position as string) ?? '',
+        company: (data.company as string) ?? '',
+        location: (data.location as string) ?? '',
+        bio: (data.summary as string) ?? '',
+        interests: Array.isArray(data.interests) ? (data.interests as string[]) : [],
+        linkedinUrl: (data.profile_url as string) ?? '',
+      });
+    } catch {
+      // Silent fail; do not block profile page if profile isn't initialized yet
+    }
   }, [userProfile]);
 
   const addInterest = () => {

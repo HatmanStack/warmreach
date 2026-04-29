@@ -3,10 +3,11 @@ import { renderHook, act } from '@testing-library/react';
 import { useProfileForm } from './useProfileForm';
 
 describe('useProfileForm', () => {
-  it('returns default profile state', () => {
+  it('returns empty default profile state', () => {
     const { result } = renderHook(() => useProfileForm(null));
-    expect(result.current.profile.name).toBe('Tom, Dick, And Harry');
-    expect(result.current.profile.interests).toContain('React');
+    expect(result.current.profile.name).toBe('');
+    expect(result.current.profile.interests).toEqual([]);
+    expect(result.current.profile.company).toBe('');
     expect(result.current.isSaving).toBe(false);
     expect(result.current.newInterest).toBe('');
   });
@@ -33,14 +34,20 @@ describe('useProfileForm', () => {
 
   it('does not add duplicate interest', () => {
     const { result } = renderHook(() => useProfileForm(null));
-    const initialLength = result.current.profile.interests.length;
     act(() => {
       result.current.setNewInterest('React');
     });
     act(() => {
       result.current.addInterest();
     });
-    expect(result.current.profile.interests.length).toBe(initialLength);
+    const lengthAfterFirst = result.current.profile.interests.length;
+    act(() => {
+      result.current.setNewInterest('React');
+    });
+    act(() => {
+      result.current.addInterest();
+    });
+    expect(result.current.profile.interests.length).toBe(lengthAfterFirst);
   });
 
   it('does not add empty interest', () => {
