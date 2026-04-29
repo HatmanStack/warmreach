@@ -326,4 +326,35 @@ export class CognitoAuthService {
       });
     });
   }
+
+  // Get the bundle of values the Electron desktop agent needs to subscribe
+  // to the cloud WebSocket on this user's behalf and refresh its id token
+  // automatically. Returns null when no user is signed in or the session
+  // is unrecoverable.
+  static async getDesktopAgentTokens(): Promise<{
+    idToken: string;
+    refreshToken: string;
+    cognitoClientId: string;
+    region: string;
+  } | null> {
+    return new Promise((resolve) => {
+      const cognitoUser = userPool.getCurrentUser();
+      if (!cognitoUser) {
+        resolve(null);
+        return;
+      }
+      cognitoUser.getSession((err: Error | null, session: CognitoUserSession) => {
+        if (err || !session.isValid()) {
+          resolve(null);
+          return;
+        }
+        resolve({
+          idToken: session.getIdToken().getJwtToken(),
+          refreshToken: session.getRefreshToken().getToken(),
+          cognitoClientId: cognitoConfig.userPoolWebClientId,
+          region: cognitoConfig.region,
+        });
+      });
+    });
+  }
 }

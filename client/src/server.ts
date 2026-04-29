@@ -127,6 +127,31 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
+// Auth bridge: web app POSTs Cognito tokens here so the agent can connect
+// to the cloud WebSocket. Handler is set by electron-main.js at boot.
+app.post(
+  '/auth/token',
+  createRateLimiter({ windowMs: 60000, max: 10, name: 'auth-token' }),
+  (req: Request, res: Response) => {
+    const { idToken, refreshToken, cognitoClientId, region } = req.body ?? {};
+    if (typeof idToken !== 'string' || idToken.length < 20) {
+      return res.status(400).json({ error: 'idToken required' });
+    }
+    if (typeof refreshToken !== 'string' || refreshToken.length < 20) {
+      return res.status(400).json({ error: 'refreshToken required' });
+    }
+    if (typeof cognitoClientId !== 'string' || !cognitoClientId) {
+      return res.status(400).json({ error: 'cognitoClientId required' });
+    }
+    const sync = (globalThis as { warmreachAuthSync?: (p: unknown) => void }).warmreachAuthSync;
+    if (typeof sync !== 'function') {
+      return res.status(503).json({ error: 'Auth bridge not initialised' });
+    }
+    sync({ idToken, refreshToken, cognitoClientId, region: region || 'us-east-1' });
+    return res.status(204).end();
+  }
+);
+
 // Routes
 // Mount search routes under /search to match frontend expectations
 app.use('/search', createRateLimiter({ windowMs: 60000, max: 10, name: 'search' }), searchRoutes);

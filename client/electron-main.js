@@ -266,6 +266,101 @@ function createTray() {
 
 // --- WebSocket ---
 
+function restartWebSocket() {
+  if (wsClient) {
+    try {
+      wsClient.close?.();
+    } catch {
+      /* best effort */
+    }
+    wsClient = null;
+    wsConnected = false;
+  }
+  startWebSocket();
+}
+
+// --- Cognito refresh-token flow ---
+//
+// The web app pushes id+refresh tokens to the agent over POST /auth/token
+// (handled in src/server.ts). The id token expires in ~1 hour; we use the
+// refresh token to mint a new id token before that window closes so the
+// WebSocket subscription stays alive without user interaction.
+
+let refreshTimer = null;
+
+async function refreshIdToken() {
+  const refreshToken = store.get('auth.refreshToken');
+  const clientId = store.get('auth.cognitoClientId');
+  const region = store.get('auth.region') || 'us-east-1';
+  if (!refreshToken || !clientId) {
+    return false;
+  }
+  try {
+    const resp = await fetch(`https://cognito-idp.${region}.amazonaws.com/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-amz-json-1.1',
+        'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth',
+      },
+      body: JSON.stringify({
+        AuthFlow: 'REFRESH_TOKEN_AUTH',
+        ClientId: clientId,
+        AuthParameters: { REFRESH_TOKEN: refreshToken },
+      }),
+    });
+    if (!resp.ok) {
+      // 400 here usually means refresh token expired (30-day default).
+      // Drop the stored credentials so the UI shows "Sign in to connect".
+      const detail = await resp.text();
+      // eslint-disable-next-line no-console -- pre-logger main-process diagnostic
+      console.error('[electron-main] token refresh failed', resp.status, detail);
+      if (resp.status === 400) {
+        store.delete('auth.accessToken');
+        store.delete('auth.refreshToken');
+        restartWebSocket();
+        broadcastStatus();
+      }
+      return false;
+    }
+    const data = await resp.json();
+    const newIdToken = data?.AuthenticationResult?.IdToken;
+    if (!newIdToken) {
+      return false;
+    }
+    store.set('auth.accessToken', newIdToken);
+    restartWebSocket();
+    broadcastStatus();
+    return true;
+  } catch (err) {
+    // eslint-disable-next-line no-console -- pre-logger main-process diagnostic
+    console.error('[electron-main] token refresh exception', err);
+    return false;
+  }
+}
+
+function scheduleTokenRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+  if (!store.get('auth.refreshToken')) return;
+  // Cognito id tokens default to 1h validity; refresh every 50 min.
+  refreshTimer = setInterval(refreshIdToken, 50 * 60 * 1000);
+}
+
+// Bridge for src/server.ts — the Express server runs in this same Node
+// process so it can hand tokens straight to the main module instead of
+// going through IPC.
+globalThis.warmreachAuthSync = ({ idToken, refreshToken, cognitoClientId, region }) => {
+  if (idToken) store.set('auth.accessToken', idToken);
+  if (refreshToken) store.set('auth.refreshToken', refreshToken);
+  if (cognitoClientId) store.set('auth.cognitoClientId', cognitoClientId);
+  if (region) store.set('auth.region', region);
+  restartWebSocket();
+  scheduleTokenRefresh();
+  broadcastStatus();
+};
+
 function startWebSocket() {
   const token = store.get('auth.accessToken');
   const wsUrl = getWsUrl();
@@ -407,6 +502,7 @@ app.whenReady().then(() => {
   openMainWindow();
 
   startWebSocket();
+  scheduleTokenRefresh();
 
   setTimeout(() => {
     autoUpdater.checkForUpdatesAndNotify().catch(() => {});

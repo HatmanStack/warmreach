@@ -5,6 +5,28 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2026-04-29
+
+One-click desktop-agent sign-in: the web app now hands its Cognito tokens straight to the local agent over loopback, and the agent refreshes them automatically.
+
+### Added
+
+- **Client:** `POST /auth/token` route on the local Express server accepts `{idToken, refreshToken, cognitoClientId, region}` from the web app, persists them to electron-store, and (re)opens the cloud WebSocket immediately. CORS allow-list now bakes in the production Amplify origin.
+- **Client:** Cognito refresh-token loop — every 50 minutes the agent calls `InitiateAuth` with `REFRESH_TOKEN_AUTH` to mint a fresh id token and reconnects the WS. Refresh failure with HTTP 400 (refresh token expired) clears stored creds so the UI returns to "Sign in to connect".
+- **Frontend:** `ConnectDesktopAgentButton` on the Profile page — single click pushes Cognito tokens to `localhost:3001/auth/token` so the agent's status pill flips to "Connected" without leaving the browser.
+- **Backend:** `agent_status` WebSocket message — `$connect` broadcasts to existing browsers when an agent connects, `$default` answers `get_agent_status` requests so freshly-opened browsers can query current state without waiting for an agent event.
+
+### Fixed
+
+- **Backend:** `$connect` no longer posts to the in-flight WebSocket connection (the API Gateway handshake isn't complete there, so `post_to_connection` returned 410 and the GoneException handler tore down the still-valid record). The dashboard now correctly tracks agent presence.
+- **Backend:** `analytics-insights` and `ragstack-ops` Lambdas now declare `requests` in `requirements.txt` — both transitively import shared services that use it, so omitting the dep crashed the Lambda with `ModuleNotFoundError` whenever the save-profile flow triggered the analytics call.
+- **Frontend:** `UserProfileContext.updateUserProfile` throws when `useAuth().user` is null instead of silently returning. The Save Profile path was reporting "Profile updated!" while no API call ever fired.
+- **CI:** `release.yml` calls `electron-release.yml` directly via `workflow_call` instead of relying on `release: types: [published]` (which never fires when `GITHUB_TOKEN` creates the release). `sync-public.yml` allows `CHANGELOG.md` so new releases sync to the community repo.
+
+### Changed
+
+- **Frontend:** "Add Contact" button on the connections tab uses the same `bg-white/10` glass styling as the surrounding chrome instead of `variant="outline"`, which was bleeding a light background through the dark card.
+
 ## [1.16.0] - 2026-04-29
 
 Release pipeline fix: AppImage now publishes automatically when a new release is cut.
