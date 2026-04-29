@@ -62,11 +62,17 @@ class StructuredJsonFormatter(logging.Formatter):
             'lambda': getattr(record, 'lambda_name', None),
         }
 
-        # Include exception info if present
+        # Include exception info if present. Capturing the traceback is
+        # essential for diagnosing serialisation errors like
+        # `Float types are not supported. Use Decimal types instead.` —
+        # the type+message alone don't tell you which call site emitted it.
         if record.exc_info and record.exc_info[0]:
+            import traceback as _tb
+
             log_entry['exception'] = {
                 'type': record.exc_info[0].__name__,
                 'message': str(record.exc_info[1]),
+                'traceback': _tb.format_exception(*record.exc_info),
             }
 
         # Include extra fields passed via logger.info('msg', extra={...})
