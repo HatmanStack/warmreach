@@ -47,9 +47,19 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [user, getToken]);
 
-  // Track connection state
+  // Track connection state. When the socket transitions to connected we
+  // ask the backend for the current agent status — backend can't push
+  // that during $connect (WS handshake isn't finished there).
   useEffect(() => {
-    return websocketService.onStateChange(setConnectionState);
+    return websocketService.onStateChange((state) => {
+      setConnectionState(state);
+      if (state === 'connected') {
+        websocketService.send({ action: 'get_agent_status' });
+      }
+      if (state === 'disconnected') {
+        setAgentConnected(false);
+      }
+    });
   }, []);
 
   // Listen for agent_status messages from backend

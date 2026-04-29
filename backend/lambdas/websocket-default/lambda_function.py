@@ -108,6 +108,31 @@ def _forward_to_browser(user_sub, message):
         ws_service.send_to_connection(bc['connectionId'], message)
 
 
+@_register('get_agent_status')
+def _handle_get_agent_status(connection_id, body):
+    """Browser asks whether the user's desktop agent is online.
+
+    Pushed from $default rather than $connect because the WebSocket
+    isn't fully established during $connect — sending there returns 410
+    and would tear down the connection record we just created.
+    """
+    del body  # unused
+    conn = table.get_item(Key={'PK': f'WSCONN#{connection_id}', 'SK': '#METADATA'}).get('Item')
+    if not conn:
+        return {'statusCode': 200, 'body': json.dumps({'error': 'Connection not found'})}
+    user_sub = conn.get('userSub')
+    if not user_sub:
+        return {'statusCode': 200, 'body': json.dumps({'error': 'Connection missing userSub'})}
+
+    ws_service = _get_ws_service()
+    agent_online = bool(ws_service.get_user_connections(user_sub, 'agent'))
+    ws_service.send_to_connection(
+        connection_id,
+        {'action': 'agent_status', 'connected': agent_online},
+    )
+    return {'statusCode': 200, 'body': 'ok'}
+
+
 @_register('heartbeat')
 def _handle_heartbeat(connection_id, body):
     ws_service = _get_ws_service()

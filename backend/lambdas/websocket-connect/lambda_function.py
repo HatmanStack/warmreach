@@ -203,22 +203,23 @@ def lambda_handler(event, context):
     ws_service.store_connection(connection_id, user_sub, client_type)
     logger.info('Connected: %s user=%s type=%s', connection_id, user_sub, client_type)
 
-    # Notify the frontend(s) about agent reachability so the install-prompt
-    # / "no agent" UI can flip without a page reload. Failures are
-    # non-fatal — the connection itself is established.
+    # When an agent connects, broadcast to all the user's existing browser
+    # connections so the "agent online" UI flips live. We do NOT push to the
+    # connecting client itself: the API Gateway WebSocket isn't fully
+    # established until $connect returns 200, so post_to_connection on the
+    # in-flight connectionId returns 410 and the GoneException handler would
+    # delete the still-valid connection record. Browsers query the current
+    # agent state via the $default `get_agent_status` action after their
+    # socket opens.
     try:
         if client_type == 'agent':
             for browser in ws_service.get_user_connections(user_sub, 'browser'):
+                if browser['connectionId'] == connection_id:
+                    continue
                 ws_service.send_to_connection(
                     browser['connectionId'],
                     {'action': 'agent_status', 'connected': True},
                 )
-        elif client_type == 'browser':
-            agent_online = bool(ws_service.get_user_connections(user_sub, 'agent'))
-            ws_service.send_to_connection(
-                connection_id,
-                {'action': 'agent_status', 'connected': agent_online},
-            )
     except Exception:
         logger.exception('agent_status broadcast failed (non-fatal)')
 
