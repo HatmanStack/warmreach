@@ -109,12 +109,11 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
 
   // Update user profile
   const updateUserProfile = async (updates: Partial<UserProfile>) => {
-    if (!user) {
-      // Silent return masks a failed save behind a "success" toast in the
-      // caller. Surface the issue so the UI can prompt re-auth.
-      throw new Error('Not signed in — please sign back in and retry.');
-    }
-
+    // Don't gate on AuthContext.user here — that state can lag behind a
+    // valid Cognito session (initializeAuth runs once on mount and depends
+    // on getUserAttributes resolving). The HTTP layer pulls the JWT fresh
+    // from Cognito on every call, so let the save fire and surface a real
+    // 401 if the session is actually gone.
     setIsLoading(true);
     try {
       const response = await profileApiService.updateUserProfile(updates);
