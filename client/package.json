@@ -18,7 +18,7 @@
     "electron:dev": "electron --import tsx electron-main.js",
     "electron:build": "npm run build:ts && electron-builder --publish never && npm run clean:ts",
     "build:ts": "tsc -p tsconfig.build.json && node scripts/copy-emitted.mjs",
-    "clean:ts": "find src config routes -name '*.ts' ! -name '*.test.ts' -exec sh -c 'rm -f \"${0%.ts}.js\"' {} \\; && rm -rf build-tsc",
+    "clean:ts": "find src config routes -name '*.ts' ! -name '*.test.ts' -exec sh -c 'rm -f \"${0%.ts}.js\"' {} \\; && find src config routes -name '*.cts' -exec sh -c 'rm -f \"${0%.cts}.cjs\"' {} \\; && rm -rf build-tsc",
     "build": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",

@@ -126,7 +126,7 @@ function openSettingsWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      preload: path.join(__dirname, 'src', 'credentials', 'settingsPreload.js'),
+      preload: path.join(__dirname, 'src', 'credentials', 'settingsPreload.cjs'),
     },
   });
 
@@ -157,7 +157,7 @@ function openMainWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      preload: path.join(__dirname, 'src', 'window', 'mainPreload.js'),
+      preload: path.join(__dirname, 'src', 'window', 'mainPreload.cjs'),
     },
   });
 

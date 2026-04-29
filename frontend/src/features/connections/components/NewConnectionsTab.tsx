@@ -141,17 +141,6 @@ const NewConnectionsTab = ({
               )}
             </div>
 
-            {/* Demo Data Warning */}
-            {searchResults.length === 0 && (
-              <div className="bg-yellow-600/20 border border-yellow-500/30 rounded-lg p-3 mb-4">
-                <p className="text-yellow-200 text-sm font-medium">
-                  <strong>Demo Mode:</strong> The data displayed below is sample data for
-                  demonstration purposes. Connect to your DynamoDB backend to see real LinkedIn
-                  connections.
-                </p>
-              </div>
-            )}
-
             {/* Client-side Search Bar */}
             <div className="mt-4 space-y-3">
               <ConnectionSearchBar

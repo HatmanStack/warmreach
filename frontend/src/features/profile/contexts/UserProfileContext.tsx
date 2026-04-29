@@ -84,7 +84,11 @@ export const UserProfileProvider = ({ children }: { children: ReactNode }) => {
 
   // Update user profile
   const updateUserProfile = async (updates: Partial<UserProfile>) => {
-    if (!user) return;
+    if (!user) {
+      // Silent return masks a failed save behind a "success" toast in the
+      // caller. Surface the issue so the UI can prompt re-auth.
+      throw new Error('Not signed in — please sign back in and retry.');
+    }
 
     setIsLoading(true);
     try {

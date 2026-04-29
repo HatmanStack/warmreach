@@ -416,6 +416,34 @@ class TestValidateJwt:
 
         assert claims is None
 
+    def test_id_token_with_matching_aud_succeeds(self):
+        """Cognito ID tokens carry the client identifier in `aud`, not `client_id`."""
+        from conftest import load_lambda_module
+        import jwt as pyjwt
+        import time
+        module = load_lambda_module('websocket-connect')
+        private_key, jwks, kid = _generate_test_jwks()
+
+        token = pyjwt.encode(
+            {
+                'sub': 'user-123',
+                'aud': 'test-client-id',
+                'token_use': 'id',
+                'iss': 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TestPool',
+                'exp': int(time.time()) + 3600,
+            },
+            private_key,
+            algorithm='RS256',
+            headers={'kid': kid},
+        )
+
+        with patch.object(module, '_get_jwks_client', return_value=jwks), \
+             patch.dict(os.environ, {'COGNITO_CLIENT_ID': 'test-client-id'}):
+            claims = module._validate_jwt(token)
+
+        assert claims is not None
+        assert claims['sub'] == 'user-123'
+
     def test_valid_token_without_client_id_check_succeeds(self):
         """Valid JWT should succeed when COGNITO_CLIENT_ID env var is not set (backward compat)."""
         from conftest import load_lambda_module

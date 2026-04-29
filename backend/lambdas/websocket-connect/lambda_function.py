@@ -129,14 +129,23 @@ def _validate_jwt(token: str) -> dict | None:
             options={'verify_aud': False},
         )
 
-        # Validate client_id claim to prevent cross-application JWT reuse.
+        # Validate client_id / aud claim to prevent cross-application JWT
+        # reuse. Cognito access tokens carry the client identifier in the
+        # `client_id` claim; Cognito ID tokens carry it in `aud`. We accept
+        # either so the same token plumbing works for HTTP API auth and the
+        # WebSocket connect handshake.
         # Read os.environ at call time so tests can patch it; the module-init
         # warning above surfaces the unset case at cold start.
         expected_client_id = os.environ.get('COGNITO_CLIENT_ID', '')
         if expected_client_id:
-            token_client_id = claims.get('client_id', '')
+            token_client_id = claims.get('client_id') or claims.get('aud') or ''
             if token_client_id != expected_client_id:
-                logger.warning('JWT client_id mismatch: expected=%s, got=%s', expected_client_id, token_client_id)
+                logger.warning(
+                    'JWT client_id mismatch: expected=%s, got=%s (token_use=%s)',
+                    expected_client_id,
+                    token_client_id,
+                    claims.get('token_use', '?'),
+                )
                 return None
 
         return claims
