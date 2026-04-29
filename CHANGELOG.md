@@ -5,6 +5,15 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-04-29
+
+Release pipeline fix: AppImage now publishes automatically when a new release is cut.
+
+### Fixed
+
+- **CI:** `release.yml` now invokes `electron-release.yml` via `workflow_call` instead of relying on the `release: types: [published]` event, which silently no-opped when `GITHUB_TOKEN` created the release (GitHub anti-loop protection). v1.15.0 shipped with zero AppImage assets because of this.
+- **Client:** `electron:build` script passes `--publish never` to electron-builder so CI detection no longer triggers implicit publishing (which then errored on missing `GH_TOKEN`).
+
 ## [1.15.0] - 2026-04-28
 
 Desktop client ready for distribution: buildable Linux AppImage, ChromeOS-compatible control window, and CI pipeline that publishes artifacts to the public release.
