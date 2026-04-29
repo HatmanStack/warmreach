@@ -361,6 +361,30 @@ globalThis.warmreachAuthSync = ({ idToken, refreshToken, cognitoClientId, region
   broadcastStatus();
 };
 
+// Drop all stored auth state and tear down the WS so a sign-out on the
+// web app doesn't leave the agent connected as the previous user (real
+// problem on shared machines — refresh tokens last 30 days by default).
+globalThis.warmreachAuthClear = () => {
+  store.delete('auth.accessToken');
+  store.delete('auth.refreshToken');
+  store.delete('auth.cognitoClientId');
+  store.delete('auth.region');
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+  if (wsClient) {
+    try {
+      wsClient.close?.();
+    } catch {
+      /* best effort */
+    }
+    wsClient = null;
+    wsConnected = false;
+  }
+  broadcastStatus();
+};
+
 function startWebSocket() {
   const token = store.get('auth.accessToken');
   const wsUrl = getWsUrl();
@@ -420,37 +444,9 @@ ipcMain.handle('settings:save-ws-url', (_e, url) => {
   broadcastStatus();
 });
 
-// Auth token: the agent needs a Cognito ID token to subscribe to its
-// `agent` channel on the cloud WebSocket. There's no built-in sign-in
-// UI yet, so the user pastes the token from the web app for now.
-ipcMain.handle('settings:has-auth-token', () => Boolean(store.get('auth.accessToken')));
-ipcMain.handle('settings:save-auth-token', (_e, token) => {
-  store.set('auth.accessToken', token);
-  if (wsClient) {
-    try {
-      wsClient.close?.();
-    } catch {
-      /* best effort */
-    }
-    wsClient = null;
-    wsConnected = false;
-  }
-  startWebSocket();
-  broadcastStatus();
-});
-ipcMain.handle('settings:clear-auth-token', () => {
-  store.delete('auth.accessToken');
-  if (wsClient) {
-    try {
-      wsClient.close?.();
-    } catch {
-      /* best effort */
-    }
-    wsClient = null;
-    wsConnected = false;
-  }
-  broadcastStatus();
-});
+// Auth tokens: pushed by the web app over loopback POST /auth/token
+// (handled in src/server.ts via globalThis.warmreachAuthSync). No
+// settings-window UI for these — manual paste was a stopgap.
 
 // --- IPC: main control window ---
 
@@ -501,8 +497,19 @@ app.whenReady().then(() => {
   }
   openMainWindow();
 
-  startWebSocket();
-  scheduleTokenRefresh();
+  // If a refresh token survived from a prior session, mint a fresh
+  // idToken before opening the WS — otherwise an expired idToken (1 h
+  // Cognito default) would 401 and we'd wait 50 min for the refresh
+  // interval to recover.
+  if (store.get('auth.refreshToken')) {
+    refreshIdToken().finally(() => {
+      startWebSocket();
+      scheduleTokenRefresh();
+    });
+  } else {
+    startWebSocket();
+    scheduleTokenRefresh();
+  }
 
   setTimeout(() => {
     autoUpdater.checkForUpdatesAndNotify().catch(() => {});

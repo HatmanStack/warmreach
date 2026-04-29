@@ -11,9 +11,6 @@ export interface SettingsAPI {
   clearCredentials: () => Promise<unknown>;
   getWsUrl: () => Promise<unknown>;
   saveWsUrl: (url: string) => Promise<unknown>;
-  hasAuthToken: () => Promise<boolean>;
-  saveAuthToken: (token: string) => Promise<unknown>;
-  clearAuthToken: () => Promise<unknown>;
 }
 
 contextBridge.exposeInMainWorld('settingsAPI', {
@@ -23,8 +20,4 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   clearCredentials: (): Promise<unknown> => ipcRenderer.invoke('settings:clear-credentials'),
   getWsUrl: (): Promise<unknown> => ipcRenderer.invoke('settings:get-ws-url'),
   saveWsUrl: (url: string): Promise<unknown> => ipcRenderer.invoke('settings:save-ws-url', url),
-  hasAuthToken: (): Promise<boolean> => ipcRenderer.invoke('settings:has-auth-token'),
-  saveAuthToken: (token: string): Promise<unknown> =>
-    ipcRenderer.invoke('settings:save-auth-token', token),
-  clearAuthToken: (): Promise<unknown> => ipcRenderer.invoke('settings:clear-auth-token'),
 } satisfies SettingsAPI);

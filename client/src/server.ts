@@ -134,10 +134,12 @@ app.post(
   createRateLimiter({ windowMs: 60000, max: 10, name: 'auth-token' }),
   (req: Request, res: Response) => {
     const { idToken, refreshToken, cognitoClientId, region } = req.body ?? {};
-    if (typeof idToken !== 'string' || idToken.length < 20) {
+    // Real Cognito JWTs are well over 700 chars; reject tiny strings
+    // at the bridge instead of storing junk and 401-ing at the WS.
+    if (typeof idToken !== 'string' || idToken.length < 200) {
       return res.status(400).json({ error: 'idToken required' });
     }
-    if (typeof refreshToken !== 'string' || refreshToken.length < 20) {
+    if (typeof refreshToken !== 'string' || refreshToken.length < 100) {
       return res.status(400).json({ error: 'refreshToken required' });
     }
     if (typeof cognitoClientId !== 'string' || !cognitoClientId) {
@@ -148,6 +150,23 @@ app.post(
       return res.status(503).json({ error: 'Auth bridge not initialised' });
     }
     sync({ idToken, refreshToken, cognitoClientId, region: region || 'us-east-1' });
+    return res.status(204).end();
+  }
+);
+
+// Auth clear: web app POSTs here on sign-out so the agent forgets the
+// stored refresh token. Otherwise the agent stays connected as the
+// previous user — a real issue on shared machines (refresh tokens are
+// good for 30 days by default).
+app.post(
+  '/auth/clear',
+  createRateLimiter({ windowMs: 60000, max: 10, name: 'auth-clear' }),
+  (_req: Request, res: Response) => {
+    const clear = (globalThis as { warmreachAuthClear?: () => void }).warmreachAuthClear;
+    if (typeof clear !== 'function') {
+      return res.status(503).json({ error: 'Auth bridge not initialised' });
+    }
+    clear();
     return res.status(204).end();
   }
 );

@@ -247,6 +247,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Clear JWT token from session storage
     sessionStorage.removeItem('jwt_token');
 
+    // Tell the local desktop agent (if running) to drop its stored
+    // refresh token so it stops connecting as this user. Best-effort —
+    // most users won't have the agent running, and that's fine.
+    fetch('http://localhost:3001/auth/clear', { method: 'POST' }).catch(() => {
+      /* agent not running — ignore */
+    });
+
     if (isCognitoConfigured) {
       // Use AWS Cognito
       try {

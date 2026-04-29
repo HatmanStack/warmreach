@@ -5,6 +5,12 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] - 2026-04-29
+
+### Changed
+
+- **Client:** Removed the manual "Cognito ID token" paste field from the settings window. The web-app "Connect Desktop Agent" button (loopback POST + auto-refresh) is the only sign-in flow; the paste UI was a stopgap and is now redundant.
+
 ## [1.17.0] - 2026-04-29
 
 One-click desktop-agent sign-in: the web app now hands its Cognito tokens straight to the local agent over loopback, and the agent refreshes them automatically.
