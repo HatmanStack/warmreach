@@ -1,6 +1,5 @@
 """Tests for shared handler utilities."""
 
-import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -139,14 +138,42 @@ def test_check_feature_gate_returns_none_when_allowed(handler_utils):
     assert result is None
 
 
-def test_check_feature_gate_returns_503_on_error(handler_utils):
-    """Feature flag exception returns 503 (fail-closed)."""
+def test_check_feature_gate_returns_503_on_infra_error(handler_utils):
+    """A genuine infrastructure fault (DynamoDB ClientError) fails closed with 503."""
+    from botocore.exceptions import ClientError
+
     mock_ff = MagicMock()
-    mock_ff.get_feature_flags.side_effect = RuntimeError('DDB timeout')
+    mock_ff.get_feature_flags.side_effect = ClientError(
+        {'Error': {'Code': 'InternalServerError', 'Message': 'DDB timeout'}}, 'GetItem'
+    )
     event = {'headers': {'origin': 'http://localhost:5173'}}
     result = handler_utils['check_feature_gate'](mock_ff, 'user-1', 'advanced_analytics', event)
     assert result is not None
     assert result['statusCode'] == 503
+
+
+def test_check_feature_gate_returns_503_on_not_found(handler_utils):
+    """A missing tier (NotFoundError) is an entitlement-lookup failure: fail closed 503."""
+    from errors.exceptions import NotFoundError
+
+    mock_ff = MagicMock()
+    mock_ff.get_feature_flags.side_effect = NotFoundError(
+        'User not found', resource_type='user', resource_id='user-1'
+    )
+    event = {'headers': {'origin': 'http://localhost:5173'}}
+    result = handler_utils['check_feature_gate'](mock_ff, 'user-1', 'advanced_analytics', event)
+    assert result is not None
+    assert result['statusCode'] == 503
+
+
+def test_check_feature_gate_propagates_programming_error(handler_utils):
+    """A programming error (not an infra fault) must propagate, not be masked as a 503,
+    so a real bug surfaces as a 500 via the handler's outer catch (ADR-004)."""
+    mock_ff = MagicMock()
+    mock_ff.get_feature_flags.side_effect = KeyError('bug')
+    event = {'headers': {'origin': 'http://localhost:5173'}}
+    with pytest.raises(KeyError):
+        handler_utils['check_feature_gate'](mock_ff, 'user-1', 'advanced_analytics', event)
 
 
 def test_check_feature_gate_returns_none_when_no_service(handler_utils):

@@ -54,7 +54,11 @@ export const ConnectDesktopAgentButton = () => {
   };
 
   return (
-    <Button onClick={handleClick} disabled={busy} className="gap-2">
+    <Button
+      onClick={handleClick}
+      disabled={busy}
+      className="gap-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
+    >
       <Link2 className="h-4 w-4" />
       {busy ? 'Connecting…' : 'Connect Desktop Agent'}
     </Button>

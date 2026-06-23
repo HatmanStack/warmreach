@@ -109,6 +109,41 @@ describe('useMessageGeneration', () => {
     );
   });
 
+  it('should clear the pending reset timeout on unmount', async () => {
+    vi.mocked(messageGenerationService.generateMessage).mockResolvedValue('Hello John');
+
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+
+    const { result, unmount } = renderHook(() => useMessageGeneration(defaultOptions), {
+      wrapper: Wrapper,
+    });
+
+    act(() => {
+      result.current.handleGenerateMessages();
+    });
+
+    await waitFor(() => {
+      expect(result.current.workflowState).toBe('awaiting_approval');
+    });
+
+    act(() => {
+      result.current.handleApproveAndNext();
+    });
+
+    // Workflow completes and schedules the 2s reset timeout.
+    await waitFor(() => {
+      expect(result.current.workflowState).toBe('completed');
+    });
+
+    clearTimeoutSpy.mockClear();
+
+    // Unmount before the 2s window elapses; the cleanup effect must clear the timer.
+    unmount();
+
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    clearTimeoutSpy.mockRestore();
+  });
+
   it('should handle send message', async () => {
     const { result } = renderHook(() => useMessageGeneration(defaultOptions), { wrapper: Wrapper });
 

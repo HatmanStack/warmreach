@@ -26,6 +26,16 @@ cd tests/backend && uv venv .venv && source .venv/bin/activate && uv pip install
 
 Copy `.env.example` to `.env` and fill in required values.
 
+### Local matches CI
+
+Backend test dependencies install from `tests/backend/requirements-test.lock`
+(pinned + hashed) in every environment: `scripts/setup.sh`, the manual setup
+above, and CI (`.github/workflows/ci.yml`) all use the lock. This keeps a new
+hire's local environment byte-for-byte aligned with CI and avoids "passes
+locally, fails in CI." `requirements-test.txt` is only the loose-range input
+used to regenerate the lock (`uv pip compile requirements-test.txt -o
+requirements-test.lock`); never install from it directly.
+
 ## Development Workflow
 
 1. Create a feature branch from `main`

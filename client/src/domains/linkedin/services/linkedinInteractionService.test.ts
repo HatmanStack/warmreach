@@ -65,6 +65,13 @@ vi.mock('../../automation/services/puppeteerService.js', () => ({
   PuppeteerService: vi.fn(),
 }));
 
+const { mockLogin } = vi.hoisted(() => ({ mockLogin: vi.fn().mockResolvedValue(true) }));
+vi.mock('./linkedinService.js', () => ({
+  LinkedInService: vi.fn().mockImplementation(function () {
+    return { login: mockLogin };
+  }),
+}));
+
 const { mockResolver } = vi.hoisted(() => ({
   mockResolver: {
     resolve: vi.fn(),
@@ -122,6 +129,36 @@ describe('LinkedInInteractionService', () => {
       BrowserSessionManager.isSessionHealthy.mockResolvedValue(true);
       const active = await service.isSessionActive();
       expect(active).toBe(true);
+    });
+  });
+
+  describe('ensureAuthenticated (HIGH #19)', () => {
+    it('returns without init/login when the session is already active', async () => {
+      const isActiveSpy = vi.spyOn(service, 'isSessionActive').mockResolvedValue(true);
+      const initSpy = vi.spyOn(service, 'initializeBrowserSession');
+
+      await service.ensureAuthenticated('sealbox_x25519:b64:creds', 'sendMessage');
+
+      expect(isActiveSpy).toHaveBeenCalled();
+      expect(initSpy).not.toHaveBeenCalled();
+      expect(mockLogin).not.toHaveBeenCalled();
+    });
+
+    it('initializes the browser session and drives login when not active', async () => {
+      vi.spyOn(service, 'isSessionActive').mockResolvedValue(false);
+      const fakeSession = { getPage: () => mockPage };
+      const initSpy = vi.spyOn(service, 'initializeBrowserSession').mockResolvedValue(fakeSession);
+
+      await service.ensureAuthenticated('sealbox_x25519:b64:creds', 'sendMessage');
+
+      expect(initSpy).toHaveBeenCalled();
+      expect(mockLogin).toHaveBeenCalledWith(
+        null,
+        null,
+        false,
+        'sealbox_x25519:b64:creds',
+        'sendMessage'
+      );
     });
   });
 

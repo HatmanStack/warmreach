@@ -92,8 +92,8 @@ export const ActivityTimeline: React.FC = () => {
             data-testid={`filter-${category}`}
             className={
               selectedCategory === category
-                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                : 'border-white/20 text-slate-300 hover:bg-white/10'
+                ? 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
+                : 'bg-slate-700 border-white/20 text-white hover:bg-white/10'
             }
           >
             {category}
@@ -174,8 +174,7 @@ export const ActivityTimeline: React.FC = () => {
             data-testid="load-more-button"
             onClick={() => fetchNextPage()}
             disabled={isFetchingNextPage}
-            variant="outline"
-            className="border-white/20 text-slate-300 hover:bg-white/10"
+            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white disabled:opacity-50"
           >
             {isFetchingNextPage ? (
               <>

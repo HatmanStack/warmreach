@@ -208,6 +208,40 @@ npm run lint:client
 npm run lint:backend
 ```
 
+## Documentation
+
+Lint the Markdown docs locally with markdownlint:
+
+```bash
+npm run lint:docs          # markdownlint over docs/**/*.md and *.md
+npm run lint:docs:links    # lychee link check — only if lychee is installed locally
+```
+
+Both checks are blocking gates in CI via `.github/workflows/docs-lint.yml` (one
+job runs markdownlint, the other runs lychee) — a PR with a Markdown-style error
+or a broken link fails CI. Locally, `lint:docs` covers the markdownlint half;
+link checking uses lychee, which ships as a standalone binary (not an npm
+package), so `lint:docs:links` runs it only when it is on your `PATH` and
+otherwise prints install instructions. The authoritative link check is the
+SHA-pinned `lycheeverse/lychee-action` in CI.
+
+Generate the API reference from source. typedoc covers the TypeScript components
+(`frontend/`, `client/`, `admin/`); mkdocstrings covers the Python Lambda
+shared-services layer. The output lands in `docs/api/` (gitignored — it is
+generated in CI, not committed). The `.github/workflows/docs-api.yml` workflow
+runs both generators on every relevant source change to prove they stay
+buildable:
+
+```bash
+npm run docs:api          # both TS and Python
+npm run docs:api:ts       # typedoc -> docs/api/ts/{frontend,client,admin}
+npm run docs:api:py       # mkdocstrings -> docs/api/py
+```
+
+The Python generator uses `uvx` (no local install needed). Some shared-service
+docstrings document parameters without type annotations; griffe emits warnings
+for those, which are non-fatal — backfilling the annotations is a future task.
+
 ## Working with Sync Overlays
 
 WarmReach Pro syncs one-way to the [community edition](https://github.com/HatmanStack/warmreach) via `.sync/sync.sh`. When modifying files, check whether they have a sync overlay:

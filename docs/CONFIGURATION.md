@@ -32,7 +32,7 @@ These values are typically populated after deploying the infrastructure with SAM
 | `VITE_COGNITO_IDENTITY_POOL_ID` | Cognito Identity Pool ID (optional) |
 | `VITE_WEBSOCKET_URL` | WebSocket API URL for real-time command dispatch |
 | `API_GATEWAY_BASE_URL` | API Gateway base URL (client backend, same as `VITE_API_GATEWAY_URL`) |
-| `DYNAMODB_TABLE` | DynamoDB table name for the client backend (SAM Output: `DynamoDBTableName`) |
+| `DYNAMODB_TABLE` | DynamoDB table name for the client backend (SAM Output: `DynamoDBTableName`). The Lambdas read the same table under the name `DYNAMODB_TABLE_NAME` — see the [Backend Lambda Environment](#backend-lambda-environment) note. |
 
 ### Frontend Feature Configuration
 
@@ -108,8 +108,8 @@ These variables are set by the SAM template at deploy time, not in `.env`.
 | `STACK_NAME` | CloudFormation stack name. Set by SAM template for admin-metrics Lambda. | |
 | `OPENAI_API_KEY_ARN` | SSM SecureString ARN for OpenAI API key. The LLM Lambda fetches the key at runtime via SSM `GetParameter` with decryption. | |
 | `OPENAI_TIMEOUT` | Timeout in seconds for OpenAI API calls. Used by `llm/lambda_function.py`. Code-only (read via `os.environ.get`), not SAM-managed. Transient failures retry up to 3 times with exponential backoff (2s, 4s) in `llm_service.py`. | `60` |
-| `BEDROCK_MODEL_ID` | AWS Bedrock model ID. SAM template default: `us.meta.llama3-2-90b-instruct-v1:0`. Code fallback in `llm_service.py`: `anthropic.claude-3-sonnet-20240229-v1:0` (used when env var is unset). The SAM-deployed value takes precedence at runtime. | `us.meta.llama3-2-90b-instruct-v1:0` |
-| `DYNAMODB_TABLE_NAME` | DynamoDB table name (SAM-managed, set by `!Ref ProfilesTable`) | |
+| `BEDROCK_MODEL_ID` | Currently unused by code. Set on the LLM Lambda from the SAM `BedrockModelId` parameter (default `us.anthropic.claude-sonnet-4-5-20250929-v1:0`), but Bedrock support was removed in the audit remediation and the `llm` Lambda is OpenAI-only — no code reads this env var. The parameter and env var are inert until Bedrock is re-added. | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
+| `DYNAMODB_TABLE_NAME` | DynamoDB table name (SAM-managed, set by `!Ref ProfilesTable`). Lambda-side name for the same table the client backend reads as `DYNAMODB_TABLE`; the names differ only because the two runtimes were wired independently. Both point at the `DynamoDBTableName` stack output. | |
 | `COMMAND_RATE_LIMIT_MAX` | Max commands per minute per user | `10` |
 | `DEV_MODE` | When `true`, enables test user ID fallback in edge-crud, ragstack-ops, and analytics-insights (bypasses JWT user extraction via `handler_utils.get_user_id`). Manually set if needed; not in template.yaml. Do not enable in production. | `false` |
 | `GITHUB_CLIENT_ID` | GitHub OAuth app client ID. Used by Electron GitHub OAuth flow for portfolio metrics. Optional — GitHub integration is disabled when unset. | |
@@ -156,7 +156,7 @@ Cognito identifiers live in three places and MUST match the User Pool deployed b
 2. `admin/.env` — read by the admin dashboard (`VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_USER_POOL_WEB_CLIENT_ID`). Frontend and admin share the same User Pool; the values are identical.
 3. `backend/template.yaml` — the authoritative source. SAM deploys the User Pool and emits `UserPoolId` / `UserPoolClientId` as stack outputs.
 
-After `sam deploy`, run `bash scripts/deploy/get-env-vars.sh <stack-name> --update-env` to sync the root `.env` from stack outputs, then copy the Cognito values into `admin/.env`. Admin authentication failures after a redeploy almost always trace to drift between these three locations.
+After `sam deploy`, run `bash scripts/deploy/get-env-vars.sh <stack-name> --update-env` to sync the SAM-output-backed vars in the root `.env`, then copy the Cognito values into `admin/.env`. The script writes only the eight vars listed under [Automated Configuration](#automated-configuration); it does not write `VITE_COGNITO_IDENTITY_POOL_ID` (no stack output exists for it), so set that manually if needed. Admin authentication failures after a redeploy almost always trace to drift between these three locations.
 
 This guide covers the most important variables. See `.env.example` for the complete list, including all interaction timing, retry, debugging, and feature toggle variables.
 
@@ -207,4 +207,15 @@ Fetch AWS outputs after a SAM deployment. The script queries CloudFormation outp
 bash scripts/deploy/get-env-vars.sh <stack-name> --update-env
 ```
 
-This updates your root `.env` file with API Gateway URLs and Cognito IDs.
+`--update-env` writes exactly these eight variables to the root `.env` from stack outputs (and `aws configure get region`):
+
+1. `VITE_API_GATEWAY_URL` (SAM Output: `ApiUrl`)
+1. `VITE_AWS_REGION` (from `aws configure get region`)
+1. `VITE_COGNITO_USER_POOL_ID` (SAM Output: `UserPoolId`)
+1. `VITE_COGNITO_USER_POOL_WEB_CLIENT_ID` (SAM Output: `UserPoolClientId`)
+1. `VITE_WEBSOCKET_URL` (SAM Output: `WebSocketApiUrl`)
+1. `API_GATEWAY_BASE_URL` (SAM Output: `ApiUrl`)
+1. `AWS_REGION` (from `aws configure get region`)
+1. `DYNAMODB_TABLE` (SAM Output: `DynamoDBTableName`)
+
+It does NOT write `VITE_COGNITO_IDENTITY_POOL_ID` (no stack output exists for it). RAGStack credentials (`RAGSTACK_GRAPHQL_ENDPOINT`, `RAGSTACK_API_KEY`) are populated separately by `deploy-ragstack.js`. Set any remaining `.env` values manually by comparing against `.env.example`.

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { CognitoAuthService, type CognitoUserData } from '../services/cognitoService';
 import { isCognitoConfigured } from '@/config/appConfig';
 import {
@@ -121,7 +121,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(false);
   };
 
-  const getToken = async (): Promise<string | null> => {
+  // Stable reference so consumers using getToken in effect deps (e.g.
+  // WebSocketContext) don't tear down + reconnect on every AuthProvider
+  // render. The user dep below covers the only meaningful identity flip
+  // for the mock-auth branch.
+  const getToken = useCallback(async (): Promise<string | null> => {
     if (isCognitoConfigured) {
       try {
         return await CognitoAuthService.getCurrentUserToken();
@@ -133,7 +137,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // For mock auth, return a fake token or null
       return user ? 'mock-jwt-token' : null;
     }
-  };
+  }, [user]);
 
   const signIn = async (email: string, password: string) => {
     // Validate email format
@@ -243,9 +247,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (user) {
       logger.info('User signing out', { user: securityUtils.maskUserForLogging(user) });
     }
-
-    // Clear JWT token from session storage
-    sessionStorage.removeItem('jwt_token');
 
     // Tell the local desktop agent (if running) to drop its stored
     // refresh token so it stops connecting as this user. Best-effort —

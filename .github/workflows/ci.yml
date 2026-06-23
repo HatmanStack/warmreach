@@ -68,6 +68,9 @@ jobs:
       - name: Install test dependencies
         working-directory: ./tests/backend
         run: uv pip install -r requirements-test.lock --system
+      - name: Run mypy type check
+        working-directory: ./backend
+        run: python -m mypy -p shared_services
       - name: Backend tests
         working-directory: ./tests/backend
         run: python -m pytest unit/ -v --tb=short

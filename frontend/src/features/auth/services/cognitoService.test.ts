@@ -9,6 +9,7 @@ const {
   mockGetUserAttributes,
   mockCompleteNewPasswordChallenge,
   mockSignOut,
+  mockGlobalSignOut,
   mockGetSession,
 } = vi.hoisted(() => ({
   mockSignUp: vi.fn(),
@@ -17,6 +18,7 @@ const {
   mockGetUserAttributes: vi.fn(),
   mockCompleteNewPasswordChallenge: vi.fn(),
   mockSignOut: vi.fn(),
+  mockGlobalSignOut: vi.fn(),
   mockGetSession: vi.fn(),
 }));
 
@@ -31,6 +33,7 @@ vi.mock('amazon-cognito-identity-js', () => {
       getUserAttributes = mockGetUserAttributes;
       completeNewPasswordChallenge = mockCompleteNewPasswordChallenge;
       signOut = mockSignOut;
+      globalSignOut = mockGlobalSignOut;
       getSession = mockGetSession;
     },
     AuthenticationDetails: class {},
@@ -227,20 +230,69 @@ describe('CognitoAuthService', () => {
   });
 
   describe('signOut', () => {
-    it('should call signOut on current user', async () => {
-      const mockUser = { signOut: mockSignOut };
-      mockGetCurrentUser.mockReturnValue(mockUser);
-
-      await CognitoAuthService.signOut();
-
-      expect(mockSignOut).toHaveBeenCalled();
+    beforeEach(() => {
+      localStorage.clear();
     });
 
-    it('should handle no current user gracefully', async () => {
-      mockGetCurrentUser.mockReturnValue(null);
+    it('invalidates the refresh token via globalSignOut and purges Cognito storage', async () => {
+      // Seed the SDK's localStorage keys plus an unrelated key.
+      localStorage.setItem('CognitoIdentityServiceProvider.test-client-id.user-123.idToken', 'id');
+      localStorage.setItem(
+        'CognitoIdentityServiceProvider.test-client-id.user-123.refreshToken',
+        'refresh'
+      );
+      localStorage.setItem(
+        'CognitoIdentityServiceProvider.test-client-id.LastAuthUser',
+        'user-123'
+      );
+      localStorage.setItem('unrelated_key', 'keep-me');
+
+      const mockUser = { signOut: mockSignOut, globalSignOut: mockGlobalSignOut };
+      mockGetCurrentUser.mockReturnValue(mockUser);
+      mockGlobalSignOut.mockImplementation((callbacks: { onSuccess: () => void }) => {
+        callbacks.onSuccess();
+      });
 
       await CognitoAuthService.signOut();
-      // Should not throw
+
+      expect(mockGlobalSignOut).toHaveBeenCalled();
+      // All Cognito keys removed, unrelated key preserved.
+      const remaining = Object.keys(localStorage);
+      expect(remaining.some((k) => k.startsWith('CognitoIdentityServiceProvider.'))).toBe(false);
+      expect(localStorage.getItem('unrelated_key')).toBe('keep-me');
+    });
+
+    it('falls back to local signOut and still resolves when globalSignOut fails', async () => {
+      localStorage.setItem('CognitoIdentityServiceProvider.test-client-id.user-123.idToken', 'id');
+
+      const mockUser = { signOut: mockSignOut, globalSignOut: mockGlobalSignOut };
+      mockGetCurrentUser.mockReturnValue(mockUser);
+      mockGlobalSignOut.mockImplementation((callbacks: { onFailure: (e: Error) => void }) => {
+        callbacks.onFailure(new Error('session already expired'));
+      });
+
+      // Must resolve (not reject) — logout always completes locally.
+      await expect(CognitoAuthService.signOut()).resolves.toBeUndefined();
+
+      expect(mockSignOut).toHaveBeenCalled();
+      expect(
+        Object.keys(localStorage).some((k) => k.startsWith('CognitoIdentityServiceProvider.'))
+      ).toBe(false);
+    });
+
+    it('purges stale Cognito keys even when there is no current user', async () => {
+      localStorage.setItem(
+        'CognitoIdentityServiceProvider.test-client-id.user-123.idToken',
+        'stale'
+      );
+      mockGetCurrentUser.mockReturnValue(null);
+
+      await expect(CognitoAuthService.signOut()).resolves.toBeUndefined();
+
+      expect(mockGlobalSignOut).not.toHaveBeenCalled();
+      expect(
+        Object.keys(localStorage).some((k) => k.startsWith('CognitoIdentityServiceProvider.'))
+      ).toBe(false);
     });
   });
 

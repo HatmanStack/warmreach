@@ -145,7 +145,8 @@ app.post(
     if (typeof cognitoClientId !== 'string' || !cognitoClientId) {
       return res.status(400).json({ error: 'cognitoClientId required' });
     }
-    const sync = (globalThis as { warmreachAuthSync?: (p: unknown) => void }).warmreachAuthSync;
+    // Type comes from src/global.d.ts so callers see the real payload shape.
+    const sync = globalThis.warmreachAuthSync;
     if (typeof sync !== 'function') {
       return res.status(503).json({ error: 'Auth bridge not initialised' });
     }
@@ -162,7 +163,7 @@ app.post(
   '/auth/clear',
   createRateLimiter({ windowMs: 60000, max: 10, name: 'auth-clear' }),
   (_req: Request, res: Response) => {
-    const clear = (globalThis as { warmreachAuthClear?: () => void }).warmreachAuthClear;
+    const clear = globalThis.warmreachAuthClear;
     if (typeof clear !== 'function') {
       return res.status(503).json({ error: 'Auth bridge not initialised' });
     }

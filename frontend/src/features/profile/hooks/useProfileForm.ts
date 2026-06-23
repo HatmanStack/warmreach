@@ -41,18 +41,39 @@ export function useProfileForm(userProfile: Record<string, unknown> | null) {
     // state via ||.
     try {
       const data = userProfile;
-      if (!data) return;
-      const firstName = ((data.first_name as string) || '').trim();
-      const lastName = ((data.last_name as string) || '').trim();
+      // When the profile context clears (sign-out, account switch),
+      // wipe local form state too — otherwise the previous user's
+      // values would linger in the inputs.
+      if (!data) {
+        setProfile(DEFAULT_PROFILE);
+        return;
+      }
+      // Defensive coercion: type assertions don't run at runtime, so a
+      // non-string value coming from the API would otherwise propagate
+      // and break .trim() / string concat downstream. typeof guards
+      // ensure we either get a string or an empty string.
+      const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
+      const firstName = asString(data.first_name).trim();
+      const lastName = asString(data.last_name).trim();
       const derivedName = [firstName, lastName].filter(Boolean).join(' ').trim();
+      const interests: string[] = Array.isArray(data.interests)
+        ? (data.interests as unknown[]).map((i) => (typeof i === 'string' ? i : String(i)))
+        : [];
+      // ?? (nullish) for the title fallback so an intentionally empty
+      // headline isn't silently overwritten by current_position. With
+      // ||, '' would fall through; with ??, only undefined/null does.
+      const title =
+        data.headline !== undefined && data.headline !== null
+          ? asString(data.headline)
+          : asString(data.current_position);
       setProfile({
         name: derivedName,
-        title: (data.headline as string) ?? (data.current_position as string) ?? '',
-        company: (data.company as string) ?? '',
-        location: (data.location as string) ?? '',
-        bio: (data.summary as string) ?? '',
-        interests: Array.isArray(data.interests) ? (data.interests as string[]) : [],
-        linkedinUrl: (data.profile_url as string) ?? '',
+        title,
+        company: asString(data.company),
+        location: asString(data.location),
+        bio: asString(data.summary),
+        interests,
+        linkedinUrl: asString(data.profile_url),
       });
     } catch {
       // Silent fail; do not block profile page if profile isn't initialized yet

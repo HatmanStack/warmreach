@@ -8,6 +8,7 @@
  */
 
 import type { Page, ElementHandle } from 'puppeteer';
+import type { PuppeteerService } from '../../automation/services/puppeteerService.js';
 
 export interface BrowserSessionManagerContract {
   getInstance(opts: { reinitializeIfUnhealthy: boolean }): Promise<unknown>;
@@ -73,6 +74,20 @@ export function asBrowserSessionManagerContract(
  */
 export function unsafeAsOpsContext<T extends object, Context>(service: T): Context {
   return service as unknown as Context;
+}
+
+/**
+ * Adapt the browser-session instance returned by
+ * ``BrowserSessionManager.getInstance`` (typed ``unknown`` through the
+ * ``BrowserSessionManagerContract`` boundary) to the concrete
+ * ``PuppeteerService`` that ``LinkedInService`` accepts. At runtime
+ * ``getInstance`` always resolves a ``PuppeteerService`` (see
+ * ``BrowserSessionManager._initialize``); this names that single coercion so
+ * the auth lifecycle does not need an inline ``as`` cast at the
+ * ``LinkedInService`` constructor boundary.
+ */
+export function asPuppeteerServiceContract(session: unknown): PuppeteerService {
+  return session as PuppeteerService;
 }
 
 /**

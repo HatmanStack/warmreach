@@ -45,7 +45,7 @@ Key parameter prompts:
 | `ProductionOrigins` | `https://app.warmreach.com` | Comma-separated allowed origins |
 | `ProductionOrigin` | `https://app.warmreach.com` | Primary origin for S3 CORS |
 | `OpenAIApiKey` | your key | For LLM Lambda |
-| `BedrockModelId` | `us.meta.llama3-2-90b-instruct-v1:0` | Default works |
+| `BedrockModelId` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Inert — set as an env var but read by no code (the `llm` Lambda is OpenAI-only); accept the default |
 | `DeployRAGStack` | `true` or `false` | Nested RAGStack or use external |
 | `AdminEmail` | your email | Required if nested RAGStack |
 

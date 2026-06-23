@@ -44,6 +44,19 @@ export function useMessageGeneration({
   const historyRef = useRef(history);
   historyRef.current = history;
 
+  // Track the post-completion reset timeout so it can be cleared on unmount;
+  // otherwise it fires after the component is gone and updates unmounted state.
+  const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimeoutRef.current) {
+        clearTimeout(resetTimeoutRef.current);
+        resetTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   // Fetch message history when modal connection changes
   useEffect(() => {
     const connection = modal.selectedConnection;
@@ -285,7 +298,11 @@ export function useMessageGeneration({
       );
       workflow.complete();
 
-      setTimeout(() => {
+      if (resetTimeoutRef.current) {
+        clearTimeout(resetTimeoutRef.current);
+      }
+      resetTimeoutRef.current = setTimeout(() => {
+        resetTimeoutRef.current = null;
         workflow.reset();
         setGeneratedMessages(new Map());
         progressTracker.resetProgress();

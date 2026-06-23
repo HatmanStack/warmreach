@@ -1,4 +1,6 @@
-// Reviewed against pro 2026-04-28: source-side TS-correctness fixes do not affect community stub semantics.
+// Reviewed against pro 2026-06-20: pro-side boundary normalization (removing the
+// `as unknown as` casts) does not affect community stub semantics — the stub
+// returns the same null/no-op shape.
 // Community edition stub — message intelligence is available in WarmReach Pro.
 export function useMessageIntelligence() {
   return {

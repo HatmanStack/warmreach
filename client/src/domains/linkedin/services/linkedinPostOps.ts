@@ -42,7 +42,7 @@ export interface PostOpsContext {
   clearAndTypeText(page: Page, element: ElementHandle, text: string): Promise<void>;
   typeWithHumanPattern(text: string, element?: ElementHandle | null): Promise<void>;
   checkSuspiciousActivity(): Promise<unknown>;
-  _enforceRateLimit(): void;
+  _enforceRateLimit(): Promise<void>;
   _applyControlPlaneRateLimits(operation: string): Promise<void>;
   _reportInteraction(operation: string): void;
   _paced<T>(minMs: number, maxMs: number, fn: () => Promise<T>): Promise<T>;
@@ -103,7 +103,7 @@ export async function createPost(
   };
 
   logger.info(`Creating LinkedIn post by user ${userId}`, context);
-  service._enforceRateLimit();
+  await service._enforceRateLimit();
   await service._applyControlPlaneRateLimits('createPost');
 
   await service.checkSuspiciousActivity();
@@ -629,7 +629,7 @@ async function _executePostCreationWorkflowInternal(
   };
 
   logger.info('Executing complete LinkedIn post creation workflow', context);
-  service._enforceRateLimit();
+  await service._enforceRateLimit();
 
   await service._applyControlPlaneRateLimits('executePostCreationWorkflow');
 

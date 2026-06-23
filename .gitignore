@@ -66,3 +66,6 @@ docs/*.local.md
 # IDE Integration
 GEMINI.md
 frontend/coverage.json
+
+# Generated API docs (typedoc + mkdocstrings) — built in CI, not committed
+docs/api/

@@ -1,7 +1,7 @@
 interface SearchStateInput {
-  companyName: string;
-  companyRole: string;
-  companyLocation: string;
+  companyName?: string;
+  companyRole?: string;
+  companyLocation?: string;
   searchName: string | null;
   searchPassword: string | null;
   credentialsCiphertext?: string;
@@ -13,6 +13,29 @@ interface SearchStateInput {
   extractedGeoNumber?: string | null;
   healPhase?: string | null;
   healReason?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * Resolved search state after {@link SearchStateManager.buildInitialState}
+ * applies its defaults. Consumers (the search controller) read these fields
+ * with compile-time checking instead of an untyped `Record<string, any>`.
+ */
+export interface SearchState {
+  companyName?: string;
+  companyRole?: string;
+  companyLocation?: string;
+  searchName: string | null;
+  searchPassword: string | null;
+  credentialsCiphertext?: string;
+  jwtToken: string;
+  resumeIndex: number;
+  recursionCount: number;
+  lastPartialLinksFile: string | null;
+  extractedCompanyNumber: string | null;
+  extractedGeoNumber: string | null;
+  healPhase: string | null;
+  healReason: string | null;
   [key: string]: unknown;
 }
 
@@ -33,7 +56,7 @@ export class SearchStateManager {
     healPhase = null,
     healReason = null,
     ...opts
-  }: SearchStateInput): Record<string, unknown> {
+  }: SearchStateInput): SearchState {
     return {
       companyName,
       companyRole,

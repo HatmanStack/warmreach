@@ -20,7 +20,7 @@ import {
 /**
  * Profile initialization state
  */
-interface ProfileInitState {
+export interface ProfileInitState {
   requestId?: string;
   recursionCount?: number;
   healPhase?: string;
@@ -183,7 +183,9 @@ interface DynamoDBService {
   ): Promise<unknown>;
   updateMessages(profileId: string, messages: unknown[]): Promise<unknown>;
   getProfileDetails(profileId: string): Promise<unknown>;
-  markBadContact(profileId: string): Promise<void>;
+  // Concrete DynamoDBService returns the delete result; the service only awaits
+  // completion, so accept either to stay structurally compatible.
+  markBadContact(profileId: string): Promise<void | boolean>;
   createProfileMetadata?(profileId: string, metadata: Record<string, string>): Promise<unknown>;
   canScrapeToday?(): Promise<boolean>;
   incrementDailyScrapeCount?(): Promise<unknown>;

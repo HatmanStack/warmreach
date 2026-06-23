@@ -73,6 +73,7 @@ class DynamoDBApiService(BaseService):
             'unpublished_post_content': item.get('unpublished_post_content', ''),
             'ai_generated_ideas': item.get('ai_generated_ideas'),
             'ai_generated_research': item.get('ai_generated_research'),
+            'ai_synthesized_post': item.get('ai_synthesized_post'),
             'ai_generated_post_hook': item.get('ai_generated_post_hook', ''),
             'ai_generated_post_reasoning': item.get('ai_generated_post_reasoning', ''),
             'createdAt': item.get('createdAt', item.get('created_at', '')),
@@ -110,6 +111,7 @@ class DynamoDBApiService(BaseService):
             # on-device in the desktop client only (Sealbox-encrypted).
             'ai_generated_ideas',
             'ai_generated_research',
+            'ai_synthesized_post',
             'ai_generated_post_hook',
             'ai_generated_post_reasoning',
             'timezone',
@@ -271,6 +273,7 @@ class DynamoDBApiService(BaseService):
             'unpublished_post_content': lambda v: isinstance(v, str) and len(v) <= 3000,
             'ai_generated_ideas': lambda v: isinstance(v, (str, list, dict)),
             'ai_generated_research': lambda v: isinstance(v, (str, list, dict)),
+            'ai_synthesized_post': lambda v: isinstance(v, str) and len(v) <= 10000,
             'ai_generated_post_hook': lambda v: isinstance(v, str) and len(v) <= 500,
             'ai_generated_post_reasoning': lambda v: isinstance(v, str) and len(v) <= 2000,
             'timezone': lambda v: isinstance(v, str) and len(v) <= 50,

@@ -1,0 +1,28 @@
+site_name: WarmReach Backend API Reference
+site_description: Auto-generated reference for the Python Lambda shared-services layer.
+docs_dir: docs-api
+site_dir: ../docs/api/py
+use_directory_urls: false
+
+theme:
+  name: material
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - docs-api/gen_api_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - lambdas/shared/python
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            members_order: source
+            filters:
+              - "!^_"

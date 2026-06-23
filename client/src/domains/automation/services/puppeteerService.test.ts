@@ -188,6 +188,39 @@ describe('PuppeteerService', () => {
     });
   });
 
+  describe('orphaned Chromium cleanup on failed init (CRITICAL #2)', () => {
+    it('closes the launched browser and resets state when a post-launch step fails', async () => {
+      vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+        throw new Error('No profile');
+      });
+
+      const initError = new Error('newPage failed');
+      mockBrowser.newPage.mockRejectedValueOnce(initError);
+
+      await expect(service.initialize()).rejects.toBe(initError);
+
+      // The launched browser must be closed (not orphaned) and state reset.
+      expect(mockBrowser.close).toHaveBeenCalled();
+      expect(service.getBrowser()).toBeNull();
+      expect(service.getPage()).toBeNull();
+    });
+
+    it('propagates the original init error, not a cleanup error', async () => {
+      vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+        throw new Error('No profile');
+      });
+
+      const initError = new Error('setViewport failed');
+      mockPage.setViewport.mockRejectedValueOnce(initError);
+      // close() swallows its own errors, but make it throw to prove the original
+      // error still surfaces to the caller.
+      mockBrowser.close.mockRejectedValueOnce(new Error('cleanup blew up'));
+
+      await expect(service.initialize()).rejects.toBe(initError);
+      expect(mockBrowser.close).toHaveBeenCalled();
+    });
+  });
+
   describe('launch timeout (ADR-A)', () => {
     it('passes a numeric timeout to puppeteer.launch', async () => {
       vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {

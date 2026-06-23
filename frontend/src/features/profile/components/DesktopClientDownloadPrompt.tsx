@@ -109,7 +109,12 @@ export function DesktopClientDownloadPrompt({
                 data[p] ? (
                   <DownloadButton key={p} platform={p} url={data[p]!} />
                 ) : (
-                  <Button key={p} disabled variant="outline" className="justify-start">
+                  <Button
+                    key={p}
+                    disabled
+                    variant="outline"
+                    className="justify-start border-white/20 text-white hover:bg-white/10"
+                  >
                     {iconFor(p)}
                     <span className="ml-2">{PLATFORM_LABEL[p]} (coming soon)</span>
                   </Button>
@@ -153,7 +158,11 @@ function DownloadButton({
     <Button
       asChild
       variant={primary ? 'default' : 'outline'}
-      className={primary ? 'w-full' : 'justify-start'}
+      className={
+        primary
+          ? 'w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
+          : 'justify-start border-white/20 text-white hover:bg-white/10'
+      }
     >
       <a href={url} download>
         {primary ? <Download className="h-4 w-4 mr-2" /> : iconFor(platform)}

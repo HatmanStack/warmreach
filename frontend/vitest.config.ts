@@ -16,6 +16,8 @@ export default defineConfig({
       // Community-edition floors. Pro has more tests and runs higher floors;
       // do not copy pro numbers here without re-measuring community coverage.
       // Set at (current - ~2) to catch regressions without false-failing on drift.
+      // Pro realigned its statements floor to 74 after remediation; community
+      // already sits at 74 here, so re-measure community coverage before raising.
       thresholds: {
         lines: 74,
         branches: 65,

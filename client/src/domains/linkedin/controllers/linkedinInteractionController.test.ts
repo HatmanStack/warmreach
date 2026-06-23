@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LinkedInInteractionController } from './linkedinInteractionController.js';
 import { LinkedInInteractionService } from '../services/linkedinInteractionService.js';
-import { LinkedInService } from '../services/linkedinService.js';
 import { LinkedInErrorHandler } from '../utils/linkedinErrorHandler.js';
 import { LinkedInAuditLogger } from '../utils/linkedinAuditLogger.js';
 import { linkedInInteractionQueue } from '../../automation/utils/interactionQueue.js';
@@ -25,6 +24,7 @@ vi.mock('../services/linkedinInteractionService.js', () => ({
         .mockResolvedValue({ connectionRequestId: 'conn-123', status: 'sent' }),
       isSessionActive: vi.fn().mockResolvedValue(true),
       initializeBrowserSession: vi.fn().mockResolvedValue({}),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
       getSessionStatus: vi.fn().mockResolvedValue({
         isActive: true,
         isHealthy: true,
@@ -35,14 +35,6 @@ vi.mock('../services/linkedinInteractionService.js', () => ({
         memoryUsage: { rss: 100, heapUsed: 50, heapTotal: 80, external: 10 },
         currentUrl: 'https://linkedin.com',
       }),
-    };
-  }),
-}));
-
-vi.mock('../services/linkedinService.js', () => ({
-  LinkedInService: vi.fn().mockImplementation(function () {
-    return {
-      login: vi.fn().mockResolvedValue(true),
     };
   }),
 }));
@@ -110,6 +102,7 @@ describe('LinkedInInteractionController', () => {
           .mockResolvedValue({ requestId: 'conn-123', status: 'sent' }),
         isSessionActive: vi.fn().mockResolvedValue(true),
         initializeBrowserSession: vi.fn().mockResolvedValue({}),
+        ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
         getSessionStatus: vi.fn().mockResolvedValue({
           isActive: true,
           isHealthy: true,
@@ -120,12 +113,6 @@ describe('LinkedInInteractionController', () => {
           memoryUsage: { rss: 100, heapUsed: 50, heapTotal: 80, external: 10 },
           currentUrl: 'https://linkedin.com',
         }),
-      };
-    });
-
-    LinkedInService.mockImplementation(function () {
-      return {
-        login: vi.fn().mockResolvedValue(true),
       };
     });
 
@@ -168,20 +155,28 @@ describe('LinkedInInteractionController', () => {
       expect(LinkedInAuditLogger.logInteractionFailure).toHaveBeenCalled();
     });
 
-    it('should handle login if session is not active', async () => {
-      // Create a specific mock instance for this test
+    it('delegates auth lifecycle to the service (HIGH #19)', async () => {
+      // Auth/session lifecycle now lives in the service: the controller calls
+      // the typed ensureAuthenticated() method instead of instantiating
+      // LinkedInService and casting at the boundary itself.
       const mockSendMessage = vi.fn().mockResolvedValue({ messageId: 'msg-123' });
+      const mockEnsureAuthenticated = vi.fn().mockResolvedValue(undefined);
       LinkedInInteractionService.mockImplementation(function () {
         return {
-          isSessionActive: vi.fn().mockResolvedValue(false),
-          initializeBrowserSession: vi.fn().mockResolvedValue({}),
+          ensureAuthenticated: mockEnsureAuthenticated,
           sendMessage: mockSendMessage,
         };
       });
 
+      mockReq.body.linkedinCredentialsCiphertext = 'sealbox-sentinel-ciphertext';
+
       await controller.sendMessage(mockReq, mockRes);
 
-      expect(LinkedInService).toHaveBeenCalled();
+      // Credentials from the request must be forwarded to the service, not dropped.
+      expect(mockEnsureAuthenticated).toHaveBeenCalledWith(
+        'sealbox-sentinel-ciphertext',
+        'sendMessage'
+      );
       expect(mockSendMessage).toHaveBeenCalled();
     });
   });

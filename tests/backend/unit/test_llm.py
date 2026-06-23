@@ -217,9 +217,18 @@ def test_non_metered_op_skips_usage_report(lambda_context, llm_module, mock_serv
     mock_services['quota'].report_usage.assert_not_called()
 
 
-def test_usage_report_failure_still_succeeds(lambda_context, llm_module, mock_services):
-    """When quota reporting fails, operations should still succeed (graceful degradation)."""
-    mock_services['quota'].report_usage.side_effect = Exception('DDB unavailable')
+def test_reserve_usage_infra_failure_fails_closed(lambda_context, llm_module, mock_services):
+    """When quota metering infra fails (DynamoDB ClientError), the request is denied
+    with a retryable 503 rather than allowed unmetered (fail closed — ADR-004).
+
+    In the community edition reserve_usage is a no-op stub, so this branch is
+    effectively unreachable in practice; the test pins the handler posture.
+    """
+    from botocore.exceptions import ClientError
+
+    mock_services['quota'].reserve_usage.side_effect = ClientError(
+        {'Error': {'Code': 'InternalServerError', 'Message': 'DDB unavailable'}}, 'UpdateItem'
+    )
     event = {
         'body': json.dumps({
             'operation': 'generate_message',
@@ -238,7 +247,48 @@ def test_usage_report_failure_still_succeeds(lambda_context, llm_module, mock_se
         response = llm_module.lambda_handler(event, lambda_context)
     finally:
         llm_module._llm_service = orig_svc
-    assert response['statusCode'] == 200
+    assert response['statusCode'] == 503
+    mock_svc.generate_message.assert_not_called()
+
+
+def test_feature_gate_programming_error_surfaces_500(lambda_context, llm_module, mock_services):
+    """A programming error (not an infra fault) in the feature-gate path must surface
+    as a 500, not be masked as a 503 'feature check failed' (narrowed except — ADR-004)."""
+    mock_services['feature_flags'].get_feature_flags.side_effect = KeyError('bug')
+    event = {
+        'body': json.dumps({
+            'operation': 'research_selected_ideas',
+            'user_profile': {},
+            'selected_ideas': [],
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    response = llm_module.lambda_handler(event, lambda_context)
+    assert response['statusCode'] == 500
+
+
+def test_feature_gate_infra_failure_fails_closed_503(lambda_context, llm_module, mock_services):
+    """A genuine infra fault (DynamoDB ClientError) in the feature-gate path still
+    fails closed with a 503 'feature availability check failed'."""
+    from botocore.exceptions import ClientError
+
+    mock_services['feature_flags'].get_feature_flags.side_effect = ClientError(
+        {'Error': {'Code': 'InternalServerError', 'Message': 'DDB unavailable'}}, 'GetItem'
+    )
+    event = {
+        'body': json.dumps({
+            'operation': 'research_selected_ideas',
+            'user_profile': {},
+            'selected_ideas': [],
+        }),
+        'requestContext': {
+            'authorizer': {'claims': {'sub': 'test-user'}}
+        },
+    }
+    response = llm_module.lambda_handler(event, lambda_context)
+    assert response['statusCode'] == 503
 
 
 # ---- analyze_message_patterns tests ----

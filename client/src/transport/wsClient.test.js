@@ -28,6 +28,19 @@ vi.mock('ws', () => {
       this.readyState = MockWebSocket.CLOSED;
     }
 
+    terminate() {
+      this._terminated = true;
+      this.readyState = MockWebSocket.CLOSED;
+      // The real `ws` client fires 'close' after terminate(); mirror that so
+      // the existing reconnect path runs.
+      this._emit('close', 1006, Buffer.from('terminated'));
+    }
+
+    removeAllListeners() {
+      this._removeAllListenersCalled = true;
+      this._listeners = {};
+    }
+
     // Test helpers
     _emit(event, ...args) {
       (this._listeners[event] || []).forEach((h) => h(...args));
@@ -167,20 +180,27 @@ describe('WsClient', () => {
     });
 
     it('uses exponential backoff for retries', () => {
-      client.connect();
-      mockWsInstances[0]._simulateOpen();
-      mockWsInstances[0]._simulateClose(1006);
+      // Pin jitter to its maximum so the equal-jitter delay equals the full
+      // capped base, keeping the backoff-growth assertion deterministic.
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(1);
+      try {
+        client.connect();
+        mockWsInstances[0]._simulateOpen();
+        mockWsInstances[0]._simulateClose(1006);
 
-      // First retry at 1s
-      vi.advanceTimersByTime(1000);
-      expect(mockWsInstances).toHaveLength(2);
+        // First retry at 1s
+        vi.advanceTimersByTime(1000);
+        expect(mockWsInstances).toHaveLength(2);
 
-      mockWsInstances[1]._simulateClose(1006);
-      // Second retry at 2s
-      vi.advanceTimersByTime(1999);
-      expect(mockWsInstances).toHaveLength(2);
-      vi.advanceTimersByTime(1);
-      expect(mockWsInstances).toHaveLength(3);
+        mockWsInstances[1]._simulateClose(1006);
+        // Second retry at 2s
+        vi.advanceTimersByTime(1999);
+        expect(mockWsInstances).toHaveLength(2);
+        vi.advanceTimersByTime(1);
+        expect(mockWsInstances).toHaveLength(3);
+      } finally {
+        randomSpy.mockRestore();
+      }
     });
 
     it('does not reconnect after close() is called', () => {
@@ -233,6 +253,85 @@ describe('WsClient', () => {
       vi.advanceTimersByTime(60000);
       // No heartbeats sent after close
       expect(mockWsInstances[0]._sentData).toBeUndefined();
+    });
+  });
+
+  describe('liveness detection (HIGH #7)', () => {
+    it('terminates a stale socket with no inbound frames and reconnects', () => {
+      client.connect();
+      mockWsInstances[0]._simulateOpen();
+
+      // No inbound frames. Advance well past the liveness deadline (3 missed
+      // 30s beats = 90s). The heartbeat interval fires and detects the dead
+      // socket, terminating it and routing through the existing reconnect path.
+      vi.advanceTimersByTime(120000);
+
+      expect(mockWsInstances[0]._terminated).toBe(true);
+      expect(onDisconnect).toHaveBeenCalled();
+
+      // A reconnect was scheduled (advance past a jittered retry up to MAX).
+      vi.advanceTimersByTime(30000);
+      expect(mockWsInstances.length).toBeGreaterThan(1);
+    });
+
+    it('does not terminate when an inbound heartbeat echo refreshes liveness', () => {
+      client.connect();
+      mockWsInstances[0]._simulateOpen();
+
+      // Just before the deadline, deliver a heartbeat echo (counts as liveness
+      // even though it is ignored as a message).
+      vi.advanceTimersByTime(60000);
+      mockWsInstances[0]._simulateMessage({ action: 'heartbeat', echo: true });
+      // Another interval — still alive because the echo refreshed liveness.
+      vi.advanceTimersByTime(30000);
+
+      expect(mockWsInstances[0]._terminated).toBeFalsy();
+      expect(onDisconnect).not.toHaveBeenCalled();
+    });
+
+    it('does not terminate when a normal inbound message refreshes liveness', () => {
+      client.connect();
+      mockWsInstances[0]._simulateOpen();
+
+      vi.advanceTimersByTime(60000);
+      mockWsInstances[0]._simulateMessage({ action: 'execute', commandId: 'c1' });
+      vi.advanceTimersByTime(30000);
+
+      expect(mockWsInstances[0]._terminated).toBeFalsy();
+      expect(onDisconnect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reconnect jitter + listener cleanup (HIGH #8)', () => {
+    it('applies jitter from Math.random to the reconnect delay', () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0); // jitter -> minimum
+      try {
+        client.connect();
+        mockWsInstances[0]._simulateOpen();
+        mockWsInstances[0]._simulateClose(1006);
+
+        // With Math.random() === 0 and equal-jitter, the delay is half the
+        // capped base (1000ms) = 500ms, NOT the full 1000ms. Advancing 500ms
+        // should trigger the reconnect; without jitter it would need 1000ms.
+        vi.advanceTimersByTime(500);
+        expect(mockWsInstances).toHaveLength(2);
+        expect(randomSpy).toHaveBeenCalled();
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('removes listeners from the prior socket on reconnect', () => {
+      client.connect();
+      const first = mockWsInstances[0];
+      first._simulateOpen();
+      first._simulateClose(1006);
+
+      vi.advanceTimersByTime(30000);
+      expect(mockWsInstances).toHaveLength(2);
+      // The prior socket had its listeners detached so late events cannot
+      // reach the new connection state.
+      expect(first._removeAllListenersCalled).toBe(true);
     });
   });
 

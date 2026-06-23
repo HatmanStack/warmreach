@@ -2,9 +2,7 @@
 
 import json
 import logging
-import os
 import re
-import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,6 +10,16 @@ from typing import Any
 # Shared layer imports (from /opt/python via Lambda Layer)
 import openai
 from shared_services.base_service import BaseService
+
+# Retry configuration + wrapper for transient OpenAI errors. The canonical
+# implementation lives in the shared layer so it is reused everywhere; re-exported
+# at module level (MAX_RETRIES / RETRY_BACKOFF_BASE_S / _retry_openai_call) for
+# parity with the pro edition.
+from shared_services.openai_retry import (  # noqa: F401 — re-exported for parity
+    MAX_RETRIES,
+    RETRY_BACKOFF_BASE_S,
+    retry_openai_call as _retry_openai_call,
+)
 
 try:
     from prompts import (
@@ -39,41 +47,6 @@ logger = logging.getLogger(__name__)
 # Placeholder name used for demo/test profiles that should be skipped
 PROFILE_PLACEHOLDER_NAME = 'Tom, Dick, And Harry'
 
-# Retry configuration for transient OpenAI errors (community edition parity).
-MAX_RETRIES = 3
-RETRY_BACKOFF_BASE_S = 2.0
-_RETRYABLE_OPENAI_ERRORS: tuple[type[Exception], ...] = (
-    openai.APIConnectionError,
-    openai.APITimeoutError,
-    openai.RateLimitError,
-    openai.InternalServerError,
-)
-
-
-def _retry_openai_call(fn, *, max_retries: int = MAX_RETRIES, sleep=None):
-    """Invoke ``fn`` retrying transient OpenAI errors with exponential backoff."""
-    _sleep = sleep if sleep is not None else time.sleep
-    last_exc: Exception | None = None
-    for attempt in range(max_retries):
-        try:
-            return fn()
-        except _RETRYABLE_OPENAI_ERRORS as e:
-            last_exc = e
-            if attempt == max_retries - 1:
-                raise
-            backoff = RETRY_BACKOFF_BASE_S * (2**attempt)
-            logger.warning(
-                'Transient OpenAI error on attempt %s/%s: %s; retrying in %.1fs',
-                attempt + 1,
-                max_retries,
-                type(e).__name__,
-                backoff,
-            )
-            _sleep(backoff)
-    if last_exc is not None:
-        raise last_exc
-    raise RuntimeError('retry helper exited without result')
-
 # Per-operation timeout overrides (seconds) for OpenAI responses.create() calls.
 # Default client timeout (60s) is used as fallback via .get(name, 60).
 #
@@ -95,26 +68,57 @@ class LLMService(BaseService):
     Service class for LLM-powered content generation operations.
 
     Handles idea generation, research, synthesis, and style transformations
-    using OpenAI and AWS Bedrock with injected clients for testability.
+    using OpenAI with injected clients for testability.
     """
 
-    def __init__(self, openai_client, bedrock_client=None, table=None, bedrock_model_id: str | None = None):
+    def __init__(self, openai_client, table=None):
         """
         Initialize LLMService with injected dependencies.
 
         Args:
             openai_client: OpenAI client for GPT operations
-            bedrock_client: Bedrock client for Claude operations (optional)
             table: DynamoDB Table resource for result storage (optional)
-            bedrock_model_id: Bedrock model ID for style operations
         """
         super().__init__()
         self.openai_client = openai_client
-        self.bedrock_client = bedrock_client
         self.table = table
-        self.bedrock_model_id = bedrock_model_id or os.environ.get(
-            'BEDROCK_MODEL_ID', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
-        )
+
+    def _persist_profile_field(self, user_id: str | None, field: str, value) -> None:
+        """Upsert (or REMOVE) a single field on the user's #SETTINGS profile item.
+
+        Pass ``value=None`` to clear the attribute. Failures are logged but
+        never raised — profile persistence must not break the LLM response
+        path.
+        """
+        if not self.table or not user_id:
+            return
+        try:
+            ts = datetime.now(UTC).isoformat()
+            key = {'PK': f'USER#{user_id}', 'SK': '#SETTINGS'}
+            if value is None:
+                self.table.update_item(
+                    Key=key,
+                    UpdateExpression=(
+                        'SET updated_at = :ts, created_at = if_not_exists(created_at, :ts) '
+                        'REMOVE #f'
+                    ),
+                    ExpressionAttributeNames={'#f': field},
+                    ExpressionAttributeValues={':ts': ts},
+                )
+            else:
+                self.table.update_item(
+                    Key=key,
+                    UpdateExpression=(
+                        'SET #f = :v, updated_at = :ts, '
+                        'created_at = if_not_exists(created_at, :ts)'
+                    ),
+                    ExpressionAttributeNames={'#f': field},
+                    ExpressionAttributeValues={':v': value, ':ts': ts},
+                )
+        except Exception as e:
+            # Lazy %-style — avoids string construction when the log
+            # level is suppressed and matches the pro version.
+            logger.warning('Failed to persist profile field %s for user %s: %s', field, user_id, e)
 
     def generate_ideas(self, user_profile: dict, prompt: str, job_id: str, user_id: str) -> dict[str, Any]:
         """
@@ -130,6 +134,10 @@ class LLMService(BaseService):
             dict with success status and queued status
         """
         try:
+            # Clear stale profile-level ideas at handler entry so the UI never
+            # shows an old result while a new generation is in flight.
+            self._persist_profile_field(user_id, 'ai_generated_ideas', None)
+
             user_data = ''
             if user_profile and user_profile.get('name') != PROFILE_PLACEHOLDER_NAME:
                 user_data = self._format_user_profile_context(user_profile)
@@ -162,6 +170,9 @@ class LLMService(BaseService):
                         'ttl': int((datetime.now(UTC) + timedelta(hours=24)).timestamp()),
                     }
                 )
+
+            if ideas:
+                self._persist_profile_field(user_id, 'ai_generated_ideas', ideas)
 
             return {'success': True, 'ideas': ideas}
 
@@ -199,6 +210,11 @@ class LLMService(BaseService):
         try:
             if not selected_ideas:
                 return {'success': False, 'error': 'No ideas selected for research'}
+
+            # Clear stale profile-level research at handler entry. Deep research
+            # polling can take 5-30 minutes; the UI must not display the
+            # previous result while the new job runs.
+            self._persist_profile_field(user_id, 'ai_generated_research', None)
 
             job_id = str(uuid.uuid4())
 
@@ -331,6 +347,9 @@ class LLMService(BaseService):
                     ExpressionAttributeValues={':c': content, ':s': 'completed'},
                 )
 
+            if kind == 'RESEARCH':
+                self._persist_profile_field(user_id, 'ai_generated_research', content)
+
             return {'success': True, 'content': content}
 
         except Exception as e:
@@ -384,6 +403,10 @@ class LLMService(BaseService):
             if not job_id:
                 return {'success': False, 'error': 'Missing required field: job_id'}
 
+            # Clear stale synthesized post at handler entry so the UI never
+            # shows the previous synthesis while a new one is being generated.
+            self._persist_profile_field(user_id, 'ai_synthesized_post', None)
+
             user_data = ''
             if isinstance(user_profile, dict) and user_profile.get('name') != PROFILE_PLACEHOLDER_NAME:
                 user_data = self._format_user_profile_context(user_profile)
@@ -410,7 +433,21 @@ class LLMService(BaseService):
                 logger.error('synthesize_research returned empty content from OpenAI')
                 return {'success': False, 'error': 'OpenAI returned empty content'}
 
-            return {'success': True, 'content': content.strip()}
+            synthesized = content.strip()
+            # dynamodb-api's profile service rejects ai_synthesized_post
+            # values longer than 10,000 characters
+            # (see dynamodb_api_service.py validator). Enforce the same
+            # cap here so a runaway model output doesn't write a value
+            # that later fails validation on read.
+            max_synthesized_len = 10000
+            if len(synthesized) > max_synthesized_len:
+                logger.warning(
+                    'synthesize_research output exceeded %s chars; truncating',
+                    max_synthesized_len,
+                )
+                synthesized = synthesized[:max_synthesized_len]
+            self._persist_profile_field(user_id, 'ai_synthesized_post', synthesized)
+            return {'success': True, 'content': synthesized}
 
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in synthesize_research: {e}')

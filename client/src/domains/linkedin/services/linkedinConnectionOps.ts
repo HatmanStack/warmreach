@@ -41,7 +41,7 @@ export interface ConnectionOpsContext {
   clickFollowButton(profileId: string): Promise<FollowResult>;
   clickElementHumanly(page: Page, element: ElementHandle): Promise<void>;
   checkSuspiciousActivity(): Promise<unknown>;
-  _enforceRateLimit(): void;
+  _enforceRateLimit(): Promise<void>;
   _applyControlPlaneRateLimits(operation: string): Promise<void>;
   _reportInteraction(operation: string): void;
   _paced<T>(minMs: number, maxMs: number, fn: () => Promise<T>): Promise<T>;
@@ -451,7 +451,7 @@ async function _executeConnectionWorkflowInternal(
   };
 
   logger.info('Executing complete LinkedIn connection workflow', context);
-  service._enforceRateLimit();
+  await service._enforceRateLimit();
   await service._applyControlPlaneRateLimits('executeConnectionWorkflow');
 
   await service.checkSuspiciousActivity();
@@ -567,7 +567,7 @@ async function _followProfileInternal(
   logger.info('Executing LinkedIn follow profile workflow', context);
 
   try {
-    service._enforceRateLimit();
+    await service._enforceRateLimit();
     await service._applyControlPlaneRateLimits('followProfile');
 
     await service.checkSuspiciousActivity();

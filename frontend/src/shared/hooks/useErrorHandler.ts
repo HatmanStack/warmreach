@@ -3,7 +3,7 @@
  * Task 9: Comprehensive error handling and user feedback
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToast } from '@/shared/hooks';
 import { MessageGenerationError } from '@/features/messages';
 import { ApiError } from '@/shared/services';
@@ -13,6 +13,20 @@ export const useErrorHandler = () => {
   const { toast } = useToast();
   const [currentError, setCurrentError] = useState<WorkflowError | null>(null);
   const [errorHistory, setErrorHistory] = useState<WorkflowError[]>([]);
+
+  // Track the pending auto-resolve timeout so it can be cleared on unmount; without
+  // this the 10s fallback resolve fires after the component is gone, resolving a
+  // dangling promise and risking a state-update-after-unmount.
+  const autoResolveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (autoResolveTimeoutRef.current) {
+        clearTimeout(autoResolveTimeoutRef.current);
+        autoResolveTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const categorizeError = useCallback((error: unknown): WorkflowError['type'] => {
     if (error instanceof MessageGenerationError) {
@@ -150,8 +164,14 @@ export const useErrorHandler = () => {
           variant: severity === 'critical' || severity === 'high' ? 'destructive' : 'default',
         });
 
-        // Auto-resolve after timeout if no user action
-        setTimeout(() => {
+        // Auto-resolve after timeout if no user action. The timeout id is stored in
+        // a ref so the cleanup effect can cancel it on unmount (and so a new error
+        // supersedes a prior pending auto-resolve rather than leaking it).
+        if (autoResolveTimeoutRef.current) {
+          clearTimeout(autoResolveTimeoutRef.current);
+        }
+        autoResolveTimeoutRef.current = setTimeout(() => {
+          autoResolveTimeoutRef.current = null;
           if (workflowError.recoveryOptions.skip) {
             resolve('skip');
           } else {

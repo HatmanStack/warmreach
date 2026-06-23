@@ -67,6 +67,7 @@ function sanitizeProfileForBackend(userProfile?: UserProfile): Record<string, un
     unsent_post_content,
     unpublished_post_content,
     ai_generated_post_content,
+    ai_synthesized_post,
     ai_generated_ideas,
     ai_generated_research,
     ai_generated_post_hook,
@@ -78,6 +79,7 @@ function sanitizeProfileForBackend(userProfile?: UserProfile): Record<string, un
   void unsent_post_content;
   void unpublished_post_content;
   void ai_generated_post_content;
+  void ai_synthesized_post;
   void ai_generated_ideas;
   void ai_generated_research;
   void ai_generated_post_hook;

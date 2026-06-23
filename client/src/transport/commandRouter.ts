@@ -3,16 +3,31 @@
  *
  * Each command type maps to a controller method that accepts structured payloads
  * and returns results (no Express req/res dependency).
+ *
+ * Note: the community edition's command router only routes the core LinkedIn
+ * commands and does not make the backend LLM fetch that the pro edition's
+ * Comment Concierge route relies on. The AbortController timeout that bounds that
+ * pro-only LLM fetch therefore has no counterpart here — there is no un-timed
+ * external fetch in this router to bound.
  */
 
 import { logger } from '#utils/logger.js';
 import { SearchController } from '../domains/search/controllers/searchController.js';
 import { LinkedInInteractionController } from '../domains/linkedin/controllers/linkedinInteractionController.js';
 import { ProfileInitController } from '../domains/profile/controllers/profileInitController.js';
+import {
+  validateCommandPayload,
+  type AnyCommandPayload,
+  type SendMessageCommandPayload,
+  type AddConnectionCommandPayload,
+} from './commandRouter.schemas.js';
 
 type ProgressCallback = (...args: unknown[]) => void;
 
-type CommandPayload = Record<string, any>;
+// Payloads are validated per-command at the dispatch boundary (see
+// commandRouter.schemas.ts) before reaching a controller that drives browser
+// automation, replacing the former untyped `Record<string, any>`.
+type CommandPayload = AnyCommandPayload;
 
 interface CommandRoute {
   handler: (payload: CommandPayload, onProgress: ProgressCallback) => Promise<unknown>;
@@ -45,11 +60,12 @@ const ROUTES: Record<string, CommandRoute> = {
     handler: (payload, onProgress) => searchController.performSearchDirect(payload, onProgress),
   },
   'linkedin:send-message': {
-    handler: (payload, onProgress) => interactionController.sendMessageDirect(payload, onProgress),
+    handler: (payload, onProgress) =>
+      interactionController.sendMessageDirect(payload as SendMessageCommandPayload, onProgress),
   },
   'linkedin:add-connection': {
     handler: (payload, onProgress) =>
-      interactionController.addConnectionDirect(payload, onProgress),
+      interactionController.addConnectionDirect(payload as AddConnectionCommandPayload, onProgress),
   },
   'linkedin:profile-init': {
     handler: (payload, onProgress) => profileInitController.initializeDirect(payload, onProgress),
@@ -67,6 +83,21 @@ export async function handleExecuteCommand(message: ExecuteMessage, sendFn: Send
       commandId,
       code: 'UNKNOWN_COMMAND',
       message: `Unknown command type: ${type}`,
+    });
+    return;
+  }
+
+  // Validate the untrusted payload at the trust boundary before it can drive
+  // browser automation. On failure, return a structured error rather than
+  // forwarding an unchecked payload to a controller.
+  const validationError = validateCommandPayload(type, payload);
+  if (validationError) {
+    logger.warn(`Rejecting command ${commandId} (${type}): ${validationError}`);
+    sendFn({
+      action: 'error',
+      commandId,
+      code: 'INVALID_PAYLOAD',
+      message: validationError,
     });
     return;
   }

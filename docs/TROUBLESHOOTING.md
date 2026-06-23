@@ -125,5 +125,5 @@ The `websocket-connect` Lambda validates Cognito JWTs and tracks connections in 
 ### Missing Environment Variables
 -   **Symptom**: Application crashes or behaves unexpectedly.
 -   **Solution**:
-    -   Run `bash scripts/deploy/get-env-vars.sh <stack-name> --update-env` to ensure your `.env` is up to date with AWS resources.
-    -   Compare your `.env` with `.env.example`.
+    -   Run `bash scripts/deploy/get-env-vars.sh <stack-name> --update-env` to sync the SAM-output-backed vars (see [Automated Configuration](CONFIGURATION.md#automated-configuration) for the exact list). It does not populate `VITE_COGNITO_IDENTITY_POOL_ID` or RAGStack credentials.
+    -   Compare your `.env` with `.env.example` and set any remaining values manually.

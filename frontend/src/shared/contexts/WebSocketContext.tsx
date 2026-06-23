@@ -26,7 +26,12 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
-  // Connect/disconnect based on auth state
+  // Connect/disconnect based on auth state. Only `user` is in the
+  // dep array — getToken is read inside connect() at the time of
+  // effect run, but adding it as a dep would tear down + reconnect
+  // the socket every time AuthProvider re-renders (the badge flashes
+  // "Agent Disconnected" during the reconnect window). user identity
+  // is the only thing that should drive a reconnect.
   useEffect(() => {
     if (!user || !WS_URL) return;
 
@@ -45,7 +50,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       cancelled = true;
       websocketService.disconnect();
     };
-  }, [user, getToken]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Track connection state. When the socket transitions to connected we
   // ask the backend for the current agent status — backend can't push

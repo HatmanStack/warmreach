@@ -269,6 +269,23 @@ describe('AuthContext', () => {
       expect(mockSignOut).toHaveBeenCalled();
     });
 
+    it('does not touch the dead sessionStorage jwt_token key on sign-out', async () => {
+      const mockUser = { id: 'c4', email: 'jwt@e.com', firstName: 'J', lastName: 'U' };
+      mockGetCurrentUser.mockResolvedValue(mockUser);
+      mockSignOut.mockResolvedValue(undefined);
+      const removeSpy = vi.spyOn(window.sessionStorage, 'removeItem');
+
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.user).not.toBeNull());
+
+      await act(async () => {
+        await result.current.signOut();
+      });
+
+      expect(removeSpy).not.toHaveBeenCalledWith('jwt_token');
+      removeSpy.mockRestore();
+    });
+
     it('should get token from Cognito', async () => {
       mockGetToken.mockResolvedValue('real-jwt-token');
       const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });

@@ -16,6 +16,7 @@
     "test:backend": "cd tests/backend && . .venv/bin/activate && python -m pytest unit/ -v --tb=short --cov=../../backend/lambdas --cov-fail-under=75",
     "typecheck:frontend": "cd frontend && npx tsc --noEmit",
     "typecheck:client": "cd client && npx tsc --noEmit",
+    "typecheck:backend": "cd tests/backend && . .venv/bin/activate && cd ../../backend && python -m mypy -p shared_services",
     "build:admin": "cd admin && npm run build",
     "test:admin": "cd admin && npx vitest run",
     "lint:admin": "cd admin && npm run lint",
@@ -23,7 +24,11 @@
     "lint:frontend": "cd frontend && npm run lint",
     "lint:client": "cd client && npm run lint",
     "lint:backend": "cd backend && uvx ruff check lambdas --exclude .aws-sam && uvx ruff format --check lambdas --exclude .aws-sam",
-    "lint:docs": "npx markdownlint-cli2 \"docs/**/*.md\" \"*.md\" && npx --yes @lycheeverse/lychee --config lychee.toml \"docs/**/*.md\" \"*.md\"",
+    "lint:docs": "npx markdownlint-cli2 \"docs/**/*.md\" \"*.md\"",
+    "lint:docs:links": "command -v lychee >/dev/null 2>&1 && lychee --config lychee.toml \"docs/**/*.md\" \"*.md\" || echo 'lychee not installed locally; link checking runs in CI via lycheeverse/lychee-action. Install: https://github.com/lycheeverse/lychee#installation'",
+    "docs:api:ts": "cd frontend && npx typedoc --out ../docs/api/ts/frontend && cd ../client && npx typedoc --out ../docs/api/ts/client && cd .. && { [ -d admin ] && cd admin && npx typedoc --out ../docs/api/ts/admin || echo 'skipping admin typedoc (admin/ not present)'; }",
+    "docs:api:py": "cd backend && uvx --with \"mkdocstrings[python]>=0.26\" --with mkdocs-material --with mkdocs-gen-files --with mkdocs-literate-nav --from mkdocs mkdocs build",
+    "docs:api": "npm run docs:api:ts && npm run docs:api:py",
     "format": "npx prettier --write 'frontend/src/**/*.{ts,tsx}' 'client/src/**/*.{js,ts}' 'admin/src/**/*.{ts,tsx}' 'mock-linkedin/**/*.js'",
     "format:check": "npx prettier --check 'frontend/src/**/*.{ts,tsx}' 'client/src/**/*.{js,ts}' 'admin/src/**/*.{ts,tsx}' 'mock-linkedin/**/*.js'",
     "typecheck:admin": "cd admin && npx tsc --noEmit",
@@ -73,6 +78,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "markdownlint-cli2": "^0.21.0",
-    "prettier": "^3.8.1"
+    "prettier": "^3.8.1",
+    "typedoc": "^0.28.19"
   }
 }

@@ -12,6 +12,8 @@ import { PostComposerProvider } from '@/features/posts';
 import { WebSocketProvider } from '@/shared/contexts/WebSocketContext';
 import { ClientRequiredDialogProvider } from '@/shared/contexts/ClientRequiredDialogContext';
 import { ClientRequiredDialog } from '@/shared/components/ClientRequiredDialog';
+import { ErrorBoundary } from '@/shared/components/ErrorBoundary';
+import { SuspenseFallback } from '@/shared/components/SuspenseFallback';
 import { queryClient } from '@/shared/lib/queryClient';
 
 const Index = lazy(() => import('@/pages/Index'));
@@ -21,52 +23,54 @@ const Profile = lazy(() => import('@/pages/Profile'));
 const NotFound = lazy(() => import('@/pages/NotFound'));
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <AuthProvider>
-        <WebSocketProvider>
-          <ClientRequiredDialogProvider>
-            <TierProvider>
-              <UserProfileProvider>
-                <PostComposerProvider>
-                  <HealAndRestoreProvider>
-                    <BrowserRouter>
-                      <Suspense fallback={null}>
-                        <ClientRequiredDialog />
-                        <Routes>
-                          <Route path="/" element={<Index />} />
-                          <Route path="/auth" element={<Auth />} />
-                          <Route
-                            path="/dashboard"
-                            element={
-                              <ProtectedRoute>
-                                <Dashboard />
-                              </ProtectedRoute>
-                            }
-                          />
-                          <Route
-                            path="/profile"
-                            element={
-                              <ProtectedRoute>
-                                <Profile />
-                              </ProtectedRoute>
-                            }
-                          />
-                          <Route path="*" element={<NotFound />} />
-                        </Routes>
-                      </Suspense>
-                    </BrowserRouter>
-                  </HealAndRestoreProvider>
-                </PostComposerProvider>
-              </UserProfileProvider>
-            </TierProvider>
-          </ClientRequiredDialogProvider>
-        </WebSocketProvider>
-      </AuthProvider>
-    </TooltipProvider>
-  </QueryClientProvider>
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <AuthProvider>
+          <WebSocketProvider>
+            <ClientRequiredDialogProvider>
+              <TierProvider>
+                <UserProfileProvider>
+                  <PostComposerProvider>
+                    <HealAndRestoreProvider>
+                      <BrowserRouter>
+                        <Suspense fallback={<SuspenseFallback />}>
+                          <ClientRequiredDialog />
+                          <Routes>
+                            <Route path="/" element={<Index />} />
+                            <Route path="/auth" element={<Auth />} />
+                            <Route
+                              path="/dashboard"
+                              element={
+                                <ProtectedRoute>
+                                  <Dashboard />
+                                </ProtectedRoute>
+                              }
+                            />
+                            <Route
+                              path="/profile"
+                              element={
+                                <ProtectedRoute>
+                                  <Profile />
+                                </ProtectedRoute>
+                              }
+                            />
+                            <Route path="*" element={<NotFound />} />
+                          </Routes>
+                        </Suspense>
+                      </BrowserRouter>
+                    </HealAndRestoreProvider>
+                  </PostComposerProvider>
+                </UserProfileProvider>
+              </TierProvider>
+            </ClientRequiredDialogProvider>
+          </WebSocketProvider>
+        </AuthProvider>
+      </TooltipProvider>
+    </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;

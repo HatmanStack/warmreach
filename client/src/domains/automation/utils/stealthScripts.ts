@@ -52,15 +52,22 @@ export function getCanvasNoiseScript(seed: number): string {
       return clone;
     }
 
+    // Bind the noised clone explicitly as the \`this\` so the original method reads
+    // the noised pixels. noisyExport always returns a clone (noised, or — on a
+    // cross-origin SecurityError — an un-noised clone), so we never fall back to
+    // serializing the original canvas; that fragile fallback would silently leak
+    // the un-noised fingerprint.
     HTMLCanvasElement.prototype.toDataURL = new Proxy(origToDataURL, {
-      apply(target, ctx, args) {
-        return Reflect.apply(target, noisyExport(ctx) || ctx, args);
+      apply(target, source, args) {
+        const noisedClone = noisyExport(source);
+        return Reflect.apply(target, noisedClone, args);
       }
     });
 
     HTMLCanvasElement.prototype.toBlob = new Proxy(origToBlob, {
-      apply(target, ctx, args) {
-        return Reflect.apply(target, noisyExport(ctx) || ctx, args);
+      apply(target, source, args) {
+        const noisedClone = noisyExport(source);
+        return Reflect.apply(target, noisedClone, args);
       }
     });
   })()`;
@@ -169,18 +176,29 @@ export function getHeadlessEvasionScript(
       }
     });
 
-    // 4. Spoof plugins and mimeTypes (headless often has none)
+    // 4. Spoof plugins and mimeTypes (headless often has none).
     if (navigator.plugins.length !== ${pluginCount}) {
       const plugins = Array(${pluginCount}).fill(0).map((_, i) => ({
         name: 'Plugin ' + i,
         description: 'Spoofed Plugin ' + i,
         filename: 'plugin' + i + '.dll'
       }));
+      // Derive a distinct-but-plausible mimeTypes structure that REFERENCES the
+      // plugins rather than reusing the identical array. Returning the same array
+      // for navigator.mimeTypes and navigator.plugins is a textbook anti-bot tell;
+      // real browsers expose related-but-separate plugin/mimeType objects, with
+      // each mimeType carrying its own type/suffixes and an enabledPlugin backref.
+      const mimeTypes = plugins.map((plugin, i) => ({
+        type: 'application/x-plugin-' + i,
+        suffixes: 'p' + i,
+        description: plugin.description,
+        enabledPlugin: plugin,
+      }));
       Object.defineProperty(Object.getPrototypeOf(navigator), 'plugins', {
         get: () => plugins,
       });
       Object.defineProperty(Object.getPrototypeOf(navigator), 'mimeTypes', {
-        get: () => plugins,
+        get: () => mimeTypes,
       });
     }
 

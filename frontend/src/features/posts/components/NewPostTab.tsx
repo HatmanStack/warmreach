@@ -15,6 +15,8 @@ const NewPostTabInner = () => {
     isSynthesizing,
     ideas,
     selectedIdeas,
+    researchContent,
+    includeResearch,
     synthesizedPost,
     generateIdeas,
     researchTopics,
@@ -23,6 +25,15 @@ const NewPostTabInner = () => {
     clearIdea,
     clearSynthesizedPost,
   } = usePostComposer();
+
+  // Synthesis needs source material — either selected ideas, included
+  // research, or both. Without either, the model has nothing to work
+  // from and the call would just emit a generic placeholder.
+  const hasIncludedResearch = includeResearch && Boolean(researchContent);
+  const canSynthesize = selectedIdeas.length > 0 || hasIncludedResearch;
+  const synthesizeDisabledReason = canSynthesize
+    ? undefined
+    : 'Select at least one idea or include research to synthesize';
 
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
@@ -88,10 +99,8 @@ const NewPostTabInner = () => {
         <div className="flex items-center gap-3">
           <Button
             onClick={handleSynthesize}
-            disabled={isSynthesizing || isResearching || selectedIdeas.length === 0}
-            title={
-              selectedIdeas.length === 0 ? 'Select at least one idea to synthesize' : undefined
-            }
+            disabled={isSynthesizing || isResearching || !canSynthesize}
+            title={synthesizeDisabledReason}
             className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
           >
             <Sparkles className="h-4 w-4 mr-2" />

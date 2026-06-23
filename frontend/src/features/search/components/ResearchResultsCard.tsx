@@ -1,10 +1,10 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { useEffect } from 'react';
-import { X } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/components/ui/tooltip';
+import { Info, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import useSessionStorage from '@/shared/hooks/useSessionStorage';
+import { usePostComposer } from '@/features/posts';
 
 interface ResearchResultsCardProps {
   isResearching: boolean;
@@ -12,37 +12,61 @@ interface ResearchResultsCardProps {
 }
 
 const ResearchResultsCard = ({ isResearching, onClear }: ResearchResultsCardProps) => {
-  const [localResearch, setLocalResearch, , rehydrate] = useSessionStorage<string | null>(
-    'ai_research_content',
-    null
-  );
+  // Research content is the canonical user-profile field, hydrated by
+  // PostComposerContext from DynamoDB. No client-side cache.
+  const { researchContent, includeResearch, setIncludeResearch } = usePostComposer();
 
-  // Re-sync from sessionStorage when research completes (PostComposerContext writes to this key)
-  useEffect(() => {
-    if (!isResearching) {
-      rehydrate();
-    }
-  }, [isResearching, rehydrate]);
+  if (!isResearching && !researchContent) return null;
 
-  if (!isResearching && !localResearch) return null;
+  const showInclusionToggle = Boolean(researchContent) && !isResearching;
 
   return (
     <Card className="bg-white/5 backdrop-blur-md border-white/10">
       <CardHeader>
         <div className="flex items-start justify-between">
-          <div>
-            <CardTitle className="text-white">Research</CardTitle>
-            <CardDescription className="text-slate-300">
-              {isResearching ? 'Research in progress…' : 'Research results'}
-            </CardDescription>
+          <div className="flex items-start gap-3">
+            {showInclusionToggle && (
+              <input
+                type="checkbox"
+                id="include-research"
+                checked={includeResearch}
+                onChange={(e) => setIncludeResearch(e.target.checked)}
+                className="mt-1.5 h-4 w-4 text-purple-600 bg-white/10 border-white/20 rounded focus:ring-purple-500/40 focus:ring-2"
+                aria-label="Include research in synthesis"
+              />
+            )}
+            <div>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-white">Research</CardTitle>
+                {showInclusionToggle && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="text-slate-400 hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500/40 rounded"
+                        aria-label="What does the checkbox do?"
+                      >
+                        <Info className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-xs">
+                      When checked, this research is fed into the synthesizer alongside your
+                      selected ideas. Uncheck to synthesize from ideas alone.
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+              <CardDescription className="text-slate-300">
+                {isResearching ? 'Research in progress…' : 'Research results'}
+              </CardDescription>
+            </div>
           </div>
-          {localResearch && !isResearching ? (
+          {researchContent && !isResearching ? (
             <Button
               variant="ghost"
               size="sm"
               className="h-8 w-8 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/20"
               onClick={() => {
-                setLocalResearch(null);
                 onClear();
               }}
               title="Clear research"
@@ -78,7 +102,7 @@ const ResearchResultsCard = ({ isResearching, onClear }: ResearchResultsCardProp
             This may take several minutes.
           </div>
         )}
-        {localResearch && (
+        {researchContent && (
           <div className="space-y-3">
             <div className="text-white prose prose-invert max-w-none whitespace-pre-wrap break-words prose-h1:text-center prose-headings:text-white">
               <ReactMarkdown
@@ -108,7 +132,7 @@ const ResearchResultsCard = ({ isResearching, onClear }: ResearchResultsCardProp
                   ),
                 }}
               >
-                {localResearch}
+                {researchContent}
               </ReactMarkdown>
             </div>
           </div>

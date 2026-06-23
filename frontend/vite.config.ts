@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => ({
         manualChunks: {
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
           'vendor-query': ['@tanstack/react-query'],
-          'vendor-auth': ['amazon-cognito-identity-js', 'libsodium-wrappers-sumo'],
+          'vendor-auth': ['amazon-cognito-identity-js'],
           'vendor-ui': [
             '@radix-ui/react-alert-dialog', '@radix-ui/react-checkbox',
             '@radix-ui/react-dialog', '@radix-ui/react-label',

@@ -321,6 +321,9 @@ export interface UserProfile {
   /** AI-generated research content */
   ai_generated_research?: string;
 
+  /** AI-synthesized LinkedIn post (raw model output, before user edits) */
+  ai_synthesized_post?: string;
+
   /** AI-generated post hook */
   ai_generated_post_hook?: string;
 

@@ -39,9 +39,10 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 | `dynamodb-api`     | `GET/POST /dynamodb`, `/profiles`         | User settings, profile CRUD                                   |
 | `edge-processing`  | `POST /edges`, `/ragstack`                | Connection edge management, RAGStack search/ingest            |
 | `llm`              | `POST /llm`                               | OpenAI/Bedrock AI operations (quota-metered)                  |
+| `client-downloads` | `GET /client-downloads`                   | Per-platform desktop client download URLs (public, no JWT auth) |
 | `websocket-*`      | WebSocket `$connect/$disconnect/$default` | WebSocket lifecycle and message routing                       |
 
-#### Shared Services (`lambdas/shared/python/`)
+#### Shared Services (`lambdas/shared/python/shared_services/`)
 
 | Module                 | Purpose                                              |
 | ---------------------- | ---------------------------------------------------- |
@@ -53,6 +54,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 | `observability.py`     | Correlation context and structured JSON logging      |
 | `message_utils.py`    | Shared message analysis utilities                    |
 | `dynamodb_types.py`   | TypedDict definitions for DynamoDB item schemas      |
+| `protocols.py`        | Typing-only Protocol DI contracts for handler utilities |
 
 ### RAGStack (optional nested stack)
 

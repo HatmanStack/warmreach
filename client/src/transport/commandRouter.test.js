@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Hoist mock functions so they're available before vi.mock factories execute
 const {
@@ -33,7 +33,7 @@ vi.mock('../domains/profile/controllers/profileInitController.js', () => ({
   },
 }));
 
-import { handleExecuteCommand } from './commandRouter.js';
+import { handleExecuteCommand, _buildApiCall, LLM_REQUEST_TIMEOUT_MS } from './commandRouter.js';
 
 describe('commandRouter', () => {
   let sendFn;
@@ -129,6 +129,100 @@ describe('commandRouter', () => {
     });
   });
 
+  describe('payload validation at the trust boundary', () => {
+    it('rejects a non-object payload with INVALID_PAYLOAD and does not invoke the controller', async () => {
+      await handleExecuteCommand(
+        { commandId: 'cmd-inv-1', type: 'linkedin:search', payload: 'not-an-object' },
+        sendFn
+      );
+
+      expect(mockPerformSearchDirect).not.toHaveBeenCalled();
+      expect(sendFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'error',
+          commandId: 'cmd-inv-1',
+          code: 'INVALID_PAYLOAD',
+        })
+      );
+    });
+
+    it('rejects a malformed search payload (wrong field type) without invoking the controller', async () => {
+      await handleExecuteCommand(
+        { commandId: 'cmd-inv-2', type: 'linkedin:search', payload: { companyName: 123 } },
+        sendFn
+      );
+
+      expect(mockPerformSearchDirect).not.toHaveBeenCalled();
+      expect(sendFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'error',
+          commandId: 'cmd-inv-2',
+          code: 'INVALID_PAYLOAD',
+          message: expect.stringMatching(/companyName/),
+        })
+      );
+    });
+
+    it('rejects a malformed send-message payload (wrong field type)', async () => {
+      await handleExecuteCommand(
+        {
+          commandId: 'cmd-inv-3',
+          type: 'linkedin:send-message',
+          payload: { recipientProfileId: 42 },
+        },
+        sendFn
+      );
+
+      expect(mockSendMessageDirect).not.toHaveBeenCalled();
+      expect(sendFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'error',
+          commandId: 'cmd-inv-3',
+          code: 'INVALID_PAYLOAD',
+        })
+      );
+    });
+
+    it('rejects a malformed add-connection payload (wrong field type)', async () => {
+      await handleExecuteCommand(
+        { commandId: 'cmd-inv-4', type: 'linkedin:add-connection', payload: { profileId: {} } },
+        sendFn
+      );
+
+      expect(mockAddConnectionDirect).not.toHaveBeenCalled();
+      expect(sendFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'error',
+          commandId: 'cmd-inv-4',
+          code: 'INVALID_PAYLOAD',
+        })
+      );
+    });
+
+    it('dispatches a valid search payload (validation passes)', async () => {
+      mockPerformSearchDirect.mockResolvedValueOnce({ profiles: [] });
+
+      await handleExecuteCommand(
+        {
+          commandId: 'cmd-valid-1',
+          type: 'linkedin:search',
+          payload: { query: 'AI', companyName: 'Acme', jwtToken: 'jwt' },
+        },
+        sendFn
+      );
+
+      expect(mockPerformSearchDirect).toHaveBeenCalledWith(
+        { query: 'AI', companyName: 'Acme', jwtToken: 'jwt' },
+        expect.any(Function)
+      );
+      expect(sendFn).toHaveBeenCalledWith({
+        action: 'result',
+        commandId: 'cmd-valid-1',
+        data: { profiles: [] },
+      });
+    });
+  });
+
   describe('progress callback', () => {
     it('sends progress messages through sendFn', async () => {
       mockPerformSearchDirect.mockImplementationOnce(async (payload, onProgress) => {
@@ -162,6 +256,63 @@ describe('commandRouter', () => {
         commandId: 'cmd-5',
         data: { done: true },
       });
+    });
+  });
+
+  describe('_buildApiCall LLM fetch timeout', () => {
+    let originalFetch;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      vi.useRealTimers();
+    });
+
+    it('rejects with a clear timeout error when the LLM fetch hangs', async () => {
+      vi.useFakeTimers();
+
+      // fetch never resolves on its own; it should reject only when the
+      // AbortController aborts after LLM_REQUEST_TIMEOUT_MS.
+      globalThis.fetch = vi.fn(
+        (_url, opts) =>
+          new Promise((_resolve, reject) => {
+            opts.signal.addEventListener('abort', () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          })
+      );
+
+      const apiCall = _buildApiCall('jwt-token');
+      const promise = apiCall({ prompt: 'hello' });
+      // Attach a catch handler immediately so the rejection is observed.
+      const expectation = expect(promise).rejects.toThrow(/timed out/i);
+
+      await vi.advanceTimersByTimeAsync(LLM_REQUEST_TIMEOUT_MS + 1);
+
+      await expectation;
+    });
+
+    it('clears the timeout and returns parsed JSON on a successful response', async () => {
+      vi.useFakeTimers();
+      const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+
+      globalThis.fetch = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ result: 'ok' }),
+      }));
+
+      const apiCall = _buildApiCall(undefined);
+      const result = await apiCall({ prompt: 'hi' });
+
+      expect(result).toEqual({ result: 'ok' });
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+      clearTimeoutSpy.mockRestore();
     });
   });
 

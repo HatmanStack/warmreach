@@ -13,12 +13,14 @@ import type { Page, ElementHandle } from 'puppeteer';
 import {
   asBrowserSessionManagerContract,
   asConfigManagerContract,
+  asPuppeteerServiceContract,
   unsafeAsOpsContext,
   type BrowserSessionManagerContract,
   type ConfigManagerContract,
   type ControlPlaneServiceContract,
   type HumanBehaviorContract,
 } from '../types/ServiceContracts.js';
+import { LinkedInService } from './linkedinService.js';
 
 // Domain operations
 import * as profileOps from './linkedinProfileOps.js';
@@ -183,9 +185,9 @@ export class LinkedInInteractionService {
     return await fn();
   }
 
-  _enforceRateLimit(): void {
+  async _enforceRateLimit(): Promise<void> {
     try {
-      this._rateLimiter.enforce();
+      await this._rateLimiter.enforce();
     } catch (err: unknown) {
       if (err instanceof RateLimitExceededError) {
         throw new LinkedInError('Rate limit exceeded', 'LINKEDIN_RATE_LIMIT');
@@ -320,6 +322,24 @@ export class LinkedInInteractionService {
 
   async isSessionActive() {
     return profileOps.isSessionActive(this._self);
+  }
+
+  /**
+   * Ensure a LinkedIn session is active and authenticated, logging in if
+   * needed. Encapsulates the is-active -> init -> login lifecycle that used to
+   * live in the interaction controller (HIGH #19), so callers drive auth
+   * through one typed service method instead of instantiating LinkedInService
+   * and casting at the boundary themselves.
+   */
+  async ensureAuthenticated(
+    credentialsCiphertext: string | null,
+    operationName: string
+  ): Promise<void> {
+    if (await this.isSessionActive()) return;
+
+    const session = await this.initializeBrowserSession();
+    const loginHelper = new LinkedInService(asPuppeteerServiceContract(session));
+    await loginHelper.login(null, null, false, credentialsCiphertext, operationName);
   }
 
   async getSessionStatus() {

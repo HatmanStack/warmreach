@@ -56,11 +56,19 @@ cd tests/backend && . .venv/bin/activate && python -m pytest unit/test_llm.py::t
 # Linting
 npm run lint             # All (frontend ESLint + client ESLint + backend Ruff)
 npm run lint:backend     # Ruff check + format check
+npm run lint:docs        # markdownlint (local); link check runs in CI. BLOCKING via docs-lint.yml
+npm run lint:docs:links  # lychee link check, only if lychee is installed locally
 npm run format           # Prettier write (frontend + client)
 
 # Type checking
 npm run typecheck:frontend
 npm run typecheck:client
+npm run typecheck:backend # mypy over backend shared_services (CI: backend job)
+
+# API docs (typedoc TS + mkdocstrings Python) -> docs/api/ (gitignored)
+npm run docs:api
+npm run docs:api:ts
+npm run docs:api:py
 
 # Electron packaging
 npm run electron:build
@@ -115,6 +123,7 @@ SAM template (`template.yaml`) defines:
   - `edge-processing/` - Edge data processing + RAGStack search/ingest
   - `dynamodb-api/` - User settings/profile CRUD
   - `llm/` - OpenAI/Bedrock LLM operations
+  - `client-downloads/` - Per-platform desktop client download URLs (public, no JWT auth)
 
 Lambdas share code via `lambdas/shared/python/`:
 - `shared_services/base_service.py` - Base class for all service layers
@@ -132,6 +141,7 @@ Lambdas share code via `lambdas/shared/python/`:
 - `shared_services/message_utils.py` - Shared message analysis utilities
 - `shared_services/monetization.py` - Community edition stubs (all features enabled)
 - `shared_services/observability.py` - Correlation context and logging
+- `shared_services/protocols.py` - Typing-only Protocol DI contracts for handler utilities
 - `shared_services/ragstack_client.py` - RAGStack GraphQL client with circuit breaker + retry
 - `shared_services/ragstack_proxy_service.py` - RAGStack search, ingest, and status proxy
 - `shared_services/request_utils.py` - User ID extraction, CORS headers, API response formatting

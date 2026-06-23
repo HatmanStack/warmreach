@@ -25,7 +25,6 @@ class TestLLMServiceIntegration:
 
         service = llm_service_module.LLMService(
             openai_client=mock_openai,
-            bedrock_client=MagicMock(),
             table=None
         )
 
@@ -48,7 +47,6 @@ class TestLLMServiceIntegration:
 
         service = llm_service_module.LLMService(
             openai_client=mock_openai,
-            bedrock_client=MagicMock(),
             table=None
         )
 
@@ -90,7 +88,6 @@ class TestLLMServiceIntegration:
 
         service = llm_service_module.LLMService(
             openai_client=MagicMock(),
-            bedrock_client=MagicMock(),
             table=table
         )
 
@@ -114,7 +111,6 @@ class TestLLMServiceIntegration:
 
         service = llm_service_module.LLMService(
             openai_client=mock_openai,
-            bedrock_client=MagicMock(),
             table=None
         )
 

@@ -44,7 +44,7 @@ export interface MessagingOpsContext {
   clickElementHumanly(page: Page, element: ElementHandle): Promise<void>;
   clearAndTypeText(page: Page, element: ElementHandle, text: string): Promise<void>;
   checkSuspiciousActivity(): Promise<unknown>;
-  _enforceRateLimit(): void;
+  _enforceRateLimit(): Promise<void>;
   _applyControlPlaneRateLimits(operation: string): Promise<void>;
   _reportInteraction(operation: string): void;
   _scrapeAndStoreConversation(profileId: string): Promise<void>;
@@ -100,7 +100,7 @@ export async function sendMessage(
     `Sending LinkedIn message to profile ${recipientProfileId} by user ${userId}`,
     context
   );
-  service._enforceRateLimit();
+  await service._enforceRateLimit();
   await service._applyControlPlaneRateLimits('sendMessage');
 
   await service.checkSuspiciousActivity();
@@ -426,7 +426,7 @@ async function _executeMessagingWorkflowInternal(
   };
 
   logger.info('Executing complete LinkedIn messaging workflow', context);
-  service._enforceRateLimit();
+  await service._enforceRateLimit();
   await service._applyControlPlaneRateLimits('executeMessagingWorkflow');
 
   await service.checkSuspiciousActivity();

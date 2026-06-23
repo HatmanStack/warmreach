@@ -25,13 +25,9 @@ jobs:
   markdownlint:
     name: Markdown Lint
     runs-on: ubuntu-latest
-    # TODO(2026-04-30): flip continue-on-error to false once the baseline is
-    # clean on main for one week. Non-blocking baseline ships with the
-    # 2026-04-23 audit remediation plan (Phase 6 Task 10).
-    continue-on-error: true
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '24'
@@ -41,13 +37,9 @@ jobs:
   link-check:
     name: Link Check
     runs-on: ubuntu-latest
-    # TODO(2026-04-30): flip continue-on-error to false once the baseline is
-    # clean on main for one week. Non-blocking baseline ships with the
-    # 2026-04-23 audit remediation plan (Phase 6 Task 10).
-    continue-on-error: true
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - name: Check links
         uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
         with:

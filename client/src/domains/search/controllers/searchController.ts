@@ -4,15 +4,45 @@ import { logger } from '#utils/logger.js';
 import {
   initializeLinkedInServices,
   cleanupLinkedInServices,
+  type LinkedInServices,
 } from '../../../shared/utils/serviceFactory.js';
+import type { LinkedInService } from '../../linkedin/services/linkedinService.js';
 import { isNodeErrno } from '../../../shared/types/errors.js';
 import { FileHelpers } from '#utils/fileHelpers.js';
 import { SearchRequestValidator } from '../utils/searchRequestValidator.js';
-import { SearchStateManager } from '../utils/searchStateManager.js';
+import { SearchStateManager, type SearchState } from '../utils/searchStateManager.js';
 import { LinkCollector } from '../../linkedin/utils/linkCollector.js';
 import { ContactProcessor } from '../../linkedin/utils/contactProcessor.js';
 import { HealingManager } from '../../automation/utils/healingManager.js';
 import fs from 'fs/promises';
+
+/**
+ * Company identifiers extracted from a search request, used to scope link
+ * collection. Either may be null when the corresponding filter is absent.
+ */
+interface CompanyData {
+  extractedCompanyNumber: string | null;
+  extractedGeoNumber: string | null;
+}
+
+/**
+ * Links + profile-picture URLs collected for a search, populated either from a
+ * fresh collection run or rehydrated from disk during a heal phase.
+ */
+interface SearchData {
+  uniqueLinks: string[];
+  pictureUrls: Record<string, string>;
+}
+
+/**
+ * Final search result: the good contacts found, the full link set analyzed,
+ * and summary stats.
+ */
+interface SearchResult {
+  goodContacts: string[];
+  uniqueLinks: string[];
+  stats: { successRate: string };
+}
 
 export class SearchController {
   async performSearch(
@@ -119,9 +149,9 @@ export class SearchController {
     }
   }
 
-  async performSearchFromState(state: Record<string, any>) {
+  async performSearchFromState(state: SearchState): Promise<SearchResult | undefined> {
     const services = await this._initializeServices();
-    let searchData: Record<string, any> = {};
+    let searchData: SearchData = { uniqueLinks: [], pictureUrls: {} };
 
     try {
       await this._performLogin(services.linkedInService, state);
@@ -136,13 +166,12 @@ export class SearchController {
 
       const goodContacts = await this._processContacts(
         services,
-        searchData.uniqueLinks || [],
+        searchData.uniqueLinks,
         state,
-        searchData.pictureUrls || {}
+        searchData.pictureUrls
       );
 
-      // @ts-expect-error -- searchData.uniqueLinks populated above
-      return this._buildSearchResult(goodContacts, searchData.uniqueLinks || []);
+      return this._buildSearchResult(goodContacts ?? [], searchData.uniqueLinks);
     } catch (error: unknown) {
       logger.error('Search failed:', error);
       throw error;
@@ -151,16 +180,19 @@ export class SearchController {
     }
   }
 
-  async _initializeServices() {
+  async _initializeServices(): Promise<LinkedInServices> {
     return await initializeLinkedInServices();
   }
 
-  async _performLogin(linkedInService: any, state: Record<string, any>) {
+  async _performLogin(linkedInService: LinkedInService, state: SearchState) {
     logger.info('Logging in...');
     await linkedInService.login(
       state.searchName,
       state.searchPassword,
-      state.lastPartialLinksFile,
+      // login() treats this as a boolean "recursion" flag; a partial-links file
+      // means we are resuming, so pass its presence as that flag (preserves the
+      // prior truthiness behavior when this was an untyped pass-through).
+      !!state.lastPartialLinksFile,
       state.credentialsCiphertext,
       'search-controller'
     );
@@ -171,7 +203,10 @@ export class SearchController {
     }
   }
 
-  async _extractCompanyData(linkedInService: any, state: Record<string, any>) {
+  async _extractCompanyData(
+    linkedInService: LinkedInService,
+    state: SearchState
+  ): Promise<CompanyData> {
     let extractedCompanyNumber = state.extractedCompanyNumber;
     let extractedGeoNumber = state.extractedGeoNumber;
 
@@ -189,7 +224,11 @@ export class SearchController {
     return { extractedCompanyNumber, extractedGeoNumber };
   }
 
-  async _collectLinks(linkedInService: any, state: Record<string, any>, companyData: any) {
+  async _collectLinks(
+    linkedInService: LinkedInService,
+    state: SearchState,
+    companyData: CompanyData
+  ): Promise<SearchData> {
     const linkCollector = new LinkCollector(linkedInService, config);
 
     if (state.healPhase === 'link-collection') {
@@ -197,10 +236,8 @@ export class SearchController {
       return { uniqueLinks: [...new Set(allLinks)], pictureUrls: {} };
     }
 
-    const result = await linkCollector.collectAllLinks(
-      state as any,
-      companyData,
-      (pageNumber: number) => this._handleLinkCollectionHealing(state, companyData, pageNumber)
+    const result = await linkCollector.collectAllLinks(state, companyData, (pageNumber: number) =>
+      this._handleLinkCollectionHealing(state, companyData, pageNumber)
     );
 
     const { links: allLinks, pictureUrls } = result;
@@ -212,15 +249,15 @@ export class SearchController {
   }
 
   async _processContacts(
-    services: any,
-    uniqueLinks: any[],
-    state: Record<string, any>,
-    pictureUrls: Record<string, any> = {}
-  ) {
+    services: LinkedInServices,
+    uniqueLinks: string[],
+    state: SearchState,
+    pictureUrls: Record<string, string> = {}
+  ): Promise<string[] | undefined> {
     const contactProcessor = new ContactProcessor(
       services.linkedInService,
       services.dynamoDBService,
-      config as any,
+      config,
       null
     );
 
@@ -230,15 +267,15 @@ export class SearchController {
 
     return await contactProcessor.processAllContacts(
       uniqueLinks,
-      state as any,
+      state,
       (restartParams) => this._handleContactProcessingHealing(restartParams),
       pictureUrls
     );
   }
 
   async _handleLinkCollectionHealing(
-    state: Record<string, any>,
-    companyData: any,
+    state: SearchState,
+    companyData: CompanyData,
     pageNumber: number
   ) {
     logger.warn(`Initiating self-healing restart.`);
@@ -255,7 +292,7 @@ export class SearchController {
     });
   }
 
-  async _handleContactProcessingHealing(restartParams: Record<string, any>) {
+  async _handleContactProcessingHealing(restartParams: Record<string, unknown>) {
     logger.warn(`All retry links failed. Initiating self-healing restart.`);
     logger.info('Restarting with fresh Puppeteer instance...');
 
@@ -266,15 +303,16 @@ export class SearchController {
     });
   }
 
-  async _initiateHealing(healingParams: Record<string, any>) {
+  async _initiateHealing(healingParams: Record<string, unknown>) {
     const healingManager = new HealingManager();
     await healingManager.healAndRestart(healingParams);
   }
 
-  async _loadLinksFromFile(filePath: string) {
+  async _loadLinksFromFile(filePath: string | null): Promise<string[]> {
+    if (!filePath) return [];
     try {
       const fileContent = await fs.readFile(filePath, 'utf-8');
-      return JSON.parse(fileContent);
+      return JSON.parse(fileContent) as string[];
     } catch (error: unknown) {
       if (isNodeErrno(error) && error.code === 'ENOENT') {
         // File not found is expected on first run or after cache clear - not an error
@@ -290,7 +328,7 @@ export class SearchController {
     }
   }
 
-  async _cleanupServices(services: any): Promise<void> {
+  async _cleanupServices(services: Partial<LinkedInServices> | null): Promise<void> {
     logger.info('In finally, closing browser:', !!services?.puppeteerService);
     await cleanupLinkedInServices(services);
     logger.info('Closed browser in finally!');
@@ -320,8 +358,8 @@ export class SearchController {
   }
 
   _buildSuccessResponse(
-    result: any,
-    searchParameters: Record<string, any>
+    result: SearchResult,
+    searchParameters: Record<string, unknown>
   ): Record<string, unknown> {
     return {
       response: result.goodContacts,
@@ -343,18 +381,21 @@ export class SearchController {
     };
   }
 
-  _buildSearchResult(goodContacts: any[], uniqueLinks: any[]): Record<string, unknown> {
+  _buildSearchResult(goodContacts: string[], uniqueLinks: string[]): SearchResult {
     return {
       goodContacts,
       uniqueLinks,
       stats: {
-        successRate: ((goodContacts.length / uniqueLinks.length) * 100).toFixed(2) + '%',
+        successRate:
+          uniqueLinks.length === 0
+            ? '0.00%'
+            : ((goodContacts.length / uniqueLinks.length) * 100).toFixed(2) + '%',
       },
     };
   }
 
   // Legacy method for backward compatibility
-  async healAndRestart(params: Record<string, any>) {
+  async healAndRestart(params: Record<string, unknown>) {
     const healingManager = new HealingManager();
     await healingManager.healAndRestart(params);
   }
@@ -367,10 +408,10 @@ export class SearchController {
    * @returns {Promise<object>} - { results, count }
    */
   async performSearchDirect(
-    payload: Record<string, any>,
+    payload: Record<string, unknown>,
     onProgress: (...args: unknown[]) => void
   ) {
-    let jwtToken = payload.jwtToken;
+    let jwtToken = typeof payload.jwtToken === 'string' ? payload.jwtToken : undefined;
 
     if (
       !jwtToken &&
@@ -386,7 +427,7 @@ export class SearchController {
       throw err;
     }
 
-    const validationResult = SearchRequestValidator.validateRequest(payload, jwtToken) as any;
+    const validationResult = SearchRequestValidator.validateRequest(payload, jwtToken);
     if (!validationResult.isValid) {
       const err: Error & { code?: string } = new Error(
         validationResult.error || validationResult.message
@@ -395,7 +436,13 @@ export class SearchController {
       throw err;
     }
 
-    const { companyName, companyRole, companyLocation, linkedinCredentialsCiphertext } = payload;
+    const { companyName, companyRole, companyLocation, linkedinCredentialsCiphertext } =
+      payload as {
+        companyName?: string;
+        companyRole?: string;
+        companyLocation?: string;
+        linkedinCredentialsCiphertext?: string;
+      };
 
     const state = SearchStateManager.buildInitialState({
       companyName,

@@ -16,15 +16,19 @@ jobs:
       skip: ${{ steps.version.outputs.skip }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           fetch-depth: 0
 
       - name: Determine version
         id: version
         run: |
-          # Extract latest version from CHANGELOG.md
-          VERSION=$(grep -m1 '^## \[' CHANGELOG.md | sed 's/^## \[\(.*\)\].*/\1/')
+          # Extract the latest RELEASED version from CHANGELOG.md. Match only
+          # headings whose version starts with a digit so the Keep-a-Changelog
+          # "## [Unreleased]" section is skipped (otherwise the version resolves
+          # to the literal "Unreleased", which creates a bogus vUnreleased tag and
+          # fails the electron build with `npm error Invalid version: Unreleased`).
+          VERSION=$(grep -m1 -E '^## \[[0-9]' CHANGELOG.md | sed 's/^## \[\(.*\)\].*/\1/')
           if [ -z "$VERSION" ]; then
             echo "No version found in CHANGELOG.md"
             echo "skip=true" >> "$GITHUB_OUTPUT"

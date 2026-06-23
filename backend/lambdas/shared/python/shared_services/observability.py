@@ -75,8 +75,11 @@ class StructuredJsonFormatter(logging.Formatter):
                 'traceback': _tb.format_exception(*record.exc_info),
             }
 
-        # Include extra fields passed via logger.info('msg', extra={...})
-        for key in ('user_id', 'operation', 'duration_ms', 'status_code'):
+        # Include extra fields passed via logger.info('msg', extra={...}).
+        # Keys covered:
+        #   user_id, operation, duration_ms, status_code — request shape
+        #   method, path, op — set by the dynamodb-api request log
+        for key in ('user_id', 'operation', 'duration_ms', 'status_code', 'method', 'path', 'op'):
             if hasattr(record, key):
                 log_entry[key] = getattr(record, key)
 

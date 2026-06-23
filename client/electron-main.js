@@ -11,6 +11,20 @@ import electronUpdater from 'electron-updater';
 import Store from 'electron-store';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+// Single-instance lock — without this, launching the AppImage a second
+// time spawns a fresh process that holds the same Cognito token. Both
+// processes connect as clientType=agent; the backend's
+// "single client per user per type" rule kicks one, it auto-reconnects,
+// kicks the other, etc. The loop only breaks when one side quits.
+// requestSingleInstanceLock() returns false on duplicate launches; we
+// quit immediately and surface focus on the original window via the
+// "second-instance" event below.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
 import { WsClient } from './src/transport/wsClient.js';
 import { handleExecuteCommand } from './src/transport/commandRouter.js';
 import { CredentialStore } from './src/credentials/credentialStore.js';
@@ -18,6 +32,16 @@ import { BrowserSessionManager } from './src/domains/session/services/browserSes
 // Imports server.js for its side effect: starts the Express backend on
 // localhost:3001 and registers structured-log error handlers.
 import './src/server.js';
+
+app.on('second-instance', () => {
+  // A second launch attempt: focus the existing main window instead of
+  // letting the OS spawn a duplicate WS client.
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -501,11 +525,23 @@ app.whenReady().then(() => {
   // idToken before opening the WS — otherwise an expired idToken (1 h
   // Cognito default) would 401 and we'd wait 50 min for the refresh
   // interval to recover.
+  //
+  // refreshIdToken resolves a boolean rather than rejecting (so a
+  // .catch handler would never fire). On success it has already
+  // called restartWebSocket() itself; on transient failure (network
+  // error, non-400 HTTP) we still have the stale-but-possibly-valid
+  // idToken in the store and want to start the WS with it. The 400
+  // case (expired refresh token) is handled inside refreshIdToken,
+  // which clears creds and calls restartWebSocket() before returning
+  // false — startWebSocket() then no-ops because the token is gone.
   if (store.get('auth.refreshToken')) {
-    refreshIdToken().finally(() => {
-      startWebSocket();
-      scheduleTokenRefresh();
-    });
+    refreshIdToken()
+      .then((success) => {
+        if (!success) startWebSocket();
+      })
+      .finally(() => {
+        scheduleTokenRefresh();
+      });
   } else {
     startWebSocket();
     scheduleTokenRefresh();

@@ -15,27 +15,23 @@ import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('PostComposer');
 
-const IDEAS_STORAGE_KEY = 'ai_generated_ideas';
-const RESEARCH_STORAGE_KEY = 'ai_research_content';
-const SYNTHESIZED_STORAGE_KEY = 'ai_synthesized_post';
-const SELECTED_IDEAS_STORAGE_KEY = 'ai_selected_ideas';
-
 interface PostComposerContextValue {
   isGeneratingIdeas: boolean;
   isResearching: boolean;
   isSynthesizing: boolean;
   ideas: string[];
-  updateIdeas: (ideas: string[]) => void;
   selectedIdeas: string[];
   updateSelectedIdeas: (ideas: string[]) => void;
   researchContent: string | null;
+  includeResearch: boolean;
+  setIncludeResearch: (next: boolean) => void;
   synthesizedPost: string | null;
   generateIdeas: (prompt?: string) => Promise<string[]>;
   researchTopics: (topics: string[]) => Promise<void>;
   synthesizeResearch: () => Promise<void>;
   clearResearch: () => Promise<void>;
   clearIdea: (newIdeas: string[]) => Promise<void>;
-  clearSynthesizedPost: () => void;
+  clearSynthesizedPost: () => Promise<void>;
 }
 
 const PostComposerContext = createContext<PostComposerContextValue | undefined>(undefined);
@@ -48,201 +44,162 @@ export const usePostComposer = (): PostComposerContextValue => {
 
 export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
-  const { userProfile } = useUserProfile();
+  const { userProfile, refreshUserProfile } = useUserProfile();
   const [isGeneratingIdeas, setIsGeneratingIdeas] = useState(false);
   const [isResearching, setIsResearching] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
-  const [ideas, setIdeas] = useState<string[]>([]);
   const [selectedIdeas, setSelectedIdeas] = useState<string[]>([]);
-  const [researchContent, setResearchContent] = useState<string | null>(null);
-  const [synthesizedPost, setSynthesizedPost] = useState<string | null>(null);
+  const [includeResearch, setIncludeResearch] = useState(true);
 
-  // Hydrate from session storage on mount
+  // All composer state derives from userProfile (DynamoDB single source of
+  // truth). The backend writes ai_generated_ideas / ai_generated_research /
+  // ai_synthesized_post on each LLM completion and clears them at handler
+  // entry; the frontend just reads.
+  const ideas = useMemo<string[]>(() => {
+    const fromProfile = (userProfile as { ai_generated_ideas?: unknown } | null)
+      ?.ai_generated_ideas;
+    return Array.isArray(fromProfile) ? (fromProfile as string[]) : [];
+  }, [userProfile]);
+
+  const researchContent = useMemo<string | null>(() => {
+    const value = (userProfile as { ai_generated_research?: unknown } | null)
+      ?.ai_generated_research;
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  }, [userProfile]);
+
+  const synthesizedPost = useMemo<string | null>(() => {
+    const value = (userProfile as { ai_synthesized_post?: unknown } | null)?.ai_synthesized_post;
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  }, [userProfile]);
+
+  // Drop ephemeral selection state when the user signs out.
   useEffect(() => {
-    if (!user || !userProfile) {
-      setIdeas([]);
-      setSelectedIdeas([]);
-      setResearchContent(null);
-      setSynthesizedPost(null);
-      try {
-        sessionStorage.removeItem(IDEAS_STORAGE_KEY);
-        sessionStorage.removeItem(SELECTED_IDEAS_STORAGE_KEY);
-        sessionStorage.removeItem(RESEARCH_STORAGE_KEY);
-        sessionStorage.removeItem(SYNTHESIZED_STORAGE_KEY);
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
-
-    try {
-      const storedIdeas = sessionStorage.getItem(IDEAS_STORAGE_KEY);
-      if (storedIdeas) {
-        setIdeas(JSON.parse(storedIdeas));
-      } else {
-        const fromProfile = (userProfile as Record<string, unknown>).ai_generated_ideas as
-          | string[]
-          | undefined;
-        if (Array.isArray(fromProfile)) setIdeas(fromProfile);
-      }
-    } catch {
-      /* ignore */
-    }
-
-    try {
-      const storedResearch = sessionStorage.getItem(RESEARCH_STORAGE_KEY);
-      if (storedResearch) setResearchContent(JSON.parse(storedResearch));
-    } catch {
-      /* ignore */
-    }
-
-    try {
-      const storedPost = sessionStorage.getItem(SYNTHESIZED_STORAGE_KEY);
-      if (storedPost) setSynthesizedPost(storedPost);
-    } catch {
-      /* ignore */
-    }
-
-    try {
-      const storedSelected = sessionStorage.getItem(SELECTED_IDEAS_STORAGE_KEY);
-      if (storedSelected) {
-        const parsed = JSON.parse(storedSelected);
-        if (Array.isArray(parsed)) setSelectedIdeas(parsed);
-      }
-    } catch {
-      /* ignore */
-    }
+    if (!user || !userProfile) setSelectedIdeas([]);
   }, [user, userProfile]);
+
+  // Reset include-research to true whenever fresh research arrives so the
+  // user opts in by default, then can opt out per synthesis.
+  useEffect(() => {
+    if (researchContent) setIncludeResearch(true);
+  }, [researchContent]);
 
   const generateIdeas = useCallback(
     async (prompt?: string): Promise<string[]> => {
       setIsGeneratingIdeas(true);
       try {
         const result = await postsService.generateIdeas(prompt, userProfile || undefined);
-        setIdeas(result);
-        try {
-          sessionStorage.setItem(IDEAS_STORAGE_KEY, JSON.stringify(result));
-        } catch {
-          /* ignore */
-        }
+        // Backend has already written ai_generated_ideas on the profile;
+        // refresh is best-effort to pull the canonical state into the UI.
+        // A transient refresh failure must NOT poison the mutation —
+        // otherwise the user sees an apparent failure and retries,
+        // triggering a fresh LLM call that overwrites the correct
+        // DynamoDB state. Mutation success is determined by postsService.
+        refreshUserProfile().catch((err) => {
+          logger.warn('profile refresh after generateIdeas failed', { error: err });
+        });
         return result;
       } finally {
         setIsGeneratingIdeas(false);
       }
     },
-    [userProfile]
+    [userProfile, refreshUserProfile]
   );
 
   const researchTopics = useCallback(
     async (topics: string[]) => {
       setIsResearching(true);
       try {
-        const result = await postsService.researchTopics(topics, userProfile || undefined);
-        if (result) {
-          setResearchContent(result);
-          try {
-            sessionStorage.setItem(RESEARCH_STORAGE_KEY, JSON.stringify(result));
-          } catch {
-            /* ignore */
-          }
-        } else {
-          setResearchContent(null);
-          try {
-            sessionStorage.removeItem(RESEARCH_STORAGE_KEY);
-          } catch {
-            /* ignore */
-          }
-        }
+        await postsService.researchTopics(topics, userProfile || undefined);
+        // Fire-and-forget refresh — see generateIdeas for rationale.
+        refreshUserProfile().catch((err) => {
+          logger.warn('profile refresh after researchTopics failed', { error: err });
+        });
       } finally {
         setIsResearching(false);
       }
     },
-    [userProfile]
+    [userProfile, refreshUserProfile]
   );
 
-  const updateSelectedIdeas = useCallback((ideas: string[]) => {
-    setSelectedIdeas(ideas);
-    try {
-      sessionStorage.setItem(SELECTED_IDEAS_STORAGE_KEY, JSON.stringify(ideas));
-    } catch {
-      /* ignore */
-    }
+  const updateSelectedIdeas = useCallback((next: string[]) => {
+    setSelectedIdeas(next);
   }, []);
 
   const synthesizeResearch = useCallback(async () => {
     const ideasForSynthesis = selectedIdeas.length > 0 ? selectedIdeas : undefined;
+    const researchForSynthesis = includeResearch ? (researchContent ?? undefined) : undefined;
     logger.debug('synthesize: start', {
-      hasResearch: !!researchContent,
+      hasResearch: !!researchForSynthesis,
+      includeResearch,
       ideasCount: ideasForSynthesis?.length || 0,
     });
     setIsSynthesizing(true);
     try {
-      const synthesized = await postsService.synthesizeResearch(
+      await postsService.synthesizeResearch(
         {
           existing_content: '',
-          research_content: researchContent ?? undefined,
+          research_content: researchForSynthesis,
           selected_ideas: ideasForSynthesis,
         },
         userProfile || undefined
       );
-      if (synthesized?.content) {
-        setSynthesizedPost(synthesized.content);
-        try {
-          sessionStorage.setItem(SYNTHESIZED_STORAGE_KEY, synthesized.content);
-        } catch {
-          /* ignore */
-        }
-      }
+      // Fire-and-forget refresh — see generateIdeas for rationale.
+      refreshUserProfile().catch((err) => {
+        logger.warn('profile refresh after synthesizeResearch failed', { error: err });
+      });
     } finally {
       setIsSynthesizing(false);
     }
-  }, [researchContent, selectedIdeas, userProfile]);
+  }, [researchContent, includeResearch, selectedIdeas, userProfile, refreshUserProfile]);
 
+  // The clear helpers are the inverse of the generate/research/synthesize
+  // flows: there's no upstream side-effect to protect — the API call IS
+  // the operation. If updateUserProfile fails, the data is still on the
+  // user's profile, so callers must see the error and surface it (toast
+  // / retry prompt). We log + re-throw so callers' try/catch receives
+  // it. The follow-up refreshUserProfile is fire-and-forget for the
+  // same reason as the generate flows: a transient refresh failure
+  // shouldn't make a successful clear look failed.
   const clearResearch = useCallback(async () => {
-    setResearchContent(null);
-    try {
-      sessionStorage.removeItem(RESEARCH_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
     try {
       await profileApiService.updateUserProfile({ ai_generated_research: '' });
     } catch (error) {
       logger.error('Failed to clear research from profile', { error });
+      throw error;
     }
-  }, []);
+    refreshUserProfile().catch((err) => {
+      logger.warn('profile refresh after clearResearch failed', { error: err });
+    });
+  }, [refreshUserProfile]);
 
-  const clearIdea = useCallback(async (newIdeas: string[]) => {
-    setIdeas(newIdeas);
+  const clearIdea = useCallback(
+    async (newIdeas: string[]) => {
+      try {
+        await profileApiService.updateUserProfile({ ai_generated_ideas: newIdeas });
+      } catch (error) {
+        logger.error('Failed to update ideas in profile', { error });
+        throw error;
+      }
+      // Drop any selections that no longer exist in the new list.
+      setSelectedIdeas((prev) => prev.filter((s) => newIdeas.includes(s)));
+      refreshUserProfile().catch((err) => {
+        logger.warn('profile refresh after clearIdea failed', { error: err });
+      });
+    },
+    [refreshUserProfile]
+  );
+
+  const clearSynthesizedPost = useCallback(async () => {
     try {
-      sessionStorage.setItem(IDEAS_STORAGE_KEY, JSON.stringify(newIdeas));
-    } catch {
-      /* ignore */
-    }
-    try {
-      await profileApiService.updateUserProfile({ ai_generated_ideas: newIdeas });
+      await profileApiService.updateUserProfile({ ai_synthesized_post: '' });
     } catch (error) {
-      logger.error('Failed to update ideas in profile', { error });
+      logger.error('Failed to clear synthesized post from profile', { error });
+      throw error;
     }
-  }, []);
-
-  const clearSynthesizedPost = useCallback(() => {
-    setSynthesizedPost(null);
-    try {
-      sessionStorage.removeItem(SYNTHESIZED_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const updateIdeas = useCallback((newIdeas: string[]) => {
-    setIdeas(newIdeas);
-    try {
-      sessionStorage.setItem(IDEAS_STORAGE_KEY, JSON.stringify(newIdeas));
-    } catch {
-      /* ignore */
-    }
-  }, []);
+    refreshUserProfile().catch((err) => {
+      logger.warn('profile refresh after clearSynthesizedPost failed', { error: err });
+    });
+  }, [refreshUserProfile]);
 
   const value = useMemo(
     () => ({
@@ -250,10 +207,11 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
       isResearching,
       isSynthesizing,
       ideas,
-      updateIdeas,
       selectedIdeas,
       updateSelectedIdeas,
       researchContent,
+      includeResearch,
+      setIncludeResearch,
       synthesizedPost,
       generateIdeas,
       researchTopics,
@@ -267,10 +225,10 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
       isResearching,
       isSynthesizing,
       ideas,
-      updateIdeas,
       selectedIdeas,
       updateSelectedIdeas,
       researchContent,
+      includeResearch,
       synthesizedPost,
       generateIdeas,
       researchTopics,

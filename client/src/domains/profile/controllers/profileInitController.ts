@@ -3,12 +3,41 @@ import { logger } from '#utils/logger.js';
 import {
   initializeLinkedInServices,
   cleanupLinkedInServices,
+  type LinkedInServices,
 } from '../../../shared/utils/serviceFactory.js';
-import { validateLinkedInCredentials } from '../../../shared/utils/credentialValidator.js';
-import { ProfileInitService } from '../services/profileInitService.js';
+import {
+  validateLinkedInCredentials,
+  type CredentialValidationResult,
+} from '../../../shared/utils/credentialValidator.js';
+import {
+  ProfileInitService,
+  type InitializationResult,
+  type ProfileInitState,
+} from '../services/profileInitService.js';
 import { HealingManager } from '../../automation/utils/healingManager.js';
 import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { profileInitMonitor } from '../utils/profileInitMonitor.js';
+
+/**
+ * Categorized error metadata produced by {@link ProfileInitController._categorizeError}.
+ */
+interface ProfileInitErrorDetails {
+  type: string;
+  category: string;
+  isRecoverable: boolean;
+  severity: string;
+  userMessage: string;
+}
+
+/**
+ * Wrapped result returned by the profile-init pipeline on success. The pipeline
+ * nests the service's {@link InitializationResult} under `profileData` alongside
+ * timing stats; `undefined` signals that healing was triggered instead.
+ */
+interface ProfileInitResult {
+  profileData: InitializationResult;
+  stats: { initializationTime: string };
+}
 
 export class ProfileInitController {
   async performProfileInit(
@@ -78,7 +107,7 @@ export class ProfileInitController {
         isResuming: ProfileInitStateManager.isResumingState(state),
       });
 
-      const result: any = await this.performProfileInitFromState(state);
+      const result = await this.performProfileInitFromState(state);
 
       if (result === undefined) {
         const healingDuration = Date.now() - startTime;
@@ -109,12 +138,16 @@ export class ProfileInitController {
       }
 
       const totalDuration = Date.now() - startTime;
+      // The service's processing counts live on the nested InitializationResult
+      // (`profileData.data`); typing the pipeline return makes that path
+      // explicit instead of reading an always-undefined `result.data`.
+      const processingStats = result.profileData?.data;
       logger.info('Profile initialization completed successfully', {
         requestId,
         totalDuration,
-        processedConnections: result.data?.processed || 0,
-        skippedConnections: result.data?.skipped || 0,
-        errorCount: result.data?.errors || 0,
+        processedConnections: processingStats?.processed || 0,
+        skippedConnections: processingStats?.skipped || 0,
+        errorCount: processingStats?.errors || 0,
       });
 
       // Record success in monitoring
@@ -151,7 +184,9 @@ export class ProfileInitController {
     }
   }
 
-  async performProfileInitFromState(state: Record<string, any>) {
+  async performProfileInitFromState(
+    state: ProfileInitState
+  ): Promise<ProfileInitResult | undefined> {
     const services = await this._initializeServices();
 
     try {
@@ -172,11 +207,14 @@ export class ProfileInitController {
     }
   }
 
-  async _initializeServices() {
+  async _initializeServices(): Promise<LinkedInServices> {
     return await initializeLinkedInServices();
   }
 
-  async _processUserProfile(services: any, state: Record<string, any>) {
+  async _processUserProfile(
+    services: LinkedInServices,
+    state: ProfileInitState
+  ): Promise<InitializationResult | undefined> {
     logger.info('Processing user profile initialization...');
 
     try {
@@ -188,8 +226,12 @@ export class ProfileInitController {
         services.dynamoDBService
       );
 
-      // Set auth token for DynamoDB operations
-      services.dynamoDBService.setAuthToken(state.jwtToken);
+      // Set auth token for DynamoDB operations. jwtToken is validated upstream
+      // before a state reaches here; the guard satisfies the type and is a
+      // no-op at runtime for valid requests.
+      if (state.jwtToken) {
+        services.dynamoDBService.setAuthToken(state.jwtToken);
+      }
 
       // Process the profile initialization using the service
       const result = await profileInitService.initializeUserProfile(state);
@@ -210,7 +252,7 @@ export class ProfileInitController {
   }
 
   async _handleProfileInitHealing(
-    state: Record<string, any>,
+    state: ProfileInitState,
     errorMessage = 'Profile initialization failed'
   ) {
     const requestId = state.requestId || 'unknown';
@@ -295,7 +337,7 @@ export class ProfileInitController {
    * @param {Error} error - The error that occurred
    * @returns {boolean} True if healing should be triggered
    */
-  _shouldTriggerHealing(error: any): boolean {
+  _shouldTriggerHealing(error: unknown): boolean {
     // Define recoverable error patterns following SearchController patterns
     const recoverableErrors = [
       /login.*failed/i,
@@ -312,7 +354,7 @@ export class ProfileInitController {
       /LIST_CREATION_HEALING_NEEDED/i,
     ];
 
-    const errorMessage = (error as Error).message || error.toString();
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     // Check for list creation healing specifically
     if (errorMessage.includes('LIST_CREATION_HEALING_NEEDED')) {
@@ -332,19 +374,25 @@ export class ProfileInitController {
     return false;
   }
 
-  async _initiateHealing(healingParams: Record<string, any>): Promise<void> {
+  async _initiateHealing(healingParams: Record<string, unknown>): Promise<void> {
     const healingManager = new HealingManager();
     await healingManager.healAndRestart(healingParams);
   }
 
-  async _cleanupServices(services: any): Promise<void> {
+  async _cleanupServices(services: Partial<LinkedInServices> | null): Promise<void> {
     logger.info('Cleaning up services for profile initialization:', !!services?.puppeteerService);
     await cleanupLinkedInServices(services);
     logger.info('Closed browser for profile initialization!');
   }
 
-  _validateRequest(body: Record<string, any>, jwtToken: string) {
-    const { searchName, searchPassword, linkedinCredentialsCiphertext, linkedinCredentials } = body;
+  _validateRequest(body: Record<string, unknown>, jwtToken: string): CredentialValidationResult {
+    const { searchName, searchPassword, linkedinCredentialsCiphertext, linkedinCredentials } =
+      body as {
+        searchName?: string;
+        searchPassword?: string;
+        linkedinCredentialsCiphertext?: string;
+        linkedinCredentials?: { email?: string; password?: string };
+      };
 
     logger.info('Profile init request body received:', {
       searchName,
@@ -388,8 +436,8 @@ export class ProfileInitController {
    * @param {Error} error - The error to categorize
    * @returns {Object} Error categorization details
    */
-  _categorizeError(error: any): Record<string, unknown> {
-    const errorMessage = (error as Error).message || error.toString();
+  _categorizeError(error: unknown): ProfileInitErrorDetails {
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     // Authentication errors
     if (
@@ -491,7 +539,7 @@ export class ProfileInitController {
     return authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : undefined;
   }
 
-  _buildSuccessResponse(result: any, requestId: string): Record<string, unknown> {
+  _buildSuccessResponse(result: ProfileInitResult, requestId: string): Record<string, unknown> {
     return {
       status: 'success',
       data: result,
@@ -501,13 +549,13 @@ export class ProfileInitController {
   }
 
   _buildErrorResponse(
-    error: any,
+    error: Error,
     requestId: string,
-    errorDetails: Record<string, any>
-  ): Record<string, any> {
-    const response: Record<string, any> = {
+    errorDetails: ProfileInitErrorDetails
+  ): Record<string, unknown> {
+    const response: Record<string, unknown> = {
       error: 'Internal server error during profile initialization',
-      message: errorDetails?.userMessage || (error as Error).message,
+      message: errorDetails?.userMessage || error.message,
       requestId,
       errorType: errorDetails?.type || 'UnknownError',
       timestamp: new Date().toISOString(),
@@ -516,8 +564,8 @@ export class ProfileInitController {
     // Include technical details in development mode
     if (process.env.NODE_ENV === 'development') {
       response.technicalDetails = {
-        originalMessage: (error as Error).message,
-        stack: (error as Error).stack,
+        originalMessage: error.message,
+        stack: error.stack,
         category: errorDetails?.category,
         severity: errorDetails?.severity,
         isRecoverable: errorDetails?.isRecoverable,
@@ -527,7 +575,7 @@ export class ProfileInitController {
     return response;
   }
 
-  _buildProfileInitResult(profileData: any): Record<string, any> {
+  _buildProfileInitResult(profileData: InitializationResult): ProfileInitResult {
     return {
       profileData,
       stats: {
@@ -542,9 +590,12 @@ export class ProfileInitController {
    * @param {object} payload - { jwtToken, linkedinCredentialsCiphertext, ... }
    * @param {function} onProgress - progress callback
    */
-  async initializeDirect(payload: Record<string, any>, onProgress: (...args: unknown[]) => void) {
+  async initializeDirect(
+    payload: Record<string, unknown>,
+    onProgress: (...args: unknown[]) => void
+  ) {
     const requestId = this._generateRequestId();
-    const jwtToken = payload.jwtToken;
+    const jwtToken = typeof payload.jwtToken === 'string' ? payload.jwtToken : undefined;
 
     if (!jwtToken) {
       const err: Error & { code?: string } = new Error('Missing or invalid Authorization header');
@@ -552,7 +603,7 @@ export class ProfileInitController {
       throw err;
     }
 
-    const validationResult = this._validateRequest(payload, jwtToken) as any;
+    const validationResult = this._validateRequest(payload, jwtToken);
     if (!validationResult.isValid) {
       const err: Error & { code?: string } = new Error(
         validationResult.error || validationResult.message

@@ -8,6 +8,8 @@ import logging
 import os
 from typing import Any
 
+from botocore.exceptions import ClientError
+from errors.exceptions import NotFoundError
 from shared_services.monetization import ensure_tier_exists
 from shared_services.protocols import (
     FeatureFlagServiceProto,
@@ -108,7 +110,14 @@ def check_feature_gate(
                 return api_response(
                     403, {'error': 'Feature not available on current plan', 'code': 'FEATURE_GATED'}, event
                 )
-        except Exception:
+        except (ClientError, NotFoundError):
+            # Genuine entitlement-lookup infrastructure failure (DynamoDB error or
+            # missing tier row): fail closed (503) rather than grant access we
+            # cannot verify. A programming error (KeyError/TypeError) is NOT caught
+            # here — it propagates to the calling handler's outer catch and surfaces
+            # as a 500, so masked bugs are not reported as a 503. In the community
+            # edition the flag service is a permissive no-op stub that never raises
+            # these infra errors, so this branch is unreachable there.
             logger.exception('Feature flag check failed for %s, denying request', feature_key)
             return api_response(503, {'error': 'Feature availability check failed'}, event)
     return None

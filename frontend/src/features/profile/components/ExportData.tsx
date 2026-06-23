@@ -27,7 +27,7 @@ export function ExportData({ onExportCsv, onExportJson, hasConnections }: Export
             onClick={onExportCsv}
             disabled={!hasConnections}
             variant="outline"
-            className="border-white/20 text-white hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-slate-700 border-white/20 text-white hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FileSpreadsheet className="h-4 w-4 mr-2" />
             Export CSV
@@ -37,7 +37,7 @@ export function ExportData({ onExportCsv, onExportJson, hasConnections }: Export
             onClick={onExportJson}
             disabled={!hasConnections || !onExportJson}
             variant="outline"
-            className="border-white/20 text-white hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-slate-700 border-white/20 text-white hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FileJson className="h-4 w-4 mr-2" />
             Export JSON

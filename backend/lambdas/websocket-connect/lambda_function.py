@@ -211,16 +211,28 @@ def lambda_handler(event, context):
     # delete the still-valid connection record. Browsers query the current
     # agent state via the $default `get_agent_status` action after their
     # socket opens.
-    try:
-        if client_type == 'agent':
-            for browser in ws_service.get_user_connections(user_sub, 'browser'):
-                if browser['connectionId'] == connection_id:
-                    continue
+    if client_type == 'agent':
+        # get_user_connections(..., 'browser') only returns browser-type
+        # connections; the agent's connection_id can never appear in
+        # this list, so the previous self-skip check was dead code.
+        # Per-send try/except so a single failed connection (e.g. one
+        # browser tab that just closed) doesn't abort delivery to the
+        # rest of the user's tabs.
+        try:
+            browsers = ws_service.get_user_connections(user_sub, 'browser')
+        except Exception:
+            logger.exception('agent_status: failed to enumerate browser connections')
+            browsers = []
+        for browser in browsers:
+            try:
                 ws_service.send_to_connection(
                     browser['connectionId'],
                     {'action': 'agent_status', 'connected': True},
                 )
-    except Exception:
-        logger.exception('agent_status broadcast failed (non-fatal)')
+            except Exception:
+                logger.exception(
+                    'agent_status send failed for connection %s',
+                    browser.get('connectionId', '<unknown>'),
+                )
 
     return {'statusCode': 200, 'body': 'Connected'}

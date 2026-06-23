@@ -17,6 +17,7 @@ API_URL=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="ApiUrl") | .OutputV
 USER_POOL_ID=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="UserPoolId") | .OutputValue')
 USER_POOL_CLIENT_ID=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="UserPoolClientId") | .OutputValue')
 TABLE_NAME=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="DynamoDBTableName") | .OutputValue')
+WEBSOCKET_URL=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="WebSocketApiUrl") | .OutputValue')
 REGION=$(aws configure get region)
 
 echo "✅ Stack outputs retrieved!"
@@ -30,6 +31,7 @@ echo "VITE_API_GATEWAY_URL=$API_URL"
 echo "VITE_AWS_REGION=$REGION"
 echo "VITE_COGNITO_USER_POOL_ID=$USER_POOL_ID"
 echo "VITE_COGNITO_USER_POOL_WEB_CLIENT_ID=$USER_POOL_CLIENT_ID"
+echo "VITE_WEBSOCKET_URL=$WEBSOCKET_URL"
 echo ""
 echo "# Backend (Puppeteer) - AWS Configuration"
 echo "API_GATEWAY_BASE_URL=$API_URL"
@@ -67,7 +69,7 @@ if [[ "${2}" == "--update-env" ]]; then
         echo "📋 First-time setup required:"
         echo "   cd .."
         echo "   cp .env.example .env"
-        echo "   cd RAG-CloudStack"
+        echo "   cd scripts/deploy"
         echo "   ./get-env-vars.sh $STACK_NAME --update-env"
         exit 1
     fi
@@ -100,6 +102,7 @@ if [[ "${2}" == "--update-env" ]]; then
     update_env_var "VITE_AWS_REGION" "$REGION" "$ENV_FILE"
     update_env_var "VITE_COGNITO_USER_POOL_ID" "$USER_POOL_ID" "$ENV_FILE"
     update_env_var "VITE_COGNITO_USER_POOL_WEB_CLIENT_ID" "$USER_POOL_CLIENT_ID" "$ENV_FILE"
+    update_env_var "VITE_WEBSOCKET_URL" "$WEBSOCKET_URL" "$ENV_FILE"
     update_env_var "API_GATEWAY_BASE_URL" "$API_URL" "$ENV_FILE"
     update_env_var "AWS_REGION" "$REGION" "$ENV_FILE"
     update_env_var "DYNAMODB_TABLE" "$TABLE_NAME" "$ENV_FILE"

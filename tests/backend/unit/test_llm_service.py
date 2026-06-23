@@ -25,16 +25,6 @@ def mock_openai_client():
 
 
 @pytest.fixture
-def mock_bedrock_client():
-    """Create mock Bedrock client."""
-    client = MagicMock()
-    client.invoke_model.return_value = {
-        'body': MagicMock(read=MagicMock(return_value=b'{"content": [{"text": "Styled content"}]}'))
-    }
-    return client
-
-
-@pytest.fixture
 def mock_dynamodb_table():
     """Create mock DynamoDB table."""
     table = MagicMock()
@@ -43,13 +33,12 @@ def mock_dynamodb_table():
 
 
 @pytest.fixture
-def service(mock_openai_client, mock_bedrock_client, mock_dynamodb_table):
+def service(mock_openai_client, mock_dynamodb_table):
     """Create LLMService with mocked dependencies."""
     from conftest import load_service_class
     module = load_service_class('llm', 'llm_service')
     return module.LLMService(
         openai_client=mock_openai_client,
-        bedrock_client=mock_bedrock_client,
         table=mock_dynamodb_table
     )
 
@@ -57,16 +46,14 @@ def service(mock_openai_client, mock_bedrock_client, mock_dynamodb_table):
 class TestLLMServiceInit:
     """Tests for service initialization."""
 
-    def test_service_initializes_with_clients(self, mock_openai_client, mock_bedrock_client, mock_dynamodb_table):
+    def test_service_initializes_with_clients(self, mock_openai_client, mock_dynamodb_table):
         from conftest import load_service_class
         module = load_service_class('llm', 'llm_service')
         svc = module.LLMService(
             openai_client=mock_openai_client,
-            bedrock_client=mock_bedrock_client,
             table=mock_dynamodb_table
         )
         assert svc.openai_client == mock_openai_client
-        assert svc.bedrock_client == mock_bedrock_client
         assert svc.table == mock_dynamodb_table
 
 
@@ -303,7 +290,7 @@ class TestGenerateMessage:
         assert 'outbound' in prompt
         assert 'Hello!' in prompt
 
-    def test_generate_message_enriches_from_dynamodb(self, mock_openai_client, mock_bedrock_client):
+    def test_generate_message_enriches_from_dynamodb(self, mock_openai_client):
         import base64
         from moto import mock_aws
 
@@ -337,7 +324,6 @@ class TestGenerateMessage:
             module = load_service_class('llm', 'llm_service')
             svc = module.LLMService(
                 openai_client=mock_openai_client,
-                bedrock_client=mock_bedrock_client,
                 table=table,
             )
 

@@ -17,6 +17,35 @@ const userPool = new CognitoUserPool({
   ClientId: cognitoConfig.userPoolWebClientId,
 });
 
+// Prefix the amazon-cognito-identity-js SDK uses for every key it writes to
+// localStorage (e.g. `...<clientId>.<username>.idToken`, `.accessToken`,
+// `.refreshToken`, `.clockDrift`, and `...LastAuthUser`). Removing all keys
+// with this prefix clears the locally-cached tokens on logout.
+const COGNITO_STORAGE_PREFIX = 'CognitoIdentityServiceProvider.';
+
+// Purge the SDK's locally-cached Cognito tokens. Iterates over a snapshot of
+// the key list (collect first, then remove) to avoid index-shift bugs while
+// deleting, and swallows storage errors to match the codebase's
+// storage-access pattern.
+//
+// Known limitation (CRITICAL #5, PARTIAL): the SDK keeps tokens in
+// JS-readable localStorage by default; this purge runs at logout but does not
+// change the storage backend — see signOut().
+function purgeCognitoStorage(): void {
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(COGNITO_STORAGE_PREFIX)) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((key) => localStorage.removeItem(key));
+  } catch {
+    // localStorage may be unavailable (private mode, disabled) — ignore.
+  }
+}
+
 // Helper function to extract user data from Cognito attributes
 function extractUserData(
   session: CognitoUserSession,
@@ -178,12 +207,44 @@ export class CognitoAuthService {
     });
   }
 
-  // Sign out the current user
+  // Sign out the current user.
+  //
+  // Invalidates the refresh token server-side via globalSignOut so a stolen
+  // long-lived refresh token cannot be used after logout, then purges the
+  // SDK's local token storage. On any globalSignOut failure (expired session,
+  // network down) we fall back to the local-only signOut so logout always
+  // completes locally — we never leave the user "logged in" because the
+  // server call failed.
+  //
+  // Known limitation (CRITICAL #5, PARTIAL): amazon-cognito-identity-js@6.x
+  // stores tokens in localStorage by default and supplying a custom in-memory
+  // storage shim is invasive and SDK-constrained, so tokens still live in
+  // JS-readable storage between login and logout. Moving the SDK off
+  // localStorage is a deliberately out-of-scope residual.
   static async signOut(): Promise<void> {
     const cognitoUser = userPool.getCurrentUser();
-    if (cognitoUser) {
-      cognitoUser.signOut();
+    if (!cognitoUser) {
+      // No active user, but stale Cognito keys may linger — purge them.
+      purgeCognitoStorage();
+      return;
     }
+
+    return new Promise<void>((resolve) => {
+      cognitoUser.globalSignOut({
+        onSuccess: () => {
+          purgeCognitoStorage();
+          resolve();
+        },
+        onFailure: (err) => {
+          logger.warn('Cognito globalSignOut failed; falling back to local sign-out', {
+            error: err,
+          });
+          cognitoUser.signOut();
+          purgeCognitoStorage();
+          resolve();
+        },
+      });
+    });
   }
 
   // Get current authenticated user
@@ -348,12 +409,18 @@ export class CognitoAuthService {
           resolve(null);
           return;
         }
-        resolve({
-          idToken: session.getIdToken().getJwtToken(),
-          refreshToken: session.getRefreshToken().getToken(),
-          cognitoClientId: cognitoConfig.userPoolWebClientId,
-          region: cognitoConfig.region,
-        });
+        const idToken = session.getIdToken().getJwtToken();
+        const refreshToken = session.getRefreshToken().getToken();
+        const clientId = cognitoConfig.userPoolWebClientId;
+        const region = cognitoConfig.region;
+        // Resolve null instead of pushing an incomplete bundle to the
+        // desktop agent — the loopback POST validates these and 400s,
+        // but failing fast here gives the UI a clearer signal.
+        if (!idToken || !refreshToken || !clientId || !region) {
+          resolve(null);
+          return;
+        }
+        resolve({ idToken, refreshToken, cognitoClientId: clientId, region });
       });
     });
   }

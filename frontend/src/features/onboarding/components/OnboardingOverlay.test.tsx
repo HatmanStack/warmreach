@@ -39,11 +39,6 @@ vi.mock('@/features/profile', () => ({
   }),
 }));
 
-// Mock crypto utility
-vi.mock('@/shared/utils/crypto', () => ({
-  encryptWithSealboxB64: vi.fn().mockResolvedValue('encrypted-data'),
-}));
-
 const renderOverlay = () => {
   // OnboardingOverlay → LinkedInCredentialStep → DesktopClientDownloadPrompt
   // uses useQuery to fetch /client-downloads, so a QueryClientProvider is

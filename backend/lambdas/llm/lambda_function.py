@@ -5,7 +5,8 @@ import logging
 import os
 
 import boto3
-from errors.exceptions import ServiceError, ValidationError
+from botocore.exceptions import ClientError
+from errors.exceptions import NotFoundError, ServiceError, ValidationError
 from openai import OpenAI
 from services.llm_service import LLMService
 from shared_services.activity_writer import write_activity
@@ -48,16 +49,6 @@ def _get_openai_client() -> OpenAI:
     return OpenAI(api_key=_openai_secret.get_value(), timeout=OPENAI_TIMEOUT)
 
 
-_bedrock_client = None
-
-
-def _get_bedrock_client():
-    global _bedrock_client
-    if _bedrock_client is None:
-        _bedrock_client = boto3.client('bedrock-runtime')
-    return _bedrock_client
-
-
 # Optional: LLM Lambda can serve AI-only operations (generate, research) without DynamoDB.
 # Quota enforcement and usage tracking require DynamoDB but are skipped when table is None.
 table_name = os.environ.get('DYNAMODB_TABLE_NAME')
@@ -79,7 +70,6 @@ def _get_llm_service() -> LLMService:
     if _llm_service is None or (now - _llm_service_created_at) > _LLM_SERVICE_TTL_SECONDS:
         _llm_service = LLMService(
             openai_client=_get_openai_client(),
-            bedrock_client=_get_bedrock_client(),
             table=table,
         )
         _llm_service_created_at = now
@@ -209,10 +199,10 @@ def lambda_handler(event, _context):
         if not op or op not in OPS:
             return api_response(400, {'error': 'Invalid operation'}, event)
 
-        # Auto-provision tier on first call (non-blocking)
+        # Auto-provision tier on first call (best-effort, non-blocking): a tier
+        # row that fails to materialize here is recoverable on a later call, so
+        # we log and continue rather than block the request.
         if table:
-            from botocore.exceptions import ClientError
-
             try:
                 ensure_tier_exists(table, user_id)
             except ClientError as e:
@@ -243,7 +233,12 @@ def lambda_handler(event, _context):
                             },
                             event,
                         )
-                except Exception:
+                except (ClientError, NotFoundError):
+                    # Genuine entitlement-lookup infrastructure failure: fail closed
+                    # (deny) rather than grant access we cannot verify. A programming
+                    # error (KeyError/TypeError) is NOT caught here — it propagates to
+                    # the handler's outer catch and surfaces as a 500, so masked bugs
+                    # are not reported as a 503 "feature check failed".
                     logger.error('Feature flag check failed for %s, denying request', feature_to_check)
                     return api_response(503, {'error': 'Feature availability check failed'}, event)
 
@@ -257,8 +252,13 @@ def lambda_handler(event, _context):
                 reserved = True
             except QuotaExceededError:
                 raise
-            except Exception:
-                logger.warning('reserve_usage failed for %s, allowing request', op)
+            except (ClientError, NotFoundError):
+                # Fail closed on metering-infrastructure failure (ADR-004): if we
+                # cannot reserve quota we must NOT run the paid OpenAI call. In the
+                # community edition reserve_usage is a no-op stub so this branch is
+                # effectively unreachable, but the posture is kept identical to pro.
+                logger.error('reserve_usage failed for %s, denying request (fail closed)', op)
+                return api_response(503, {'error': 'Quota service unavailable, please retry'}, event)
 
         # Dispatch via routing table
         handler = HANDLERS[op]

@@ -329,6 +329,10 @@ export class PuppeteerService {
       return this.page;
     } catch (error) {
       logger.error('Failed to initialize Puppeteer:', error);
+      // Tear down whatever was created before the failure so a launched
+      // Chromium is not orphaned (CRITICAL #2). close() is null-guarded and
+      // swallows its own errors, so the original init error still propagates.
+      await this.close();
       throw error;
     }
   }

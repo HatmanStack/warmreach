@@ -143,6 +143,59 @@ describe('UserProfileContext', () => {
     });
   });
 
+  describe('fetch failure surfacing + retry (HIGH #16)', () => {
+    it('surfaces error and leaves profile_fetched unset on a failed fetch', async () => {
+      mockGetUserProfile.mockRejectedValueOnce(new Error('network down'));
+
+      const { result } = renderHook(() => useUserProfile(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.error).not.toBeNull();
+      // The flag must NOT be set after a failure, so a retry is allowed.
+      expect(sessionStorage.getItem('profile_fetched')).not.toBe('true');
+    });
+
+    it('allows a retry after failure that re-fetches and clears the error', async () => {
+      mockGetUserProfile
+        .mockRejectedValueOnce(new Error('network down'))
+        .mockResolvedValueOnce({ success: true, data: { firstName: 'Recovered' } });
+
+      const { result } = renderHook(() => useUserProfile(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.error).not.toBeNull();
+      });
+
+      // The guard did not suppress a retry.
+      await act(async () => {
+        await result.current.refreshUserProfile();
+      });
+
+      await waitFor(() => {
+        expect(result.current.error).toBeNull();
+      });
+      expect(result.current.userProfile!.firstName).toBe('Recovered');
+      expect(sessionStorage.getItem('profile_fetched')).toBe('true');
+      expect(mockGetUserProfile).toHaveBeenCalledTimes(2);
+    });
+
+    it('sets profile_fetched only after a successful fetch', async () => {
+      mockGetUserProfile.mockResolvedValueOnce({ success: true, data: { firstName: 'Ok' } });
+
+      const { result } = renderHook(() => useUserProfile(), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.userProfile).not.toBeNull();
+      });
+
+      expect(sessionStorage.getItem('profile_fetched')).toBe('true');
+      expect(result.current.error).toBeNull();
+    });
+  });
+
   describe('updateUserProfile', () => {
     it('should call API and refresh profile', async () => {
       sessionStorage.setItem('profile_fetched', 'true');

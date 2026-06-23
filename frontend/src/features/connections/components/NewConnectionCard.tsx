@@ -458,7 +458,7 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
                     <Tag className="h-3 w-3 text-slate-400 mr-1 flex-shrink-0" />
                     {visible.map((tag: string, index: number) => (
                       <Badge
-                        key={index}
+                        key={`${tag}-${index}`}
                         variant="outline"
                         className={`cursor-pointer text-xs transition-all duration-200 hover:scale-105 flex-shrink-0 ${
                           activeTags.includes(tag)
@@ -509,7 +509,7 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
             {(connection.tags || connection.common_interests || []).map(
               (tag: string, index: number) => (
                 <Badge
-                  key={`all-${index}`}
+                  key={`all-${tag}-${index}`}
                   variant="outline"
                   className={`cursor-pointer text-xs transition-all duration-200 hover:scale-105 ${
                     activeTags.includes(tag)
@@ -529,4 +529,4 @@ const NewConnectionCard: React.FC<NewConnectionCardProps> = ({
   );
 };
 
-export default NewConnectionCard;
+export default React.memo(NewConnectionCard);

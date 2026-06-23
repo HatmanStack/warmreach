@@ -5,6 +5,77 @@ All notable changes to WarmReach will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.20.0] - 2026-06-23
+
+Audit remediation: a unified pass over three audits (technical-debt health, 12-pillar
+code evaluation, documentation drift) sequenced as cleanup, then reliability fixes,
+then guardrails, then documentation.
+
+### Added
+
+- **CI:** Python static type checking (`npm run typecheck:backend`, mypy over the backend
+  `shared_services` layer) and lint rules that reject untyped WebSocket command payloads
+  and double-casts at the transport boundary.
+- **Docs:** Generated API reference — `npm run docs:api:ts` (typedoc for frontend/client/admin)
+  and `npm run docs:api:py` (mkdocstrings for the backend shared-services layer). Output is
+  generated in CI and gitignored. A `docs-api.yml` workflow keeps both generators buildable.
+
+### Changed
+
+- **Frontend:** Reliability hardening — wired the existing `ErrorBoundary`, added `Suspense`
+  boundaries, fetch timeouts via `AbortController`, and `setTimeout` cleanup; memoized
+  chart/table/list components with stable list keys.
+- **Backend:** Consistent error-handling posture on the LLM/billing paths (narrowed broad
+  excepts, fail-closed on quota) and a uniform OpenAI retry wrapper.
+- **Client:** Typed the `commandRouter` transport boundary and persisted the LinkedIn
+  daily-action rate limit via the existing Redis path.
+- **Admin:** Admin routes gate on the admin role, not merely authentication.
+- **CI:** `docs-lint` (markdownlint + lychee) is now a blocking PR gate instead of
+  `continue-on-error`.
+- **Client:** Moved the LinkedIn auth lifecycle into the interaction service
+  (`ensureAuthenticated`), removing the constructor-cast workaround in the controller.
+- **Client:** Typed the profile-init and search controllers (removed the remaining
+  `any`/double-cast escapes) and extended the transport-boundary lint ratchet to cover them.
+
+### Fixed
+
+- **Docs:** Corrected the `BEDROCK_MODEL_ID` drift (the real default is
+  `us.anthropic.claude-sonnet-4-5-20250929-v1:0`), removed the stale `registration`-Lambda
+  sections, documented the `client-downloads` Lambda and `protocols.py` shared service,
+  fixed the admin dev-server command, the `WebSocketApiUrl` output-key comment, and the
+  shared-services path. `scripts/deploy/get-env-vars.sh --update-env` now also writes
+  `VITE_WEBSOCKET_URL`, matching the docs.
+- **Client:** A failed Puppeteer initialisation now closes the launched Chromium instead of
+  orphaning it (the self-healing restart loop was leaking one browser per cycle).
+- **Client:** WebSocket client gained heartbeat-liveness detection (half-open sockets now
+  reconnect), jittered reconnect backoff, and listener cleanup on reconnect.
+- **Backend:** `digest-per-user` SES sends retry transient failures with a bounded timeout
+  and log delivery failures distinctly instead of swallowing them.
+- **Frontend:** A failed initial profile fetch no longer suppresses retries for the whole
+  session — the error surfaces and the fetch can retry.
+- **Client:** Search `successRate` guards against division by zero (no more `NaN%`).
+
+### Security
+
+- **Frontend:** Sign-out invalidates the Cognito refresh token server-side (`globalSignOut`)
+  and purges the cached tokens from `localStorage` instead of clearing an unused key.
+- **Client:** The LinkedIn daily-action rate limiter fails closed when its configured Redis
+  backend errors, rather than falling back to a fresh in-memory counter that could exceed
+  the daily cap.
+- **Client:** The WebSocket transport boundary validates command payloads (typed shapes and
+  boolean feature-flag values) before dispatching to browser automation.
+- **Dependencies:** Cleared client `npm audit` high-severity advisories (fast-uri, form-data,
+  node-tar, tmp, undici) and backend test-dependency advisories (PyJWT, urllib3, cryptography,
+  idna).
+
+## [1.19.0] - 2026-04-29
+
+### Fixed
+
+- **Client:** `app.requestSingleInstanceLock()` — launching the AppImage a second time now focuses the existing window instead of spawning a duplicate. Without this, two agent processes held the same Cognito token, both connected as `clientType=agent`, and the backend's "single client per user per type" rule put them in a permanent reconnect loop.
+
 ## [1.18.0] - 2026-04-29
 
 ### Changed

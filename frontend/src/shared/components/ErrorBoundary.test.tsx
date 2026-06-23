@@ -2,9 +2,20 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ErrorBoundary } from './ErrorBoundary';
 
-// Suppress console.error from ErrorBoundary.componentDidCatch during tests
+const { mockLoggerError } = vi.hoisted(() => ({ mockLoggerError: vi.fn() }));
+vi.mock('@/shared/utils/logger', () => ({
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: mockLoggerError,
+  }),
+}));
+
+// Suppress console.error from React's error boundary logging during tests
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
+  mockLoggerError.mockClear();
 });
 
 let shouldThrow = true;
@@ -51,6 +62,23 @@ describe('ErrorBoundary', () => {
     );
 
     expect(screen.getByText('Custom error message')).toBeInTheDocument();
+  });
+
+  it('should report the caught error and errorInfo through the logger seam', () => {
+    render(
+      <ErrorBoundary>
+        <ThrowingComponent />
+      </ErrorBoundary>
+    );
+
+    expect(mockLoggerError).toHaveBeenCalledTimes(1);
+    const [message, context] = mockLoggerError.mock.calls[0];
+    expect(message).toMatch(/caught/i);
+    expect(context).toMatchObject({
+      error: expect.any(Error),
+      componentStack: expect.any(String),
+    });
+    expect((context.error as Error).message).toBe('Test error');
   });
 
   it('should recover when Try Again is clicked and child stops throwing', () => {

@@ -90,6 +90,30 @@ describe('useErrorHandler', () => {
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Information' }));
   });
 
+  it('should not auto-resolve after the hook unmounts', async () => {
+    const { result, unmount } = renderHook(() => useErrorHandler());
+
+    let settled = false;
+    act(() => {
+      result.current.handleError(new Error('fail')).then(() => {
+        settled = true;
+      });
+    });
+
+    // Unmount before the 10s auto-resolve window elapses.
+    unmount();
+
+    await act(async () => {
+      vi.runAllTimers();
+      // Flush any microtasks the auto-resolve would have scheduled.
+      await Promise.resolve();
+    });
+
+    // The pending auto-resolve timer must have been cleared on unmount, so the
+    // promise never resolves and no post-unmount state update is attempted.
+    expect(settled).toBe(false);
+  });
+
   it('should clear current error', () => {
     const { result } = renderHook(() => useErrorHandler());
 

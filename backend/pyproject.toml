@@ -35,3 +35,55 @@ ignore = [
 [tool.ruff.format]
 quote-style = "single"
 indent-style = "space"
+
+[tool.mypy]
+# Static type checking for the backend Lambda shared-services layer. This locks
+# in the typed-boundary work (TypedDicts, Protocols, `str | None`) so it cannot
+# silently regress. CI runs `mypy -p shared_services` from `backend/`.
+#
+# Scope note (future ratchet): the per-Lambda `lambda_function.py` handlers all
+# share the same module name, which mypy cannot resolve in a single pass without
+# per-directory invocation. The cohesive, uniquely-named `shared_services`
+# package is the type-rigor surface and is what is checked here. Extending the
+# check to the handlers (one mypy invocation per Lambda dir) is a future ratchet.
+python_version = "3.13"
+mypy_path = "lambdas/shared/python"
+# Third-party Lambda-layer deps (boto3, requests, yaml, openai, ...) ship no
+# stubs in this repo; missing imports are not the type errors we are guarding.
+ignore_missing_imports = true
+# Meaningful checks that are GREEN on the current tree at introduction. These
+# run mypy's default analysis over typed call sites and signatures (catching the
+# TypedDict / Protocol / `str | None` boundary regressions this guardrail exists
+# to prevent) plus no-implicit-optional and redundant-cast detection.
+warn_redundant_casts = true
+no_implicit_optional = true
+# NOTE: the following stricter checks are intentionally OFF — each surfaces a
+# wall of pre-existing errors today and is a future ratchet:
+#   check_untyped_defs      (var-annotated on untyped-def locals)
+#   warn_unused_ignores     (existing `# type: ignore` comments)
+#   disallow_untyped_defs / strict mode
+
+# Future ratchet: these modules carry pre-existing type errors (TypedDict
+# mismatches, union-attr, arg-type) that predate this guardrail. They are
+# excluded from error reporting so the check is GREEN at introduction per the
+# audit's "guardrail must be green when added" rule. Fix the errors and remove
+# each entry from this list to ratchet coverage up.
+[[tool.mypy.overrides]]
+module = [
+    "errors.exceptions",
+    "shared_services.activity_service",
+    "shared_services.analytics_service",
+    "shared_services.billing_service",
+    "shared_services.edge_ingestion_service",
+    "shared_services.edge_query_service",
+    "shared_services.github_client",
+    "shared_services.handler_utils",
+    "shared_services.ingestion_service",
+    "shared_services.notification_service",
+    "shared_services.ragstack_client",
+    "shared_services.relationship_scoring_service",
+    "shared_services.send_time_service",
+    "shared_services.tier_service",
+    "shared_services.warm_intro_paths_service",
+]
+ignore_errors = true

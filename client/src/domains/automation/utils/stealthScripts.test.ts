@@ -6,6 +6,114 @@ import {
   getHeadlessEvasionScript,
 } from './stealthScripts';
 
+/**
+ * Build a minimal mock canvas DOM and evaluate the generated canvas-noise script
+ * inside it. The client test environment is `node` (no jsdom), so we model just
+ * enough of HTMLCanvasElement / 2d context to observe whether the noise lands in
+ * the serialized output and whether the source canvas is left untouched.
+ *
+ * @param seed noise seed
+ * @param opts.throwOnGetImageData simulate a cross-origin SecurityError
+ */
+function evalCanvasScript(
+  seed: number,
+  opts: { throwOnGetImageData?: boolean } = {}
+): { serialize: () => string; sourcePixels: number[] } {
+  const sourceFill = 100;
+  const size = 4;
+
+  class MockCtx {
+    canvas: MockCanvas;
+    constructor(canvas: MockCanvas) {
+      this.canvas = canvas;
+    }
+    drawImage(source: MockCanvas) {
+      this.canvas._pixels = source._pixels.slice();
+    }
+    getImageData(_x: number, _y: number, w: number, h: number) {
+      if (opts.throwOnGetImageData) {
+        const err = new Error('SecurityError');
+        err.name = 'SecurityError';
+        throw err;
+      }
+      return { data: this.canvas._pixels, width: w, height: h };
+    }
+    putImageData(imageData: { data: Uint8ClampedArray }) {
+      this.canvas._pixels = imageData.data;
+    }
+  }
+
+  class MockCanvas {
+    width = size;
+    height = size;
+    _pixels: Uint8ClampedArray = new Uint8ClampedArray(size * size * 4).fill(sourceFill);
+    getContext() {
+      return new MockCtx(this);
+    }
+    // Prototype serialization methods that read the (possibly cloned) backing store.
+    toDataURL() {
+      return 'data:' + Array.from(this._pixels).join(',');
+    }
+    toBlob(cb: (blob: { pixels: number[] }) => void) {
+      cb({ pixels: Array.from(this._pixels) });
+    }
+  }
+
+  const document = { createElement: () => new MockCanvas() };
+  const script = getCanvasNoiseScript(seed);
+  const runner = new Function(
+    'HTMLCanvasElement',
+    'document',
+    'Math',
+    'Reflect',
+    'Proxy',
+    'Uint8ClampedArray',
+    script
+  );
+  runner(MockCanvas, document, Math, Reflect, Proxy, Uint8ClampedArray);
+
+  const source = new MockCanvas();
+  return {
+    serialize: () => source.toDataURL(),
+    sourcePixels: Array.from(source._pixels),
+  };
+}
+
+/**
+ * Evaluate the headless-evasion script against a mock navigator whose prototype
+ * exposes (empty) plugins/mimeTypes so the spoof branch executes.
+ */
+function evalHeadlessScript(pluginCount: number): {
+  plugins: unknown[];
+  mimeTypes: unknown[];
+} {
+  const navProto: Record<string, unknown> = {};
+  const navigator = Object.create(navProto) as {
+    plugins: unknown[];
+    mimeTypes: unknown[];
+    permissions: { query: () => Promise<unknown> };
+  };
+  Object.defineProperty(navProto, 'plugins', { get: () => [], configurable: true });
+  Object.defineProperty(navProto, 'mimeTypes', { get: () => [], configurable: true });
+  navigator.permissions = { query: () => Promise.resolve({ state: 'granted' }) };
+  const window: { navigator: typeof navigator; chrome?: unknown } = { navigator };
+
+  const script = getHeadlessEvasionScript({ pluginCount });
+  const runner = new Function(
+    'navigator',
+    'window',
+    'Object',
+    'Promise',
+    'Reflect',
+    'Proxy',
+    'Array',
+    'JSON',
+    script
+  );
+  runner(navigator, window, Object, Promise, Reflect, Proxy, Array, JSON);
+  return { plugins: navigator.plugins, mimeTypes: navigator.mimeTypes };
+}
+
 describe('stealthScripts', () => {
   describe('getCanvasNoiseScript', () => {
     it('requires a seed parameter', () => {
@@ -29,6 +137,38 @@ describe('stealthScripts', () => {
     it('embeds a PRNG and does not use Math.random() for noise', () => {
       const script = getCanvasNoiseScript(12345);
       expect(script).not.toContain('Math.random()');
+    });
+
+    it('applies deterministic noise to the serialized output for a fixed seed', () => {
+      const a = evalCanvasScript(12345).serialize();
+      const b = evalCanvasScript(12345).serialize();
+      expect(a).toBe(b);
+    });
+
+    it('produces different serialized output across different seeds', () => {
+      const a = evalCanvasScript(12345).serialize();
+      const c = evalCanvasScript(54321).serialize();
+      expect(a).not.toBe(c);
+    });
+
+    it('actually injects noise (output differs from the un-noised source)', () => {
+      const result = evalCanvasScript(12345);
+      const plain = 'data:' + result.sourcePixels.join(',');
+      expect(result.serialize()).not.toBe(plain);
+    });
+
+    it('serializes the noised clone without mutating the source canvas', () => {
+      const result = evalCanvasScript(12345);
+      // The source canvas pixels are untouched; only the clone carries noise.
+      expect(result.sourcePixels.every((v) => v === 100)).toBe(true);
+    });
+
+    it('falls back to an un-noised clone on cross-origin SecurityError without throwing', () => {
+      const result = evalCanvasScript(12345, { throwOnGetImageData: true });
+      const plain = 'data:' + result.sourcePixels.join(',');
+      // No noise could be applied, but serialization still succeeds and yields the
+      // un-noised pixels rather than throwing.
+      expect(result.serialize()).toBe(plain);
     });
   });
 
@@ -84,6 +224,25 @@ describe('stealthScripts', () => {
       expect(script).toContain('language');
       expect(script).toContain('en-GB');
       expect(script).toContain('en'); // fallback language
+    });
+
+    it('does not expose mimeTypes as the identical array reference as plugins', () => {
+      const { plugins, mimeTypes } = evalHeadlessScript(3);
+      // Real browsers have related-but-distinct plugin/mimeType structures;
+      // returning the same array is a textbook anti-bot tell.
+      expect(mimeTypes).not.toBe(plugins);
+    });
+
+    it('exposes a plausible, distinct mimeTypes structure derived from plugins', () => {
+      const { plugins, mimeTypes } = evalHeadlessScript(3);
+      expect(Array.isArray(mimeTypes)).toBe(true);
+      expect(mimeTypes.length).toBeGreaterThan(0);
+      // mimeType entries are not byte-identical to plugin entries.
+      expect(JSON.stringify(mimeTypes)).not.toBe(JSON.stringify(plugins));
+      // ...but they reference the plugins (plausible relationship).
+      const first = mimeTypes[0] as Record<string, unknown>;
+      expect(first).toHaveProperty('type');
+      expect(first).toHaveProperty('enabledPlugin');
     });
   });
 });

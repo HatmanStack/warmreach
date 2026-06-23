@@ -1,9 +1,8 @@
-import { useState, type ChangeEvent, type KeyboardEvent, useEffect } from 'react';
+import { useState, useMemo, useRef, type ChangeEvent, type KeyboardEvent, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sparkles, Search, X } from 'lucide-react';
-import useSessionStorage from '@/shared/hooks/useSessionStorage';
 import { usePostComposer } from '../contexts/PostComposerContext';
 
 interface PostAIAssistantProps {
@@ -29,34 +28,50 @@ const PostAIAssistant = ({
   const [researchQuery, setResearchQuery] = useState('');
   const [ideaPrompt, setIdeaPrompt] = useState('');
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
-  const [localIdeas, setLocalIdeas] = useSessionStorage<string[]>('ai_generated_ideas', []);
+  const ideaList = useMemo<string[]>(() => ideas ?? [], [ideas]);
 
-  // Hydrate selected indices from context's selected ideas on mount
+  // One-shot hydration: when an idea list first arrives, restore any
+  // selection from the context (e.g. carried over from a sibling component
+  // earlier in the session). After that, the local checkboxes own the
+  // selection — the downstream sync effect mirrors local → context.
+  //
+  // This MUST NOT also clear selectedIndices when context is empty: that
+  // would race with the sync effect (sync pushes selectedTexts into
+  // context, hydration wipes selectedIndices on the next pass) and trip
+  // React error #185 (max update depth).
+  const hydratedRef = useRef(false);
   useEffect(() => {
-    if (contextSelectedIdeas.length > 0 && localIdeas.length > 0) {
-      const indices = new Set<number>();
-      localIdeas.forEach((idea: string, idx: number) => {
-        if (contextSelectedIdeas.includes(idea)) indices.add(idx);
-      });
-      if (indices.size > 0) setSelectedIndices(indices);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (hydratedRef.current) return;
+    if (ideaList.length === 0) return;
+    hydratedRef.current = true;
+    if (contextSelectedIdeas.length === 0) return;
+    const next = new Set<number>();
+    ideaList.forEach((idea: string, idx: number) => {
+      if (contextSelectedIdeas.includes(idea)) next.add(idx);
+    });
+    if (next.size > 0) setSelectedIndices(next);
+  }, [ideaList, contextSelectedIdeas]);
 
-  // Update local ideas when props change
-  useEffect(() => {
-    if (ideas && ideas.length > 0) {
-      setLocalIdeas(ideas);
-    }
-  }, [ideas, setLocalIdeas]);
-
-  // Sync selected ideas to context whenever selection or list changes
+  // Sync selected ideas to context whenever selection or list changes.
+  // Equality-guarded against the context's value to avoid the same
+  // ping-pong: only call updateSelectedIdeas when the list actually
+  // differs (still allows propagating empty selections).
   useEffect(() => {
     const selectedTexts = Array.from(selectedIndices)
-      .map((idx) => localIdeas[idx])
+      .map((idx) => ideaList[idx])
       .filter((s): s is string => Boolean(s));
+    if (selectedTexts.length === contextSelectedIdeas.length) {
+      let same = true;
+      for (let i = 0; i < selectedTexts.length; i++) {
+        if (selectedTexts[i] !== contextSelectedIdeas[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
     updateSelectedIdeas(selectedTexts);
-  }, [selectedIndices, localIdeas, updateSelectedIdeas]);
+  }, [selectedIndices, ideaList, updateSelectedIdeas, contextSelectedIdeas]);
 
   const handleResearchSubmit = () => {
     if (researchQuery.trim()) {
@@ -71,26 +86,14 @@ const PostAIAssistant = ({
   };
 
   const handleDeleteIdea = async (index: number) => {
-    const newIdeas = localIdeas.filter((_, i) => i !== index);
-    setLocalIdeas(newIdeas);
-
-    // Clear selection if deleted idea was selected and shift indices
-    const newSelected = new Set(selectedIndices);
-    newSelected.delete(index);
-    const adjustedSelected = new Set<number>();
-    newSelected.forEach((selectedIndex) => {
-      if (selectedIndex > index) {
-        adjustedSelected.add(selectedIndex - 1);
-      } else {
-        adjustedSelected.add(selectedIndex);
-      }
-    });
-    setSelectedIndices(adjustedSelected);
-
-    // Notify parent if callback exists
-    if (onIdeasUpdate) {
-      await onIdeasUpdate(newIdeas);
-    }
+    if (!onIdeasUpdate) return;
+    // Don't reindex selectedIndices locally before the parent confirms
+    // — if onIdeasUpdate fails, our optimistic shift would leave the
+    // selection state pointing at the wrong items. Wait for the parent
+    // to push canonical ideas back through props; the hydration effect
+    // above will then rebuild selection against the new list.
+    const newIdeas = ideaList.filter((_, i) => i !== index);
+    await onIdeasUpdate(newIdeas);
   };
 
   const handleIdeaToggle = (index: number) => {
@@ -105,7 +108,7 @@ const PostAIAssistant = ({
 
   const handleResearchTopicsClick = () => {
     const hasCustomTopic = Boolean(ideaPrompt.trim());
-    const hasSelected = Boolean(localIdeas && localIdeas.length > 0 && selectedIndices.size > 0);
+    const hasSelected = Boolean(ideaList && ideaList.length > 0 && selectedIndices.size > 0);
 
     // If textarea has content, research the custom topic
     if (hasCustomTopic) {
@@ -117,7 +120,7 @@ const PostAIAssistant = ({
     // If we have selected ideas, research those
     if (hasSelected) {
       const selectedIdeasList = Array.from(selectedIndices)
-        .map((index) => localIdeas[index])
+        .map((index) => ideaList[index])
         .filter((s): s is string => Boolean(s));
       onResearchTopics(selectedIdeasList);
       return;
@@ -133,7 +136,7 @@ const PostAIAssistant = ({
         <h4 className="text-white font-semibold">Generated Ideas</h4>
       </div>
       <div className="space-y-2">
-        {localIdeas?.map((idea, index) => (
+        {ideaList?.map((idea, index) => (
           <div
             key={index}
             className="flex items-start space-x-3 p-3 bg-white/5 rounded-md border border-white/10"
@@ -151,15 +154,17 @@ const PostAIAssistant = ({
             >
               {idea}
             </label>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/20"
-              onClick={() => handleDeleteIdea(index)}
-              title="Delete idea"
-            >
-              <X className="h-4 w-4" />
-            </Button>
+            {onIdeasUpdate && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/20"
+                onClick={() => handleDeleteIdea(index)}
+                title="Delete idea"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         ))}
       </div>
@@ -186,9 +191,9 @@ const PostAIAssistant = ({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {localIdeas && localIdeas.length > 0 ? renderIdeasList() : renderTextarea()}
+          {ideaList && ideaList.length > 0 ? renderIdeasList() : renderTextarea()}
 
-          {!localIdeas || localIdeas.length === 0 ? (
+          {!ideaList || ideaList.length === 0 ? (
             <Button
               className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
               onClick={handleGenerateIdeas}
@@ -202,7 +207,7 @@ const PostAIAssistant = ({
           {(() => {
             const hasCustomTopic = Boolean(ideaPrompt.trim());
             const hasSelected = Boolean(
-              localIdeas && localIdeas.length > 0 && selectedIndices.size > 0
+              ideaList && ideaList.length > 0 && selectedIndices.size > 0
             );
             const canResearch = hasCustomTopic || hasSelected;
             return (

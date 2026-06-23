@@ -7,6 +7,7 @@ const {
   mockResearchTopics,
   mockSynthesizeResearch,
   mockUpdateUserProfile,
+  mockRefreshUserProfile,
   mockUser,
   mockUserProfile,
 } = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const {
   mockResearchTopics: vi.fn(),
   mockSynthesizeResearch: vi.fn(),
   mockUpdateUserProfile: vi.fn(),
+  mockRefreshUserProfile: vi.fn(),
   mockUser: {
     value: { id: 'user-1', email: 'test@example.com' } as Record<string, unknown> | null,
   },
@@ -33,7 +35,10 @@ vi.mock('@/features/auth', () => ({
 }));
 
 vi.mock('@/features/profile', () => ({
-  useUserProfile: () => ({ userProfile: mockUserProfile.value }),
+  useUserProfile: () => ({
+    userProfile: mockUserProfile.value,
+    refreshUserProfile: mockRefreshUserProfile,
+  }),
 }));
 
 vi.mock('@/shared/services/profileApiService', () => ({
@@ -62,229 +67,204 @@ function createWrapper() {
 describe('PostComposerContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    sessionStorage.clear();
     mockUser.value = { id: 'user-1', email: 'test@example.com' };
     mockUserProfile.value = { firstName: 'John' };
+    mockUpdateUserProfile.mockResolvedValue({ success: true });
+    mockRefreshUserProfile.mockResolvedValue(undefined);
   });
 
-  it('should throw when used outside provider', () => {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('throws when used outside provider', () => {
+    const orig = console.error;
+    console.error = vi.fn();
     expect(() => renderHook(() => usePostComposer())).toThrow(
       'usePostComposer must be used within PostComposerProvider'
     );
-    spy.mockRestore();
+    console.error = orig;
   });
 
-  it('should initialize with empty state', () => {
-    const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
-
-    expect(result.current.ideas).toEqual([]);
-    expect(result.current.selectedIdeas).toEqual([]);
-    expect(result.current.researchContent).toBeNull();
-    expect(result.current.synthesizedPost).toBeNull();
-    expect(result.current.isGeneratingIdeas).toBe(false);
-    expect(result.current.isResearching).toBe(false);
-    expect(result.current.isSynthesizing).toBe(false);
-  });
-
-  describe('sessionStorage hydration', () => {
-    it('should hydrate ideas from sessionStorage', () => {
-      sessionStorage.setItem('ai_generated_ideas', JSON.stringify(['Idea 1', 'Idea 2']));
-
+  describe('hydration from userProfile', () => {
+    it('exposes ideas from profile.ai_generated_ideas', () => {
+      mockUserProfile.value = {
+        firstName: 'John',
+        ai_generated_ideas: ['Idea 1', 'Idea 2'],
+      };
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
-
       expect(result.current.ideas).toEqual(['Idea 1', 'Idea 2']);
     });
 
-    it('should hydrate research from sessionStorage', () => {
-      sessionStorage.setItem('ai_research_content', JSON.stringify('stored research'));
-
+    it('exposes research from profile.ai_generated_research', () => {
+      mockUserProfile.value = {
+        firstName: 'John',
+        ai_generated_research: 'stored research',
+      };
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
-
       expect(result.current.researchContent).toBe('stored research');
     });
 
-    it('should hydrate synthesized post from sessionStorage', () => {
-      sessionStorage.setItem('ai_synthesized_post', 'stored post');
-
+    it('exposes synthesizedPost from profile.ai_synthesized_post', () => {
+      mockUserProfile.value = {
+        firstName: 'John',
+        ai_synthesized_post: 'stored post',
+      };
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
-
       expect(result.current.synthesizedPost).toBe('stored post');
     });
 
-    it('should hydrate selected ideas from sessionStorage', () => {
-      sessionStorage.setItem('ai_selected_ideas', JSON.stringify(['sel1']));
-
+    it('returns empty defaults when profile fields are absent', () => {
+      mockUserProfile.value = { firstName: 'John' };
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
-
-      expect(result.current.selectedIdeas).toEqual(['sel1']);
-    });
-  });
-
-  describe('state clears when user logs out', () => {
-    it('should clear all state when user becomes null', async () => {
-      sessionStorage.setItem('ai_generated_ideas', JSON.stringify(['Idea']));
-      sessionStorage.setItem('ai_research_content', JSON.stringify('research'));
-      sessionStorage.setItem('ai_synthesized_post', 'post');
-
-      const { result, rerender } = renderHook(() => usePostComposer(), {
-        wrapper: createWrapper(),
-      });
-
-      expect(result.current.ideas).toEqual(['Idea']);
-
-      // Simulate logout
-      mockUser.value = null;
-      rerender();
-
-      await waitFor(() => {
-        expect(result.current.ideas).toEqual([]);
-      });
+      expect(result.current.ideas).toEqual([]);
       expect(result.current.researchContent).toBeNull();
       expect(result.current.synthesizedPost).toBeNull();
     });
-  });
 
-  describe('generateIdeas', () => {
-    it('should call postsService and update state', async () => {
-      mockGenerateIdeas.mockResolvedValue(['New Idea 1', 'New Idea 2']);
-
+    it('treats empty-string research/synthesized as cleared', () => {
+      mockUserProfile.value = {
+        firstName: 'John',
+        ai_generated_research: '',
+        ai_synthesized_post: '',
+      };
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
-
-      let ideas: string[];
-      await act(async () => {
-        ideas = await result.current.generateIdeas('tech leadership');
-      });
-
-      expect(ideas!).toEqual(['New Idea 1', 'New Idea 2']);
-      expect(result.current.ideas).toEqual(['New Idea 1', 'New Idea 2']);
-      expect(result.current.isGeneratingIdeas).toBe(false);
-      expect(sessionStorage.getItem('ai_generated_ideas')).toBe(
-        JSON.stringify(['New Idea 1', 'New Idea 2'])
-      );
+      expect(result.current.researchContent).toBeNull();
+      expect(result.current.synthesizedPost).toBeNull();
     });
 
-    it('should set loading state during generation', async () => {
-      let resolveGenerate: (v: string[]) => void;
-      mockGenerateIdeas.mockReturnValue(
-        new Promise<string[]>((resolve) => {
-          resolveGenerate = resolve;
-        })
-      );
-
-      const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
-
-      let promise: Promise<string[]>;
-      act(() => {
-        promise = result.current.generateIdeas();
+    it('clears selectedIdeas when user signs out', async () => {
+      const { result, rerender } = renderHook(() => usePostComposer(), {
+        wrapper: createWrapper(),
       });
+      act(() => result.current.updateSelectedIdeas(['Idea A']));
+      expect(result.current.selectedIdeas).toEqual(['Idea A']);
 
-      expect(result.current.isGeneratingIdeas).toBe(true);
-
-      await act(async () => {
-        resolveGenerate!(['idea']);
-        await promise!;
-      });
-
-      expect(result.current.isGeneratingIdeas).toBe(false);
+      mockUser.value = null;
+      mockUserProfile.value = null;
+      rerender();
+      await waitFor(() => expect(result.current.selectedIdeas).toEqual([]));
     });
   });
 
-  describe('researchTopics', () => {
-    it('should call postsService and update state', async () => {
-      mockResearchTopics.mockResolvedValue('Research results');
-
+  describe('LLM operations refresh profile from backend', () => {
+    it('generateIdeas calls postsService and refreshes profile', async () => {
+      mockGenerateIdeas.mockResolvedValue(['New 1', 'New 2']);
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
 
       await act(async () => {
-        await result.current.researchTopics(['topic1']);
+        await result.current.generateIdeas('topic');
       });
 
-      expect(result.current.researchContent).toBe('Research results');
-      expect(result.current.isResearching).toBe(false);
-      expect(sessionStorage.getItem('ai_research_content')).toBe(
-        JSON.stringify('Research results')
-      );
+      expect(mockGenerateIdeas).toHaveBeenCalledWith('topic', { firstName: 'John' });
+      expect(mockRefreshUserProfile).toHaveBeenCalledTimes(1);
     });
-  });
 
-  describe('synthesizeResearch', () => {
-    it('should call postsService with selectedIdeas', async () => {
-      mockSynthesizeResearch.mockResolvedValue({ content: 'Synthesized post' });
-
+    it('researchTopics calls postsService and refreshes profile', async () => {
+      mockResearchTopics.mockResolvedValue('research blob');
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
-
-      // Set up selected ideas first
-      act(() => {
-        result.current.updateSelectedIdeas(['idea1', 'idea2']);
-      });
 
       await act(async () => {
-        await result.current.synthesizeResearch();
+        await result.current.researchTopics(['t1']);
       });
 
-      expect(result.current.synthesizedPost).toBe('Synthesized post');
-      expect(mockSynthesizeResearch).toHaveBeenCalledWith(
-        expect.objectContaining({ selected_ideas: ['idea1', 'idea2'] }),
-        expect.anything()
-      );
+      expect(mockResearchTopics).toHaveBeenCalledWith(['t1'], { firstName: 'John' });
+      expect(mockRefreshUserProfile).toHaveBeenCalledTimes(1);
     });
 
-    it('should pass undefined ideas when none selected', async () => {
-      mockSynthesizeResearch.mockResolvedValue({ content: 'result' });
-
+    it('synthesizeResearch calls postsService and refreshes profile', async () => {
+      mockUserProfile.value = {
+        firstName: 'John',
+        ai_generated_research: 'research',
+      };
+      mockSynthesizeResearch.mockResolvedValue({ content: 'synthesized!' });
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
+
+      act(() => result.current.updateSelectedIdeas(['Idea 1']));
 
       await act(async () => {
         await result.current.synthesizeResearch();
       });
 
       expect(mockSynthesizeResearch).toHaveBeenCalledWith(
-        expect.objectContaining({ selected_ideas: undefined }),
-        expect.anything()
+        {
+          existing_content: '',
+          research_content: 'research',
+          selected_ideas: ['Idea 1'],
+        },
+        { firstName: 'John', ai_generated_research: 'research' }
       );
+      expect(mockRefreshUserProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('synthesizeResearch omits research_content when includeResearch=false', async () => {
+      mockUserProfile.value = {
+        firstName: 'John',
+        ai_generated_research: 'research',
+      };
+      mockSynthesizeResearch.mockResolvedValue({ content: 'synthesized!' });
+      const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
+
+      act(() => result.current.updateSelectedIdeas(['Idea 1']));
+      act(() => result.current.setIncludeResearch(false));
+
+      await act(async () => {
+        await result.current.synthesizeResearch();
+      });
+
+      const payload = mockSynthesizeResearch.mock.calls[0][0] as {
+        research_content?: unknown;
+      };
+      expect(payload.research_content).toBeUndefined();
+    });
+
+    it('includeResearch resets to true when fresh research arrives', async () => {
+      mockUserProfile.value = { firstName: 'John' };
+      const { result, rerender } = renderHook(() => usePostComposer(), {
+        wrapper: createWrapper(),
+      });
+      expect(result.current.includeResearch).toBe(true);
+
+      act(() => result.current.setIncludeResearch(false));
+      expect(result.current.includeResearch).toBe(false);
+
+      mockUserProfile.value = {
+        firstName: 'John',
+        ai_generated_research: 'fresh research',
+      };
+      rerender();
+      await waitFor(() => expect(result.current.includeResearch).toBe(true));
     });
   });
 
-  describe('clearResearch', () => {
-    it('should clear research content and sessionStorage', async () => {
-      mockResearchTopics.mockResolvedValue('Research');
-      mockUpdateUserProfile.mockResolvedValue({});
-
+  describe('clear actions write empty value to profile', () => {
+    it('clearResearch writes empty string and refreshes', async () => {
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
-
-      await act(async () => {
-        await result.current.researchTopics(['topic']);
-      });
-      expect(result.current.researchContent).toBe('Research');
 
       await act(async () => {
         await result.current.clearResearch();
       });
 
-      expect(result.current.researchContent).toBeNull();
-      expect(sessionStorage.getItem('ai_research_content')).toBeNull();
       expect(mockUpdateUserProfile).toHaveBeenCalledWith({ ai_generated_research: '' });
+      expect(mockRefreshUserProfile).toHaveBeenCalledTimes(1);
     });
-  });
 
-  describe('clearSynthesizedPost', () => {
-    it('should clear synthesized post and sessionStorage', async () => {
-      mockSynthesizeResearch.mockResolvedValue({ content: 'post' });
-
+    it('clearIdea writes new ideas list and refreshes', async () => {
       const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
 
       await act(async () => {
-        await result.current.synthesizeResearch();
-      });
-      expect(result.current.synthesizedPost).toBe('post');
-
-      act(() => {
-        result.current.clearSynthesizedPost();
+        await result.current.clearIdea(['Kept idea']);
       });
 
-      expect(result.current.synthesizedPost).toBeNull();
-      expect(sessionStorage.getItem('ai_synthesized_post')).toBeNull();
+      expect(mockUpdateUserProfile).toHaveBeenCalledWith({ ai_generated_ideas: ['Kept idea'] });
+      expect(mockRefreshUserProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('clearSynthesizedPost writes empty string and refreshes', async () => {
+      const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
+
+      await act(async () => {
+        await result.current.clearSynthesizedPost();
+      });
+
+      expect(mockUpdateUserProfile).toHaveBeenCalledWith({ ai_synthesized_post: '' });
+      expect(mockRefreshUserProfile).toHaveBeenCalledTimes(1);
     });
   });
 });

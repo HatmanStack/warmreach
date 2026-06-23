@@ -20,6 +20,10 @@ const emittedRoot = path.join(root, 'build-tsc');
 const TS_TO_JS = [
   ['.test.ts', null],
   ['.spec.ts', null],
+  ['.test.cts', null],
+  ['.spec.cts', null],
+  ['.test.mts', null],
+  ['.spec.mts', null],
   ['.cts', '.cjs'],
   ['.mts', '.mjs'],
   ['.ts', '.js'],

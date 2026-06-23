@@ -42,7 +42,7 @@ echo "Setting up Python test environment..."
 if [ ! -d "tests/backend/.venv" ]; then
   python3 -m venv tests/backend/.venv
 fi
-(cd tests/backend && . .venv/bin/activate && uv pip install -r requirements-test.txt -q)
+(cd tests/backend && . .venv/bin/activate && uv pip install -r requirements-test.lock -q)
 
 echo ""
 echo "Setting up environment file..."

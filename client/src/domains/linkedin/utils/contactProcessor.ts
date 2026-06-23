@@ -8,15 +8,19 @@ interface ContactProcessorConfig {
 }
 
 interface LinkedInServiceLike {
-  analyzeContactActivity(link: string, jwtToken: string): Promise<{ isGoodContact: boolean }>;
+  // Matches the concrete LinkedInService return (isGoodContact is optional);
+  // callers read it as a truthy check.
+  analyzeContactActivity(link: string, jwtToken: string): Promise<{ isGoodContact?: boolean }>;
 }
 
 interface DynamoDBServiceLike {
+  // Return types are widened to match the concrete DynamoDBService (which
+  // returns the underlying write result); callers only await for completion.
   getProfileDetails(link: string): Promise<boolean>;
   canScrapeToday(): Promise<boolean>;
-  incrementDailyScrapeCount(): Promise<void>;
-  createProfileMetadata(link: string, data: Record<string, string | undefined>): Promise<void>;
-  updateProfilePictureUrl(link: string, pictureUrl: string): Promise<void>;
+  incrementDailyScrapeCount(): Promise<unknown>;
+  createProfileMetadata(link: string, data: Record<string, string | undefined>): Promise<unknown>;
+  updateProfilePictureUrl(link: string, pictureUrl: string): Promise<unknown>;
 }
 
 interface LocalProfileScraperLike {
@@ -33,7 +37,7 @@ interface ProcessState {
   jwtToken: string;
   companyRole?: string;
   recursionCount: number;
-  lastPartialLinksFile?: string;
+  lastPartialLinksFile?: string | null;
   [key: string]: unknown;
 }
 

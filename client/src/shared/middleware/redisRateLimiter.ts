@@ -22,7 +22,7 @@ export function resetRedisFallbackCount(): void {
   redisFallbackCounter = 0;
 }
 
-function getRedisClient(): RedisClient | null {
+export function getRedisClient(): RedisClient | null {
   if (redisClient) return redisClient;
 
   const redisUrl = process.env.REDIS_URL;

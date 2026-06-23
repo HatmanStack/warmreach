@@ -18,9 +18,26 @@ class ProfileApiService {
       return { success: false, error: result.error.message };
     }
     const body = result.data as { success?: boolean; data?: UserProfile } & UserProfile;
-    const profile: UserProfile | undefined =
-      body && typeof body === 'object' && 'data' in body ? body.data : (body as UserProfile);
-    return { success: true, data: profile };
+    // Wrapped envelope with explicit success flag — honour it. A
+    // success: false body should never propagate to callers as
+    // success: true with undefined data.
+    if (body && typeof body === 'object' && 'success' in body) {
+      if (body.success === false) {
+        return { success: false, error: 'Backend returned success: false' };
+      }
+      if (!body.data) {
+        return { success: false, error: 'Backend returned success: true with no data' };
+      }
+      return { success: true, data: body.data };
+    }
+    // Unwrapped (legacy / POST shape) — body itself is the profile.
+    // Mirror the wrapped-branch validation: don't claim success when
+    // the body is null / not an object, otherwise callers get
+    // success: true with bogus data.
+    if (!body || typeof body !== 'object') {
+      return { success: false, error: 'Backend returned success: true with no data' };
+    }
+    return { success: true, data: body as UserProfile };
   }
 
   async updateUserProfile(

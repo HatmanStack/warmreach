@@ -1,7 +1,6 @@
 import { logger } from '#utils/logger.js';
 import { validateJwt } from '#utils/jwtValidator.js';
 import { LinkedInInteractionService } from '../services/linkedinInteractionService.js';
-import { LinkedInService } from '../services/linkedinService.js';
 import { LinkedInErrorHandler } from '../utils/linkedinErrorHandler.js';
 import { LinkedInAuditLogger } from '../utils/linkedinAuditLogger.js';
 import ControlPlaneService from '../../../shared/services/controlPlaneService.js';
@@ -611,22 +610,11 @@ export class LinkedInInteractionController {
   async _ensureLinkedInAuth(
     linkedinService: LinkedInInteractionService,
     credentialsCiphertext: string | undefined,
-    _operationName: string
+    operationName: string
   ): Promise<void> {
-    const sessionActive = await linkedinService.isSessionActive();
-    if (sessionActive) return;
-
-    const puppeteerService = await linkedinService.initializeBrowserSession();
-    const loginHelper = new LinkedInService(
-      puppeteerService as ConstructorParameters<typeof LinkedInService>[0]
-    );
-    await loginHelper.login(
-      null,
-      null,
-      false,
-      credentialsCiphertext ?? null,
-      'interaction-controller'
-    );
+    // Auth/session lifecycle lives in the service (HIGH #19) — delegate to its
+    // typed method instead of driving login from the controller.
+    await linkedinService.ensureAuthenticated(credentialsCiphertext ?? null, operationName);
   }
 
   /**
