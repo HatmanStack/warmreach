@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Hoist mock functions so they're available before vi.mock factories execute
 const {
@@ -33,7 +33,11 @@ vi.mock('../domains/profile/controllers/profileInitController.js', () => ({
   },
 }));
 
-import { handleExecuteCommand, _buildApiCall, LLM_REQUEST_TIMEOUT_MS } from './commandRouter.js';
+// The community edition's command router does not make the backend LLM fetch
+// that the pro edition's Comment Concierge route relies on, so it exports no
+// `_buildApiCall` / `LLM_REQUEST_TIMEOUT_MS`. The pro-only "LLM fetch timeout"
+// suite is therefore omitted from this edition's test file.
+import { handleExecuteCommand } from './commandRouter.js';
 
 describe('commandRouter', () => {
   let sendFn;
@@ -256,63 +260,6 @@ describe('commandRouter', () => {
         commandId: 'cmd-5',
         data: { done: true },
       });
-    });
-  });
-
-  describe('_buildApiCall LLM fetch timeout', () => {
-    let originalFetch;
-
-    beforeEach(() => {
-      originalFetch = globalThis.fetch;
-    });
-
-    afterEach(() => {
-      globalThis.fetch = originalFetch;
-      vi.useRealTimers();
-    });
-
-    it('rejects with a clear timeout error when the LLM fetch hangs', async () => {
-      vi.useFakeTimers();
-
-      // fetch never resolves on its own; it should reject only when the
-      // AbortController aborts after LLM_REQUEST_TIMEOUT_MS.
-      globalThis.fetch = vi.fn(
-        (_url, opts) =>
-          new Promise((_resolve, reject) => {
-            opts.signal.addEventListener('abort', () => {
-              const err = new Error('The operation was aborted');
-              err.name = 'AbortError';
-              reject(err);
-            });
-          })
-      );
-
-      const apiCall = _buildApiCall('jwt-token');
-      const promise = apiCall({ prompt: 'hello' });
-      // Attach a catch handler immediately so the rejection is observed.
-      const expectation = expect(promise).rejects.toThrow(/timed out/i);
-
-      await vi.advanceTimersByTimeAsync(LLM_REQUEST_TIMEOUT_MS + 1);
-
-      await expectation;
-    });
-
-    it('clears the timeout and returns parsed JSON on a successful response', async () => {
-      vi.useFakeTimers();
-      const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
-
-      globalThis.fetch = vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({ result: 'ok' }),
-      }));
-
-      const apiCall = _buildApiCall(undefined);
-      const result = await apiCall({ prompt: 'hi' });
-
-      expect(result).toEqual({ result: 'ok' });
-      expect(clearTimeoutSpy).toHaveBeenCalled();
-      clearTimeoutSpy.mockRestore();
     });
   });
 

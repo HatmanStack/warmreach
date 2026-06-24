@@ -74,8 +74,25 @@ jobs:
             --title "$TAG" \
             --notes-file /tmp/release-notes.md
 
-  electron:
+  # Fan the release out to the community repo. Invoked here (not via
+  # `on: release: published`) because GitHub does not emit the release event for
+  # releases created by the default GITHUB_TOKEN above, so the event-based
+  # trigger never fired and the community release was never created.
+  sync:
     needs: release
+    if: needs.release.outputs.skip != 'true' && needs.release.outputs.tag != ''
+    uses: ./.github/workflows/release-sync.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets:
+      WARMREACH_PUBLIC_DEPLOY_KEY: ${{ secrets.WARMREACH_PUBLIC_DEPLOY_KEY }}
+      WARMREACH_PUBLIC_PAT: ${{ secrets.WARMREACH_PUBLIC_PAT }}
+
+  # Build the AppImage and upload it to the community release. Depends on `sync`
+  # so the community release exists before the upload (electron-release.yml also
+  # waits for it as a safety net).
+  electron:
+    needs: [release, sync]
     if: needs.release.outputs.skip != 'true' && needs.release.outputs.tag != ''
     uses: ./.github/workflows/electron-release.yml
     with:
