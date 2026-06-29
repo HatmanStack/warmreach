@@ -10,7 +10,7 @@ vi.mock('../../automation/services/puppeteerService.js', () => {
         initialize: vi.fn().mockResolvedValue(undefined),
         close: vi.fn().mockResolvedValue(undefined),
         getBrowser: vi.fn().mockReturnValue({
-          isConnected: vi.fn().mockReturnValue(true),
+          connected: true,
         }),
         getPage: vi.fn().mockReturnValue({
           isClosed: vi.fn().mockReturnValue(false),
@@ -115,7 +115,7 @@ describe('BrowserSessionManager', () => {
       const first = await BrowserSessionManager.getInstance();
 
       // Make session unhealthy
-      first.getBrowser().isConnected.mockReturnValue(false);
+      first.getBrowser().connected = false;
 
       const second = await BrowserSessionManager.getInstance({ reinitializeIfUnhealthy: true });
       expect(first).not.toBe(second);

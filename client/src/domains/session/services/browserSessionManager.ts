@@ -196,7 +196,7 @@ class BrowserSessionManager {
       }
 
       // Check if browser is connected
-      if (!browser.isConnected()) {
+      if (!browser.connected) {
         logger.debug('Browser is not connected');
         return false;
       }
