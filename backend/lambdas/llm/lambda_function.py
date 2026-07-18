@@ -79,6 +79,8 @@ OPS = {
     'generate_ideas',
     'research_selected_ideas',
     'get_research_result',
+    'get_active_research',
+    'cancel_research',
     'synthesize_research',
     'generate_message',
     'analyze_message_patterns',
@@ -93,6 +95,10 @@ METERED_OPS = {
     'analyze_tone',
 }
 DEEP_RESEARCH_OPS = {'research_selected_ideas', 'synthesize_research'}
+# Status/cancel ops for deep research: gated on the same 'deep_research' feature
+# but NOT metered (no OpenAI spend) and NOT in DEEP_RESEARCH_OPS (which also
+# drives the ai_deep_research activity write — polling/cancel must not emit it).
+DEEP_RESEARCH_STATUS_OPS = {'get_active_research', 'cancel_research'}
 MESSAGE_INTEL_OPS = {'analyze_message_patterns'}
 TONE_ANALYSIS_OPS = {'analyze_tone'}
 
@@ -119,6 +125,16 @@ def _handle_get_research_result(body, user_id, svc):
     if not body.get('job_id'):
         return api_response(400, {'error': 'job_id required'}, None)
     return svc.get_research_result(user_id, body['job_id'], body.get('kind'))
+
+
+def _handle_get_active_research(body, user_id, svc):
+    return svc.get_active_research(user_id)
+
+
+def _handle_cancel_research(body, user_id, svc):
+    if not body.get('job_id'):
+        return api_response(400, {'error': 'job_id required'}, None)
+    return svc.cancel_research(user_id, body['job_id'])
 
 
 def _handle_synthesize_research(body, user_id, svc):
@@ -175,6 +191,8 @@ HANDLERS = {
     'generate_ideas': _handle_generate_ideas,
     'research_selected_ideas': _handle_research_selected_ideas,
     'get_research_result': _handle_get_research_result,
+    'get_active_research': _handle_get_active_research,
+    'cancel_research': _handle_cancel_research,
     'synthesize_research': _handle_synthesize_research,
     'generate_message': _handle_generate_message,
     'analyze_message_patterns': _handle_analyze_message_patterns,
@@ -213,7 +231,7 @@ def lambda_handler(event, _context):
         # Feature gate checks
         if _feature_flag_service:
             feature_to_check = None
-            if op in DEEP_RESEARCH_OPS:
+            if op in DEEP_RESEARCH_OPS or op in DEEP_RESEARCH_STATUS_OPS:
                 feature_to_check = 'deep_research'
             elif op in TONE_ANALYSIS_OPS:
                 feature_to_check = 'tone_analysis'

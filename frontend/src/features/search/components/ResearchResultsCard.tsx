@@ -9,12 +9,14 @@ import { usePostComposer } from '@/features/posts';
 interface ResearchResultsCardProps {
   isResearching: boolean;
   onClear: () => void;
+  onCancel: () => void;
 }
 
-const ResearchResultsCard = ({ isResearching, onClear }: ResearchResultsCardProps) => {
+const ResearchResultsCard = ({ isResearching, onClear, onCancel }: ResearchResultsCardProps) => {
   // Research content is the canonical user-profile field, hydrated by
   // PostComposerContext from DynamoDB. No client-side cache.
-  const { researchContent, includeResearch, setIncludeResearch } = usePostComposer();
+  const { researchContent, researchingIdeas, includeResearch, setIncludeResearch } =
+    usePostComposer();
 
   if (!isResearching && !researchContent) return null;
 
@@ -61,7 +63,20 @@ const ResearchResultsCard = ({ isResearching, onClear }: ResearchResultsCardProp
               </CardDescription>
             </div>
           </div>
-          {researchContent && !isResearching ? (
+          {isResearching ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-red-400 hover:text-red-300 hover:bg-red-500/20"
+              onClick={() => {
+                onCancel();
+              }}
+              title="Cancel research"
+            >
+              <X className="h-4 w-4 mr-1" />
+              Cancel
+            </Button>
+          ) : researchContent ? (
             <Button
               variant="ghost"
               size="sm"
@@ -78,28 +93,39 @@ const ResearchResultsCard = ({ isResearching, onClear }: ResearchResultsCardProp
       </CardHeader>
       <CardContent className="space-y-4">
         {isResearching && (
-          <div className="flex items-center text-slate-300 text-sm">
-            <svg
-              className="animate-spin -ml-1 mr-2 h-4 w-4 text-blue-400"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              ></circle>
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-              ></path>
-            </svg>
-            This may take several minutes.
+          <div className="space-y-2">
+            <div className="flex items-center text-slate-300 text-sm">
+              <svg
+                className="animate-spin -ml-1 mr-2 h-4 w-4 text-blue-400"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                ></path>
+              </svg>
+              This may take several minutes. You can leave this page — it keeps running.
+            </div>
+            {researchingIdeas.length > 0 && (
+              <ul className="pl-6 space-y-1 text-slate-400 text-xs">
+                {researchingIdeas.map((idea, i) => (
+                  <li key={i} className="line-clamp-2">
+                    • {idea}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
         {researchContent && (

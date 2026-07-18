@@ -217,6 +217,76 @@ def test_non_metered_op_skips_usage_report(lambda_context, llm_module, mock_serv
     mock_services['quota'].report_usage.assert_not_called()
 
 
+def test_get_active_research_gated_not_metered(lambda_context, llm_module, mock_services):
+    """get_active_research is gated on deep_research but never reserves quota or writes activity."""
+    event = {
+        'body': json.dumps({'operation': 'get_active_research'}),
+        'requestContext': {'authorizer': {'claims': {'sub': 'test-user'}}},
+    }
+    mock_svc = MagicMock()
+    mock_svc.get_active_research.return_value = {'success': True, 'active': False}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
+        with patch.object(llm_module, 'write_activity') as mock_wa:
+            response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
+    assert response['statusCode'] == 200
+    mock_svc.get_active_research.assert_called_once_with('test-user')
+    mock_services['quota'].reserve_usage.assert_not_called()
+    mock_wa.assert_not_called()
+
+
+def test_get_active_research_feature_gated(lambda_context, llm_module, mock_services):
+    """When deep_research is disabled, get_active_research returns 403."""
+    mock_services['feature_flags'].get_feature_flags.return_value = {
+        'tier': 'free',
+        'features': {'deep_research': False},
+        'quotas': {},
+        'rateLimits': {},
+    }
+    event = {
+        'body': json.dumps({'operation': 'get_active_research'}),
+        'requestContext': {'authorizer': {'claims': {'sub': 'test-user'}}},
+    }
+    response = llm_module.lambda_handler(event, lambda_context)
+    assert response['statusCode'] == 403
+    assert json.loads(response['body'])['feature'] == 'deep_research'
+
+
+def test_cancel_research_requires_job_id(lambda_context, llm_module, mock_services):
+    """cancel_research without job_id returns 400."""
+    event = {
+        'body': json.dumps({'operation': 'cancel_research'}),
+        'requestContext': {'authorizer': {'claims': {'sub': 'test-user'}}},
+    }
+    response = llm_module.lambda_handler(event, lambda_context)
+    assert response['statusCode'] == 400
+    assert 'job_id' in json.loads(response['body'])['error']
+
+
+def test_cancel_research_gated_not_metered(lambda_context, llm_module, mock_services):
+    """cancel_research is gated on deep_research but never reserves quota."""
+    event = {
+        'body': json.dumps({'operation': 'cancel_research', 'job_id': 'job-1'}),
+        'requestContext': {'authorizer': {'claims': {'sub': 'test-user'}}},
+    }
+    mock_svc = MagicMock()
+    mock_svc.cancel_research.return_value = {'success': True}
+    orig_svc = llm_module._llm_service
+    llm_module._llm_service = mock_svc
+    try:
+        with patch.object(llm_module, 'write_activity') as mock_wa:
+            response = llm_module.lambda_handler(event, lambda_context)
+    finally:
+        llm_module._llm_service = orig_svc
+    assert response['statusCode'] == 200
+    mock_svc.cancel_research.assert_called_once_with('test-user', 'job-1')
+    mock_services['quota'].reserve_usage.assert_not_called()
+    mock_wa.assert_not_called()
+
+
 def test_reserve_usage_infra_failure_fails_closed(lambda_context, llm_module, mock_services):
     """When quota metering infra fails (DynamoDB ClientError), the request is denied
     with a retryable 503 rather than allowed unmetered (fail closed — ADR-004).

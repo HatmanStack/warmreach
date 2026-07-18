@@ -6,6 +6,7 @@ import {
   useCallback,
   useMemo,
   useEffect,
+  useRef,
 } from 'react';
 import { postsService } from '@/features/posts';
 import { useAuth } from '@/features/auth';
@@ -28,6 +29,8 @@ interface PostComposerContextValue {
   synthesizedPost: string | null;
   generateIdeas: (prompt?: string) => Promise<string[]>;
   researchTopics: (topics: string[]) => Promise<void>;
+  cancelResearch: () => Promise<void>;
+  researchingIdeas: string[];
   synthesizeResearch: () => Promise<void>;
   clearResearch: () => Promise<void>;
   clearIdea: (newIdeas: string[]) => Promise<void>;
@@ -50,6 +53,17 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [selectedIdeas, setSelectedIdeas] = useState<string[]>([]);
   const [includeResearch, setIncludeResearch] = useState(true);
+  // Topics of the in-flight research job, for the "Researching…" indicator.
+  const [researchingIdeas, setResearchingIdeas] = useState<string[]>([]);
+
+  // Refs backing the in-flight deep-research poll: the AbortController lets
+  // Cancel/unmount interrupt the long poll, and the job_id lets cancelResearch
+  // target the right job. Refs (not state) so they don't re-trigger renders or
+  // the resume effect mid-poll. resumeCheckedRef fires the resume-on-load check
+  // exactly once per session.
+  const researchAbortRef = useRef<AbortController | null>(null);
+  const activeResearchJobIdRef = useRef<string | null>(null);
+  const resumeCheckedRef = useRef(false);
 
   // All composer state derives from userProfile (DynamoDB single source of
   // truth). The backend writes ai_generated_ideas / ai_generated_research /
@@ -72,9 +86,14 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
     return typeof value === 'string' && value.length > 0 ? value : null;
   }, [userProfile]);
 
-  // Drop ephemeral selection state when the user signs out.
+  // Drop ephemeral selection state when the user signs out, abort any in-flight
+  // research poll, and re-arm the resume-on-load check for the next login.
   useEffect(() => {
     if (!user || !userProfile) setSelectedIdeas([]);
+    if (!user) {
+      resumeCheckedRef.current = false;
+      researchAbortRef.current?.abort();
+    }
   }, [user, userProfile]);
 
   // Reset include-research to true whenever fresh research arrives so the
@@ -82,6 +101,70 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     if (researchContent) setIncludeResearch(true);
   }, [researchContent]);
+
+  // Resume-on-load: after a refresh the browser has lost the in-flight job_id,
+  // so ask the backend for any active research job and resume polling it. The
+  // backend also reconciles the job against OpenAI, so a job that completed
+  // while nobody was polling gets surfaced here too. Runs once per session.
+  useEffect(() => {
+    if (!user || !userProfile) return;
+    if (resumeCheckedRef.current) return;
+    resumeCheckedRef.current = true;
+
+    let disposed = false;
+    (async () => {
+      try {
+        const active = await postsService.getActiveResearch();
+        if (disposed) return;
+
+        if (active.content) {
+          // Completed while nobody was polling; the backend just mirrored it to
+          // the profile — pull it into the UI.
+          refreshUserProfile().catch((err) => {
+            logger.warn('profile refresh after resume-complete failed', { error: err });
+          });
+          return;
+        }
+
+        if (active.active && active.jobId) {
+          // Abort any poll already in flight before taking over the ref.
+          researchAbortRef.current?.abort();
+          const controller = new AbortController();
+          researchAbortRef.current = controller;
+          activeResearchJobIdRef.current = active.jobId;
+          setResearchingIdeas(active.selectedIdeas ?? []);
+          setIsResearching(true);
+          try {
+            await postsService.pollResearchResult(active.jobId, { signal: controller.signal });
+            refreshUserProfile().catch((err) => {
+              logger.warn('profile refresh after resumed research failed', { error: err });
+            });
+          } catch (err) {
+            if (!(err instanceof Error && err.name === 'AbortError')) {
+              logger.warn('resumed research poll failed', { error: err });
+            }
+          } finally {
+            // Only clean up if a newer research didn't take over the refs.
+            if (researchAbortRef.current === controller) {
+              setIsResearching(false);
+              setResearchingIdeas([]);
+              researchAbortRef.current = null;
+              activeResearchJobIdRef.current = null;
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn('resume-on-load research check failed', { error: err });
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+    // refreshUserProfile is intentionally omitted — it isn't memoized and the
+    // resumeCheckedRef guard already limits this to once per session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, userProfile]);
 
   const generateIdeas = useCallback(
     async (prompt?: string): Promise<string[]> => {
@@ -107,19 +190,59 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
 
   const researchTopics = useCallback(
     async (topics: string[]) => {
+      // Abort any still-running poll (e.g. a resume-on-load poll) before taking
+      // over the ref, so its controller isn't orphaned.
+      researchAbortRef.current?.abort();
+      const controller = new AbortController();
+      researchAbortRef.current = controller;
+      setResearchingIdeas(topics);
       setIsResearching(true);
       try {
-        await postsService.researchTopics(topics, userProfile || undefined);
+        await postsService.researchTopics(topics, userProfile || undefined, {
+          signal: controller.signal,
+          onJobId: (id) => {
+            activeResearchJobIdRef.current = id;
+          },
+        });
         // Fire-and-forget refresh — see generateIdeas for rationale.
         refreshUserProfile().catch((err) => {
           logger.warn('profile refresh after researchTopics failed', { error: err });
         });
+      } catch (err) {
+        // Cancel/unmount aborts the poll — expected, not a failure.
+        if (!(err instanceof Error && err.name === 'AbortError')) {
+          logger.warn('researchTopics failed', { error: err });
+        }
       } finally {
-        setIsResearching(false);
+        // Only clean up if a newer research didn't take over the refs.
+        if (researchAbortRef.current === controller) {
+          setIsResearching(false);
+          setResearchingIdeas([]);
+          researchAbortRef.current = null;
+          activeResearchJobIdRef.current = null;
+        }
       }
     },
     [userProfile, refreshUserProfile]
   );
+
+  const cancelResearch = useCallback(async () => {
+    const jobId = activeResearchJobIdRef.current;
+    // Stop the local poll and clear the indicator immediately. Clear the refs
+    // BEFORE the network round-trip so a research started during it isn't
+    // clobbered when this resolves.
+    researchAbortRef.current?.abort();
+    researchAbortRef.current = null;
+    activeResearchJobIdRef.current = null;
+    setIsResearching(false);
+    setResearchingIdeas([]);
+    if (jobId) {
+      // Surface a genuine backend-cancel failure so the caller can toast/retry:
+      // if the cancel didn't land, the reconciler could otherwise resurrect the
+      // job.
+      await postsService.cancelResearch(jobId);
+    }
+  }, []);
 
   const updateSelectedIdeas = useCallback((next: string[]) => {
     setSelectedIdeas(next);
@@ -215,6 +338,8 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
       synthesizedPost,
       generateIdeas,
       researchTopics,
+      cancelResearch,
+      researchingIdeas,
       synthesizeResearch,
       clearResearch,
       clearIdea,
@@ -232,6 +357,8 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
       synthesizedPost,
       generateIdeas,
       researchTopics,
+      cancelResearch,
+      researchingIdeas,
       synthesizeResearch,
       clearResearch,
       clearIdea,

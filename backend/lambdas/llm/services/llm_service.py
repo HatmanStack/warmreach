@@ -62,6 +62,29 @@ OPERATION_TIMEOUTS: dict[str, int] = {
     'synthesize_research': 60,
 }
 
+# A deep-research job still 'in_progress' this long after kickoff is a zombie
+# (o4-mini deep research finishes well within an hour). Past this cutoff
+# get_active_research won't auto-resume it (so it can't inject stale content into
+# the composer on the user's next visit) and the reconciler retires it.
+STALE_RESEARCH_HOURS = 6
+
+
+def parse_iso_datetime(value):
+    """Parse a stored ISO timestamp string; return None if missing/unparseable.
+
+    Always returns a timezone-aware datetime (assumes UTC when the stored value
+    carries no offset) so callers can compare it against an aware cutoff without
+    a TypeError — a naive value slipping through would otherwise abort the whole
+    reconciliation pass.
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+
 
 class LLMService(BaseService):
     """
@@ -98,20 +121,14 @@ class LLMService(BaseService):
             if value is None:
                 self.table.update_item(
                     Key=key,
-                    UpdateExpression=(
-                        'SET updated_at = :ts, created_at = if_not_exists(created_at, :ts) '
-                        'REMOVE #f'
-                    ),
+                    UpdateExpression=('SET updated_at = :ts, created_at = if_not_exists(created_at, :ts) REMOVE #f'),
                     ExpressionAttributeNames={'#f': field},
                     ExpressionAttributeValues={':ts': ts},
                 )
             else:
                 self.table.update_item(
                     Key=key,
-                    UpdateExpression=(
-                        'SET #f = :v, updated_at = :ts, '
-                        'created_at = if_not_exists(created_at, :ts)'
-                    ),
+                    UpdateExpression=('SET #f = :v, updated_at = :ts, created_at = if_not_exists(created_at, :ts)'),
                     ExpressionAttributeNames={'#f': field},
                     ExpressionAttributeValues={':v': value, ':ts': ts},
                 )
@@ -119,6 +136,75 @@ class LLMService(BaseService):
             # Lazy %-style — avoids string construction when the log
             # level is suppressed and matches the pro version.
             logger.warning('Failed to persist profile field %s for user %s: %s', field, user_id, e)
+
+    def _set_research_status(self, user_id: str | None, job_id: str, status: str) -> None:
+        """Best-effort status flip on a RESEARCH# row. Never raises.
+
+        Used to mark a job 'failed' when kickoff dies, 'cancelled' on user
+        cancel, and 'abandoned' by the reconciler for stale zombies.
+        """
+        if not self.table or not user_id:
+            return
+        try:
+            self.table.update_item(
+                Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'},
+                UpdateExpression='SET #s = :s, updated_at = :ts',
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={':s': status, ':ts': datetime.now(UTC).isoformat()},
+            )
+        except Exception as e:
+            logger.warning('Failed to set research status %s for job %s: %s', status, job_id, e)
+
+    def _abandon_other_active_research(self, user_id: str, keep_job_id: str) -> None:
+        """Mark the user's OTHER active RESEARCH# rows 'abandoned'.
+
+        Starting a new research supersedes any prior in-flight one; abandoning
+        them at kickoff (rather than relying on the 5-minute reconciler) stops an
+        older still-running job from being resumed/reconciled and clobbering the
+        new one's result. Best-effort; never raises.
+        """
+        if not self.table:
+            return
+        try:
+            resp = self.table.query(
+                KeyConditionExpression='PK = :pk AND begins_with(SK, :sk)',
+                ExpressionAttributeValues={':pk': f'USER#{user_id}', ':sk': 'RESEARCH#'},
+                ProjectionExpression='SK, #s',
+                ExpressionAttributeNames={'#s': 'status'},
+            )
+            for it in resp.get('Items', []):
+                if it.get('status') not in ('starting', 'in_progress'):
+                    continue
+                other_job_id = it['SK'].split('#', 1)[1]
+                if other_job_id != keep_job_id:
+                    self._set_research_status(user_id, other_job_id, 'abandoned')
+        except Exception as e:
+            logger.warning(f'Could not supersede prior research for {user_id}: {e}')
+
+    def _attach_research_response_id(self, user_id: str, job_id: str, response_id: str) -> None:
+        """Persist openai_response_id + flip to in_progress after a successful kickoff.
+
+        The OpenAI background job is already running by the time this runs, so a
+        transient DynamoDB failure here must NOT propagate (that would 500 the
+        request and make the user re-run). boto3 retries transient errors
+        internally; on a hard failure we log loudly and leave the discoverable
+        'starting' row for a later get_active_research / reconciler to recover.
+        """
+        if not self.table:
+            return
+        try:
+            self.table.update_item(
+                Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'},
+                UpdateExpression='SET openai_response_id = :rid, #s = :s',
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={':rid': response_id, ':s': 'in_progress'},
+            )
+        except Exception as e:
+            logger.error(
+                f'CRITICAL: could not persist openai_response_id {response_id} for research '
+                f'job {job_id} (user {user_id}): {e}; the OpenAI job is running but the row '
+                f'stays "starting" until recovered'
+            )
 
     def generate_ideas(self, user_profile: dict, prompt: str, job_id: str, user_id: str) -> dict[str, Any]:
         """
@@ -207,25 +293,46 @@ class LLMService(BaseService):
         Returns:
             dict with success status and job_id
         """
+        if not selected_ideas:
+            return {'success': False, 'error': 'No ideas selected for research'}
+
+        # Clear stale profile-level research at handler entry. Deep research
+        # polling can take 5-30 minutes; the UI must not display the previous
+        # result while the new job runs.
+        self._persist_profile_field(user_id, 'ai_generated_research', None)
+
+        job_id = str(uuid.uuid4())
+
+        # Persist a discoverable RESEARCH# row BEFORE the OpenAI call returns so a
+        # refresh during kickoff can't lose the job (status='starting', no
+        # response_id yet). selected_ideas power the "which topic" indicator and
+        # give the reconciler context.
+        now = datetime.now(UTC)
+        if self.table:
+            self.table.put_item(
+                Item={
+                    'PK': f'USER#{user_id}',
+                    'SK': f'RESEARCH#{job_id}',
+                    'status': 'starting',
+                    'selected_ideas': [str(idea)[:500] for idea in selected_ideas],
+                    'created_at': now.isoformat(),
+                    'ttl': int((now + timedelta(days=7)).timestamp()),
+                }
+            )
+
+        # Supersede any prior in-flight research so a still-running older job
+        # can't later be resumed/reconciled and clobber this one.
+        self._abandon_other_active_research(user_id, job_id)
+
+        formatted_user_data = ''
+        if user_data and user_data.get('name') != PROFILE_PLACEHOLDER_NAME:
+            formatted_user_data = self._format_user_profile_context(user_data)
+
+        formatted_topics = '\n'.join([f'- {self._sanitize_prompt(idea, 500)}' for idea in selected_ideas])
+
+        research_prompt = LINKEDIN_RESEARCH_PROMPT.format(topics=formatted_topics, user_data=formatted_user_data)
+
         try:
-            if not selected_ideas:
-                return {'success': False, 'error': 'No ideas selected for research'}
-
-            # Clear stale profile-level research at handler entry. Deep research
-            # polling can take 5-30 minutes; the UI must not display the
-            # previous result while the new job runs.
-            self._persist_profile_field(user_id, 'ai_generated_research', None)
-
-            job_id = str(uuid.uuid4())
-
-            formatted_user_data = ''
-            if user_data and user_data.get('name') != PROFILE_PLACEHOLDER_NAME:
-                formatted_user_data = self._format_user_profile_context(user_data)
-
-            formatted_topics = '\n'.join([f'- {self._sanitize_prompt(idea, 500)}' for idea in selected_ideas])
-
-            research_prompt = LINKEDIN_RESEARCH_PROMPT.format(topics=formatted_topics, user_data=formatted_user_data)
-
             response = self.openai_client.responses.create(
                 model='o4-mini-deep-research',
                 input=research_prompt,
@@ -237,32 +344,23 @@ class LLMService(BaseService):
                     {'type': 'code_interpreter', 'container': {'type': 'auto'}},
                 ],
             )
-
-            # Store the OpenAI response_id so we can poll it later (7-day TTL)
-            response_id = response.id
-            if self.table:
-                self.table.put_item(
-                    Item={
-                        'PK': f'USER#{user_id}',
-                        'SK': f'RESEARCH#{job_id}',
-                        'openai_response_id': response_id,
-                        'status': 'in_progress',
-                        'created_at': datetime.now(UTC).isoformat(),
-                        'ttl': int((datetime.now(UTC) + timedelta(days=7)).timestamp()),
-                    }
-                )
-
-            return {
-                'success': True,
-                'job_id': job_id,
-            }
-
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in research_selected_ideas: {e}')
+            self._set_research_status(user_id, job_id, 'failed')
             return {'success': False, 'error': 'Failed to research selected ideas'}
         except Exception as e:
             logger.error(f'Error in research_selected_ideas: {e}')
+            self._set_research_status(user_id, job_id, 'failed')
             return {'success': False, 'error': 'Failed to research selected ideas'}
+
+        # Attach the OpenAI response_id and flip to in_progress. This is
+        # failure-tolerant (the job is already running) — see the helper.
+        self._attach_research_response_id(user_id, job_id, response.id)
+
+        return {
+            'success': True,
+            'job_id': job_id,
+        }
 
     def get_research_result(self, user_id: str, job_id: str, kind: str | None = None) -> dict[str, Any]:
         """
@@ -321,11 +419,22 @@ class LLMService(BaseService):
             return {'success': False}
 
     def _check_openai_response(self, user_id: str, job_id: str, response_id: str, kind: str) -> dict[str, Any]:
-        """Check OpenAI response status and store result if complete."""
+        """Check OpenAI response status and store result if complete.
+
+        OpenAI's terminal non-completed states (failed/cancelled/expired/
+        incomplete) and a completed-but-empty response are mapped to a terminal
+        row status so the frontend poll and the reconciler stop working a job
+        that is already resolved. Only RESEARCH# rows reach this path.
+        """
         try:
             resp = self.openai_client.responses.retrieve(response_id)
             status = getattr(resp, 'status', None)
             logger.info(f'OpenAI response status for {response_id}: {status}')
+
+            if status in ('failed', 'cancelled', 'expired', 'incomplete'):
+                terminal = 'cancelled' if status == 'cancelled' else 'failed'
+                self._set_research_status(user_id, job_id, terminal)
+                return {'success': False, 'status': terminal, 'terminal': True}
 
             if status != 'completed':
                 return {'success': False, 'status': status or 'pending'}
@@ -334,7 +443,14 @@ class LLMService(BaseService):
 
             if not content or not content.strip():
                 logger.error(f'OpenAI response {response_id} completed but returned empty content')
-                return {'success': False, 'error': 'OpenAI returned empty content'}
+                # Terminal: don't let pollers/reconciler re-check a dead job.
+                self._set_research_status(user_id, job_id, 'failed')
+                return {
+                    'success': False,
+                    'status': 'failed',
+                    'terminal': True,
+                    'error': 'OpenAI returned empty content',
+                }
 
             content = content.strip()
 
@@ -355,6 +471,151 @@ class LLMService(BaseService):
         except Exception as e:
             logger.error(f'Error checking OpenAI response: {e}')
             return {'success': False}
+
+    def get_active_research(self, user_id: str) -> dict[str, Any]:
+        """Find the user's most recent active deep-research job and reconcile it.
+
+        Returns the newest RESEARCH# row whose status is 'starting' or
+        'in_progress'. When it carries an openai_response_id, poll OpenAI (via
+        _check_openai_response) so a job OpenAI already finished is persisted +
+        mirrored to the profile even though no browser was polling. Used by
+        resume-on-load after a refresh, when the client no longer holds the
+        job_id.
+        """
+        if not self.table:
+            return {'success': True, 'active': False}
+        try:
+            # Project only the fields we need and paginate: RESEARCH# rows can each
+            # hold multiple KB of completed `content`, so without a projection the
+            # 1MB page could fill before the newest active row (keyed by random
+            # uuid) is seen, and get_active_research would wrongly report inactive.
+            items = []
+            query_kwargs = {
+                'KeyConditionExpression': 'PK = :pk AND begins_with(SK, :sk)',
+                'ExpressionAttributeValues': {':pk': f'USER#{user_id}', ':sk': 'RESEARCH#'},
+                'ProjectionExpression': 'SK, #s, created_at, openai_response_id, selected_ideas',
+                'ExpressionAttributeNames': {'#s': 'status'},
+            }
+            while True:
+                resp = self.table.query(**query_kwargs)
+                items.extend(resp.get('Items', []))
+                last = resp.get('LastEvaluatedKey')
+                if not last:
+                    break
+                query_kwargs['ExclusiveStartKey'] = last
+        except Exception as e:
+            logger.error(f'get_active_research query failed for {user_id}: {e}')
+            return {'success': False}
+
+        active = [i for i in items if i.get('status') in ('starting', 'in_progress')]
+        # Ignore stale zombies: a job still active many hours after kickoff won't
+        # be auto-resumed. Otherwise a long-abandoned job (still in_progress here
+        # but completed on OpenAI) could clobber the profile's current research on
+        # the user's next visit. The reconciler retires these separately. A row
+        # with no/unparseable created_at is kept (fail-open) rather than dropped.
+        cutoff = datetime.now(UTC) - timedelta(hours=STALE_RESEARCH_HOURS)
+        fresh = []
+        for i in active:
+            created = parse_iso_datetime(i.get('created_at'))
+            if created is None or created >= cutoff:
+                fresh.append(i)
+        active = fresh
+        if not active:
+            return {'success': True, 'active': False}
+
+        newest = max(active, key=lambda i: i.get('created_at', ''))
+        job_id = newest['SK'].split('#', 1)[1]
+        selected_ideas = newest.get('selected_ideas', [])
+        response_id = newest.get('openai_response_id')
+
+        # No response_id yet: kickoff is still creating the OpenAI job. Report it
+        # as active/starting so the UI shows the indicator and keeps polling.
+        if not response_id:
+            return {
+                'success': True,
+                'active': True,
+                'status': 'starting',
+                'job_id': job_id,
+                'selected_ideas': selected_ideas,
+            }
+
+        result = self._check_openai_response(user_id, job_id, response_id, 'RESEARCH')
+        if result.get('success') and result.get('content'):
+            return {
+                'success': True,
+                'active': False,
+                'status': 'completed',
+                'job_id': job_id,
+                'selected_ideas': selected_ideas,
+                'content': result['content'],
+            }
+        if result.get('terminal'):
+            # OpenAI reported a terminal failure/cancel (now recorded on the row).
+            # Stop showing the indicator instead of spinning until the 6h cutoff.
+            return {
+                'success': True,
+                'active': False,
+                'status': result.get('status', 'failed'),
+                'job_id': job_id,
+                'selected_ideas': selected_ideas,
+            }
+        # Still running on OpenAI (or a transient poll miss) — keep the indicator.
+        return {
+            'success': True,
+            'active': True,
+            'status': result.get('status', 'in_progress'),
+            'job_id': job_id,
+            'selected_ideas': selected_ideas,
+        }
+
+    def cancel_research(self, user_id: str, job_id: str) -> dict[str, Any]:
+        """Cancel an in-progress deep-research job.
+
+        Best-effort cancels the OpenAI background response (only background
+        responses are cancellable) and flips the RESEARCH# row to 'cancelled' so
+        pollers and the reconciler stop touching it.
+        """
+        if not self.table:
+            return {'success': False, 'error': 'Storage not configured'}
+        try:
+            resp = self.table.get_item(Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'})
+            item = resp.get('Item')
+        except Exception as e:
+            logger.error(f'cancel_research lookup failed for {user_id}/{job_id}: {e}')
+            return {'success': False}
+        if not item:
+            return {'success': False, 'error': 'Research job not found'}
+
+        # If the job already finished (completed just as the cancel landed),
+        # there's nothing to cancel — leave the 'completed' status + content
+        # intact rather than mislabeling a finished job 'cancelled'.
+        if item.get('content') or item.get('status') == 'completed':
+            return {'success': True, 'already_completed': True}
+
+        response_id = item.get('openai_response_id')
+        if response_id:
+            try:
+                self.openai_client.responses.cancel(response_id)
+            except Exception as e:
+                # The job may already be completed/failed on OpenAI, in which case
+                # cancel 404s/409s. Not fatal — we still mark our row cancelled.
+                logger.info(f'OpenAI cancel for {response_id} was a no-op or failed: {e}')
+
+        # Flip the row to 'cancelled'. Unlike the best-effort _set_research_status,
+        # surface a failure here: if this write is lost the OpenAI job may still
+        # complete and the reconciler would mirror it back in, so the client must
+        # learn the cancel didn't land and can retry.
+        try:
+            self.table.update_item(
+                Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'},
+                UpdateExpression='SET #s = :s, updated_at = :ts',
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={':s': 'cancelled', ':ts': datetime.now(UTC).isoformat()},
+            )
+        except Exception as e:
+            logger.error(f'cancel_research could not record cancellation for {user_id}/{job_id}: {e}')
+            return {'success': False, 'error': 'Failed to record cancellation'}
+        return {'success': True}
 
     def _extract_response_content(self, response) -> str:
         """Extract text content from an OpenAI response, handling multiple output formats."""

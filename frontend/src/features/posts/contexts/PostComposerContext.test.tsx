@@ -6,6 +6,9 @@ const {
   mockGenerateIdeas,
   mockResearchTopics,
   mockSynthesizeResearch,
+  mockGetActiveResearch,
+  mockPollResearchResult,
+  mockCancelResearch,
   mockUpdateUserProfile,
   mockRefreshUserProfile,
   mockUser,
@@ -14,6 +17,9 @@ const {
   mockGenerateIdeas: vi.fn(),
   mockResearchTopics: vi.fn(),
   mockSynthesizeResearch: vi.fn(),
+  mockGetActiveResearch: vi.fn(),
+  mockPollResearchResult: vi.fn(),
+  mockCancelResearch: vi.fn(),
   mockUpdateUserProfile: vi.fn(),
   mockRefreshUserProfile: vi.fn(),
   mockUser: {
@@ -27,6 +33,9 @@ vi.mock('@/features/posts', () => ({
     generateIdeas: mockGenerateIdeas,
     researchTopics: mockResearchTopics,
     synthesizeResearch: mockSynthesizeResearch,
+    getActiveResearch: mockGetActiveResearch,
+    pollResearchResult: mockPollResearchResult,
+    cancelResearch: mockCancelResearch,
   },
 }));
 
@@ -71,6 +80,11 @@ describe('PostComposerContext', () => {
     mockUserProfile.value = { firstName: 'John' };
     mockUpdateUserProfile.mockResolvedValue({ success: true });
     mockRefreshUserProfile.mockResolvedValue(undefined);
+    // Default: no active research job on mount, so the resume-on-load effect is
+    // a no-op unless a test opts in.
+    mockGetActiveResearch.mockResolvedValue({ active: false });
+    mockPollResearchResult.mockResolvedValue('');
+    mockCancelResearch.mockResolvedValue(undefined);
   });
 
   it('throws when used outside provider', () => {
@@ -164,7 +178,11 @@ describe('PostComposerContext', () => {
         await result.current.researchTopics(['t1']);
       });
 
-      expect(mockResearchTopics).toHaveBeenCalledWith(['t1'], { firstName: 'John' });
+      expect(mockResearchTopics).toHaveBeenCalledWith(
+        ['t1'],
+        { firstName: 'John' },
+        expect.objectContaining({ signal: expect.anything(), onJobId: expect.any(Function) })
+      );
       expect(mockRefreshUserProfile).toHaveBeenCalledTimes(1);
     });
 
@@ -265,6 +283,71 @@ describe('PostComposerContext', () => {
 
       expect(mockUpdateUserProfile).toHaveBeenCalledWith({ ai_synthesized_post: '' });
       expect(mockRefreshUserProfile).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('resume-on-load', () => {
+    it('resumes polling an active job reported by the backend', async () => {
+      mockGetActiveResearch.mockResolvedValue({
+        active: true,
+        jobId: 'job-x',
+        selectedIdeas: ['topic A'],
+      });
+      mockPollResearchResult.mockResolvedValue('resumed research');
+
+      const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
+
+      await waitFor(() =>
+        expect(mockPollResearchResult).toHaveBeenCalledWith(
+          'job-x',
+          expect.objectContaining({ signal: expect.anything() })
+        )
+      );
+      await waitFor(() => expect(mockRefreshUserProfile).toHaveBeenCalled());
+      await waitFor(() => expect(result.current.researchingIdeas).toEqual([]));
+    });
+
+    it('surfaces a job that completed while the tab was gone', async () => {
+      mockGetActiveResearch.mockResolvedValue({ active: false, content: 'completed research' });
+
+      renderHook(() => usePostComposer(), { wrapper: createWrapper() });
+
+      await waitFor(() => expect(mockRefreshUserProfile).toHaveBeenCalled());
+      expect(mockPollResearchResult).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when there is no active job', async () => {
+      renderHook(() => usePostComposer(), { wrapper: createWrapper() });
+
+      await waitFor(() => expect(mockGetActiveResearch).toHaveBeenCalled());
+      expect(mockPollResearchResult).not.toHaveBeenCalled();
+      expect(mockRefreshUserProfile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cancelResearch', () => {
+    it('aborts the in-flight poll and cancels the backend job', async () => {
+      mockGetActiveResearch.mockResolvedValue({ active: true, jobId: 'job-c', selectedIdeas: [] });
+      let capturedSignal: AbortSignal | undefined;
+      mockPollResearchResult.mockImplementation(
+        (_jobId: string, opts: { signal?: AbortSignal }) => {
+          capturedSignal = opts?.signal;
+          return new Promise<string>(() => {}); // never resolves — simulates a long poll
+        }
+      );
+
+      const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
+
+      await waitFor(() => expect(mockPollResearchResult).toHaveBeenCalled());
+      await waitFor(() => expect(result.current.isResearching).toBe(true));
+
+      await act(async () => {
+        await result.current.cancelResearch();
+      });
+
+      expect(mockCancelResearch).toHaveBeenCalledWith('job-c');
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(result.current.isResearching).toBe(false);
     });
   });
 });

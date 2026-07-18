@@ -673,6 +673,41 @@ Resources:
             Auth:
               Authorizer: NONE
 
+  # ==========================================================================
+  # Research Reconciler (scheduled) - makes deep-research results durable even
+  # when no browser is polling. Scans in-progress RESEARCH# rows, reconciles
+  # them against OpenAI, and mirrors completed content to the profile.
+  # See lambdas/llm/reconcile_handler.py. Runtime/Layers/DYNAMODB_TABLE_NAME
+  # are inherited from Globals.Function.
+  # ==========================================================================
+  ResearchReconcilerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'warmreach-research-reconciler-${Environment}'
+      CodeUri: lambdas/llm/
+      Handler: reconcile_handler.lambda_handler
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          OPENAI_API_KEY_ARN: !Ref OpenAIApiKeyArn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProfilesTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource:
+                - !Ref OpenAIApiKeyArn
+      Events:
+        ResearchPollSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: 'rate(5 minutes)'
+            Description: 'Reconcile in-progress deep-research jobs against OpenAI'
+            Enabled: true
+
   # Public endpoint returning per-platform desktop client download URLs.
   ClientDownloadsFunction:
     Type: AWS::Serverless::Function

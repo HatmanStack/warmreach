@@ -20,6 +20,7 @@ const NewPostTabInner = () => {
     synthesizedPost,
     generateIdeas,
     researchTopics,
+    cancelResearch,
     synthesizeResearch,
     clearResearch,
     clearIdea,
@@ -52,6 +53,15 @@ const NewPostTabInner = () => {
     } catch (error) {
       logger.error('Failed to clear research', { error });
       toast({ title: 'Error', description: 'Failed to clear research.', variant: 'destructive' });
+    }
+  };
+
+  const handleCancelResearch = async () => {
+    try {
+      await cancelResearch();
+    } catch (error) {
+      logger.error('Failed to cancel research', { error });
+      toast({ title: 'Error', description: 'Failed to cancel research.', variant: 'destructive' });
     }
   };
 
@@ -131,7 +141,11 @@ const NewPostTabInner = () => {
         )}
 
         {/* Research Results */}
-        <ResearchResultsCard isResearching={isResearching} onClear={handleClearResearch} />
+        <ResearchResultsCard
+          isResearching={isResearching}
+          onClear={handleClearResearch}
+          onCancel={handleCancelResearch}
+        />
       </div>
 
       <div className="space-y-6">

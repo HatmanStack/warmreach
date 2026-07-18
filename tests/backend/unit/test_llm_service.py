@@ -7,10 +7,15 @@ Pro-side additions in this PR (Phase 5 retry-decorator tests, skipped-test
 lint gates) are not ported because the community overlay exercises a
 different error surface — the retry/wrap semantics do not apply here.
 """
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import openai
 import pytest
+
+
+def _recent_iso(minutes_ago=1):
+    return (datetime.now(UTC) - timedelta(minutes=minutes_ago)).isoformat()
 
 
 @pytest.fixture
@@ -151,6 +156,265 @@ class TestGetResearchResult:
             user_id='user-123', job_id='job-456', kind='RESEARCH'
         )
         assert result['success'] is False
+
+
+class TestResearchKickoffHardening:
+    """The RESEARCH# row must exist before the OpenAI call so a refresh during
+    kickoff can't lose the job."""
+
+    def test_records_starting_row_before_openai_call(self, service, mock_openai_client, mock_dynamodb_table):
+        order = []
+        mock_dynamodb_table.put_item.side_effect = lambda **k: order.append('put')
+
+        def _create(**kwargs):
+            order.append('openai')
+            resp = MagicMock()
+            resp.id = 'resp_xyz'
+            return resp
+
+        mock_openai_client.responses.create.side_effect = _create
+
+        service.research_selected_ideas(user_data={}, selected_ideas=['Topic A'], user_id='u1')
+
+        assert order.index('put') < order.index('openai')
+        item = mock_dynamodb_table.put_item.call_args_list[0].kwargs['Item']
+        assert item['SK'].startswith('RESEARCH#')
+        assert item['status'] == 'starting'
+        assert item['selected_ideas'] == ['Topic A']
+        assert 'openai_response_id' not in item
+
+        rid_updates = [
+            c.kwargs
+            for c in mock_dynamodb_table.update_item.call_args_list
+            if ':rid' in c.kwargs.get('ExpressionAttributeValues', {})
+        ]
+        assert rid_updates
+        assert rid_updates[-1]['ExpressionAttributeValues'][':rid'] == 'resp_xyz'
+        assert rid_updates[-1]['ExpressionAttributeValues'][':s'] == 'in_progress'
+
+    def test_marks_row_failed_when_openai_kickoff_errors(self, service, mock_openai_client, mock_dynamodb_table):
+        # Community edition returns an error dict (rather than raising) but still
+        # marks the discoverable row failed.
+        mock_openai_client.responses.create.side_effect = openai.APIError(
+            message='boom', request=MagicMock(), body=None
+        )
+        result = service.research_selected_ideas(user_data={}, selected_ideas=['T'], user_id='u1')
+        assert result['success'] is False
+        statuses = [
+            c.kwargs.get('ExpressionAttributeValues', {}).get(':s')
+            for c in mock_dynamodb_table.update_item.call_args_list
+        ]
+        assert 'failed' in statuses
+
+
+class TestGetActiveResearch:
+    """Tests for get_active_research (resume-on-load discovery + reconcile)."""
+
+    def test_returns_inactive_when_no_jobs(self, service, mock_dynamodb_table):
+        mock_dynamodb_table.query.return_value = {'Items': []}
+        assert service.get_active_research('u1') == {'success': True, 'active': False}
+
+    def test_reports_starting_job_without_response_id(self, service, mock_dynamodb_table):
+        mock_dynamodb_table.query.return_value = {
+            'Items': [
+                {
+                    'PK': 'USER#u1',
+                    'SK': 'RESEARCH#job-1',
+                    'status': 'starting',
+                    'selected_ideas': ['Idea X'],
+                    'created_at': _recent_iso(),
+                }
+            ]
+        }
+        result = service.get_active_research('u1')
+        assert result['active'] is True
+        assert result['status'] == 'starting'
+        assert result['job_id'] == 'job-1'
+        assert result['selected_ideas'] == ['Idea X']
+
+    def test_reconciles_completed_job_and_returns_content(self, service, mock_openai_client, mock_dynamodb_table):
+        mock_dynamodb_table.query.return_value = {
+            'Items': [
+                {
+                    'PK': 'USER#u1',
+                    'SK': 'RESEARCH#job-1',
+                    'status': 'in_progress',
+                    'openai_response_id': 'resp_1',
+                    'created_at': _recent_iso(),
+                    'selected_ideas': ['Idea'],
+                }
+            ]
+        }
+        resp = MagicMock()
+        resp.status = 'completed'
+        resp.output_text = 'RESULT CONTENT'
+        mock_openai_client.responses.retrieve.return_value = resp
+
+        result = service.get_active_research('u1')
+        assert result['active'] is False
+        assert result['status'] == 'completed'
+        assert result['content'] == 'RESULT CONTENT'
+
+    def test_ignores_stale_active_job(self, service, mock_dynamodb_table):
+        mock_dynamodb_table.query.return_value = {
+            'Items': [
+                {
+                    'PK': 'USER#u1',
+                    'SK': 'RESEARCH#zombie',
+                    'status': 'in_progress',
+                    'openai_response_id': 'resp_old',
+                    'created_at': (datetime.now(UTC) - timedelta(days=6)).isoformat(),
+                }
+            ]
+        }
+        assert service.get_active_research('u1') == {'success': True, 'active': False}
+
+
+class TestCancelResearch:
+    """Tests for cancel_research (best-effort OpenAI cancel + status flip)."""
+
+    def test_cancels_openai_and_marks_cancelled(self, service, mock_openai_client, mock_dynamodb_table):
+        mock_dynamodb_table.get_item.return_value = {
+            'Item': {'PK': 'USER#u1', 'SK': 'RESEARCH#job-1', 'status': 'in_progress', 'openai_response_id': 'resp_1'}
+        }
+        result = service.cancel_research('u1', 'job-1')
+        assert result['success'] is True
+        mock_openai_client.responses.cancel.assert_called_once_with('resp_1')
+        statuses = [
+            c.kwargs.get('ExpressionAttributeValues', {}).get(':s')
+            for c in mock_dynamodb_table.update_item.call_args_list
+        ]
+        assert 'cancelled' in statuses
+
+    def test_returns_not_found_when_missing(self, service, mock_dynamodb_table):
+        mock_dynamodb_table.get_item.return_value = {}
+        assert service.cancel_research('u1', 'missing')['success'] is False
+
+    def test_leaves_already_completed_job_intact(self, service, mock_openai_client, mock_dynamodb_table):
+        mock_dynamodb_table.get_item.return_value = {
+            'Item': {
+                'PK': 'USER#u1',
+                'SK': 'RESEARCH#job-1',
+                'status': 'completed',
+                'content': 'the results',
+                'openai_response_id': 'resp_1',
+            }
+        }
+        result = service.cancel_research('u1', 'job-1')
+        assert result['success'] is True
+        mock_openai_client.responses.cancel.assert_not_called()
+        statuses = [
+            c.kwargs.get('ExpressionAttributeValues', {}).get(':s')
+            for c in mock_dynamodb_table.update_item.call_args_list
+        ]
+        assert 'cancelled' not in statuses
+
+
+class TestResearchDurabilityFixes:
+    """Review-driven hardening: supersede-at-kickoff, failure-tolerant writes,
+    terminal-state handling, query pagination, and tz-aware timestamp parsing."""
+
+    def test_supersedes_prior_active_jobs_at_kickoff(self, service, mock_openai_client, mock_dynamodb_table):
+        mock_dynamodb_table.query.return_value = {'Items': [{'SK': 'RESEARCH#older', 'status': 'in_progress'}]}
+        service.research_selected_ideas(user_data={}, selected_ideas=['T'], user_id='u1')
+        statuses = [
+            c.kwargs.get('ExpressionAttributeValues', {}).get(':s')
+            for c in mock_dynamodb_table.update_item.call_args_list
+        ]
+        assert 'abandoned' in statuses
+
+    def test_response_id_write_failure_does_not_raise(self, service, mock_openai_client, mock_dynamodb_table):
+        mock_dynamodb_table.update_item.side_effect = Exception('ddb throttled')
+        result = service.research_selected_ideas(user_data={}, selected_ideas=['T'], user_id='u1')
+        assert result['success'] is True
+        assert result['job_id']
+
+    def test_terminal_openai_status_stops_the_job(self, service, mock_openai_client, mock_dynamodb_table):
+        mock_dynamodb_table.query.return_value = {
+            'Items': [
+                {
+                    'PK': 'USER#u1',
+                    'SK': 'RESEARCH#job-1',
+                    'status': 'in_progress',
+                    'openai_response_id': 'resp_1',
+                    'created_at': _recent_iso(),
+                }
+            ]
+        }
+        resp = MagicMock()
+        resp.status = 'failed'
+        mock_openai_client.responses.retrieve.return_value = resp
+
+        result = service.get_active_research('u1')
+        assert result['active'] is False
+        assert result['status'] == 'failed'
+        statuses = [
+            c.kwargs.get('ExpressionAttributeValues', {}).get(':s')
+            for c in mock_dynamodb_table.update_item.call_args_list
+        ]
+        assert 'failed' in statuses
+
+    def test_completed_but_empty_is_terminal(self, service, mock_openai_client, mock_dynamodb_table):
+        mock_dynamodb_table.query.return_value = {
+            'Items': [
+                {
+                    'PK': 'USER#u1',
+                    'SK': 'RESEARCH#job-1',
+                    'status': 'in_progress',
+                    'openai_response_id': 'resp_1',
+                    'created_at': _recent_iso(),
+                }
+            ]
+        }
+        resp = MagicMock()
+        resp.status = 'completed'
+        resp.output_text = ''
+        resp.output = []
+        mock_openai_client.responses.retrieve.return_value = resp
+
+        result = service.get_active_research('u1')
+        assert result['active'] is False
+        assert result['status'] == 'failed'
+
+    def test_get_active_research_paginates(self, service, mock_dynamodb_table):
+        mock_dynamodb_table.query.side_effect = [
+            {
+                'Items': [{'SK': 'RESEARCH#old', 'status': 'in_progress', 'created_at': _recent_iso(30)}],
+                'LastEvaluatedKey': {'PK': 'USER#u1', 'SK': 'RESEARCH#old'},
+            },
+            {
+                'Items': [
+                    {
+                        'SK': 'RESEARCH#new',
+                        'status': 'starting',
+                        'selected_ideas': ['N'],
+                        'created_at': _recent_iso(1),
+                    }
+                ]
+            },
+        ]
+        result = service.get_active_research('u1')
+        assert result['active'] is True
+        assert result['job_id'] == 'new'
+
+    def test_cancel_research_surfaces_flip_failure(self, service, mock_openai_client, mock_dynamodb_table):
+        mock_dynamodb_table.get_item.return_value = {
+            'Item': {'PK': 'USER#u1', 'SK': 'RESEARCH#job-1', 'status': 'in_progress', 'openai_response_id': 'r'}
+        }
+        mock_dynamodb_table.update_item.side_effect = Exception('ddb throttled')
+        result = service.cancel_research('u1', 'job-1')
+        assert result['success'] is False
+
+    def test_parse_iso_datetime_returns_aware(self):
+        from conftest import load_service_class
+
+        module = load_service_class('llm', 'llm_service')
+        naive = module.parse_iso_datetime('2026-07-18T10:00:00')
+        assert naive is not None and naive.tzinfo is not None
+        aware = module.parse_iso_datetime('2026-07-18T10:00:00+00:00')
+        assert aware is not None and aware.tzinfo is not None
+        assert module.parse_iso_datetime(None) is None
+        assert module.parse_iso_datetime('not-a-date') is None
 
 
 class TestSynthesizeResearch:
