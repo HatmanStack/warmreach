@@ -207,8 +207,46 @@ class DynamoDBApiService(BaseService):
 
         self.table.put_item(Item=profile_metadata)
 
+        # Write the user's forward edge to the profile as well. Without it only
+        # the shared PROFILE#|#METADATA node exists, so the contact never appears
+        # in the user's connection list (get_connections_by_status queries USER#
+        # edges via the table and GSI1). An UPDATE (not a PUT) preserves any
+        # durable edge attributes — messages, tags, notes, score — set earlier.
+        self.table.update_item(
+            Key={'PK': f'USER#{user_id}', 'SK': f'PROFILE#{profile_id_b64}'},
+            UpdateExpression=(
+                'SET #s = :status, GSI1PK = :gpk, GSI1SK = :gsk, '
+                'addedAt = if_not_exists(addedAt, :added), updatedAt = :updated'
+            ),
+            ExpressionAttributeNames={'#s': 'status'},
+            ExpressionAttributeValues={
+                ':status': status,
+                ':gpk': f'USER#{user_id}',
+                ':gsk': f'STATUS#{status}#PROFILE#{profile_id_b64}',
+                ':added': updates.get('addedAt', current_time),
+                ':updated': current_time,
+            },
+        )
+        # Reverse edge (PROFILE#|USER#) so reverse-edge lookups — e.g. warm-intro
+        # pathfinding via WarmIntroPathsService — can find this contact. This
+        # mirrors the forward/reverse pair EdgeStatusService.upsert_status writes;
+        # kept as two plain UPDATEs (not that service's transaction) so the write
+        # goes through the same table resource as the metadata put above.
+        self.table.update_item(
+            Key={'PK': f'PROFILE#{profile_id_b64}', 'SK': f'USER#{user_id}'},
+            UpdateExpression=('SET #s = :status, addedAt = if_not_exists(addedAt, :added), updatedAt = :updated'),
+            ExpressionAttributeNames={'#s': 'status'},
+            ExpressionAttributeValues={
+                ':status': status,
+                ':added': updates.get('addedAt', current_time),
+                ':updated': current_time,
+            },
+        )
+
         logger.info(
-            'Created/updated bad contact profile metadata (evaluated=True): %s for user: %s', profile_id_b64, user_id
+            'Created/updated bad contact profile metadata + edge (evaluated=True): %s for user: %s',
+            profile_id_b64,
+            user_id,
         )
 
         return {

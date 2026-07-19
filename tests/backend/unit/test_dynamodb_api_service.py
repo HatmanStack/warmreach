@@ -277,7 +277,7 @@ class TestCreateBadContactProfile:
         mock_table.put_item.assert_not_called()
 
     def test_status_parameter_used(self):
-        """When status is passed, the return reflects it (no edge item in current impl)."""
+        """When status is passed, the return reflects it."""
         mock_table = MagicMock()
         service = DynamoDBApiService(table=mock_table)
 
@@ -316,6 +316,35 @@ class TestCreateBadContactProfile:
 
         assert 'error' in result
         mock_table.put_item.assert_not_called()
+
+    def test_creates_user_edge(self):
+        """Forward + reverse edges are written so the contact lists and is reachable."""
+        mock_table = MagicMock()
+        service = DynamoDBApiService(table=mock_table)
+
+        profile_url = 'https://linkedin.com/in/bad-contact'
+        service.create_bad_contact_profile('user-123', {
+            'profileId': profile_url,
+            'status': 'processed',
+            'updates': {'name': 'Bad Contact'},
+        })
+
+        profile_id_b64 = base64.urlsafe_b64encode(profile_url.encode()).decode()
+        assert mock_table.update_item.call_count == 2
+        keys = [c.kwargs['Key'] for c in mock_table.update_item.call_args_list]
+        # Forward edge (USER#|PROFILE#) — lists the contact for the user.
+        assert {'PK': 'USER#user-123', 'SK': f'PROFILE#{profile_id_b64}'} in keys
+        # Reverse edge (PROFILE#|USER#) — reverse-edge lookups (warm-intro).
+        assert {'PK': f'PROFILE#{profile_id_b64}', 'SK': 'USER#user-123'} in keys
+        # The forward edge carries the GSI1 status key.
+        fwd = next(
+            c for c in mock_table.update_item.call_args_list if c.kwargs['Key']['PK'] == 'USER#user-123'
+        )
+        assert fwd.kwargs['ExpressionAttributeValues'][':status'] == 'processed'
+        assert (
+            fwd.kwargs['ExpressionAttributeValues'][':gsk']
+            == f'STATUS#processed#PROFILE#{profile_id_b64}'
+        )
 
 
 class TestGetUserSettings:
