@@ -126,7 +126,13 @@ export class PuppeteerService {
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
-        '--disable-gpu',
+        // NOTE: intentionally NO --disable-gpu. getWebGLSpoofScript() advertises a
+        // real discrete GPU (NVIDIA/AMD/Intel ANGLE D3D11 renderer); launching with
+        // the GPU pipeline disabled makes the rest of the WebGL/canvas surface fall
+        // back to SwiftShader, which contradicts that spoofed renderer and is a
+        // self-defeating anti-bot tell. Keep the GPU story consistent by leaving it
+        // enabled (new-headless uses ANGLE/SwiftShader transparently where no
+        // physical GPU exists, without announcing "GPU disabled").
         '--disable-blink-features=AutomationControlled',
       ];
 
@@ -138,9 +144,12 @@ export class PuppeteerService {
         }
       }
 
-      // If user asked for UI but no DISPLAY is available, warn and keep headless to avoid crash
-      const effectiveHeadless: boolean | 'shell' =
-        resolvedHeadless || !displayEnv ? 'shell' : false;
+      // If user asked for UI but no DISPLAY is available, warn and keep headless to avoid crash.
+      // Use Chrome's "new" headless mode (`headless: true` in puppeteer >= 22), NOT the legacy
+      // chrome-headless-shell ('shell'). The shell build is a separate, easily-fingerprinted
+      // runtime (no window.chrome, divergent GPU/AudioContext stacks); new-headless shares the
+      // headful Chrome binary and presents a far more real-browser-like fingerprint.
+      const effectiveHeadless: boolean = resolvedHeadless || !displayEnv;
       if (!resolvedHeadless && !displayEnv) {
         logger.warn(
           'HEADLESS=false requested but DISPLAY is not set. Browser UI cannot be shown in this environment. Running headless instead.'
@@ -288,35 +297,41 @@ export class PuppeteerService {
       };
       this.page.on('pageerror', this._pageerrorHandler);
 
-      // Custom headless evasion (always enabled to spoof platform fingerprints regardless of head)
-      if (profile) {
-        await this.page.evaluateOnNewDocument(
-          getHeadlessEvasionScript({
-            platform: profile.platform,
-            language: profile.language,
-            pluginCount: profile.pluginCount,
-          })
-        );
-      } else {
-        await this.page.evaluateOnNewDocument(getHeadlessEvasionScript());
-      }
-
-      // Fingerprint noise injection
-      if (config.puppeteer.enableFingerprintNoise) {
+      // Native stealth stack — master-gated by config.puppeteer.enableStealth so
+      // the flag actually controls the anti-detection layer (it was previously
+      // defined but read nowhere). Fingerprint noise keeps its own sub-toggle.
+      // Both default on, so production behavior is unchanged.
+      if (config.puppeteer.enableStealth) {
+        // Custom headless evasion (spoofs platform fingerprints regardless of head)
         if (profile) {
-          await this.page.evaluateOnNewDocument(getCanvasNoiseScript(profile.canvasNoiseSeed));
-          await this.page.evaluateOnNewDocument(getWebGLSpoofScript(profile.gpuProfile));
-          await this.page.evaluateOnNewDocument(getAudioNoiseScript(profile.audioNoiseSeed));
+          await this.page.evaluateOnNewDocument(
+            getHeadlessEvasionScript({
+              platform: profile.platform,
+              language: profile.language,
+              pluginCount: profile.pluginCount,
+            })
+          );
         } else {
-          // Fallback to random behavior if no profile
-          await this.page.evaluateOnNewDocument(
-            getCanvasNoiseScript(Math.floor(Math.random() * 1000000))
-          );
-          const randomGpu = GPU_PROFILES[Math.floor(Math.random() * GPU_PROFILES.length)]!;
-          await this.page.evaluateOnNewDocument(getWebGLSpoofScript(randomGpu));
-          await this.page.evaluateOnNewDocument(
-            getAudioNoiseScript(Math.floor(Math.random() * 1000000))
-          );
+          await this.page.evaluateOnNewDocument(getHeadlessEvasionScript());
+        }
+
+        // Fingerprint noise injection
+        if (config.puppeteer.enableFingerprintNoise) {
+          if (profile) {
+            await this.page.evaluateOnNewDocument(getCanvasNoiseScript(profile.canvasNoiseSeed));
+            await this.page.evaluateOnNewDocument(getWebGLSpoofScript(profile.gpuProfile));
+            await this.page.evaluateOnNewDocument(getAudioNoiseScript(profile.audioNoiseSeed));
+          } else {
+            // Fallback to random behavior if no profile
+            await this.page.evaluateOnNewDocument(
+              getCanvasNoiseScript(Math.floor(Math.random() * 1000000))
+            );
+            const randomGpu = GPU_PROFILES[Math.floor(Math.random() * GPU_PROFILES.length)]!;
+            await this.page.evaluateOnNewDocument(getWebGLSpoofScript(randomGpu));
+            await this.page.evaluateOnNewDocument(
+              getAudioNoiseScript(Math.floor(Math.random() * 1000000))
+            );
+          }
         }
       }
 

@@ -238,6 +238,22 @@ def test_get_active_research_gated_not_metered(lambda_context, llm_module, mock_
     mock_wa.assert_not_called()
 
 
+def test_get_quota_status_returns_open_status_not_metered(lambda_context, llm_module, mock_services):
+    """Community edition has no quotas: get_quota_status reports an open/unlimited
+    status in the pro shape and never meters."""
+    event = {
+        'body': json.dumps({'operation': 'get_quota_status'}),
+        'requestContext': {'authorizer': {'claims': {'sub': 'test-user'}}},
+    }
+    response = llm_module.lambda_handler(event, lambda_context)
+    assert response['statusCode'] == 200
+    body = json.loads(response['body'])
+    assert body['allowed'] is True
+    assert body['dailyLimit'] is None
+    mock_services['quota'].reserve_usage.assert_not_called()
+    mock_services['quota'].report_usage.assert_not_called()
+
+
 def test_get_active_research_feature_gated(lambda_context, llm_module, mock_services):
     """When deep_research is disabled, get_active_research returns 403."""
     mock_services['feature_flags'].get_feature_flags.return_value = {

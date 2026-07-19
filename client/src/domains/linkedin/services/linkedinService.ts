@@ -407,6 +407,13 @@ export class LinkedInService {
 
       await this.puppeteer.goto(`${config.linkedin.baseUrl}/search/results/people/`);
 
+      // Snapshot any currentCompany already in the URL (normally none — we just
+      // navigated to a param-less people page). The entity guard below only
+      // accepts an ID that OUR filter application freshly produces, so a stale
+      // param can't be mistaken for the requested company.
+      const priorCompany =
+        decodeURIComponent(page.url()).match(/currentCompany=\["?(\d+)"?\]/)?.[1] ?? null;
+
       // Click "Current companies" filter label
       const companyFilterClicked = await this._paced(1500, 2500, () =>
         this._clickFilterButton('Current companies')
@@ -442,18 +449,30 @@ export class LinkedInService {
       // Click "Show results" to apply the filter (may auto-apply on selection)
       await this._paced(500, 1000, () => this._clickShowResults());
 
-      // Wait for URL to update with company parameter
+      // Wait for the URL to carry a currentCompany that DIFFERS from the pre-
+      // application snapshot — i.e. one our suggestion actually produced. A bare
+      // /currentCompany=/ check resolves instantly against a stale param and
+      // would yield a wrong-entity ID.
       let extractedCompanyNumber: string | null = null;
       try {
         await page.waitForFunction(
-          () => /currentCompany=/.test(decodeURIComponent(window.location.href)),
-          { timeout: 10000 }
+          (prior) => {
+            const m = decodeURIComponent(window.location.href).match(
+              /currentCompany=\["?(\d+)"?\]/
+            );
+            return !!m && m[1] !== prior;
+          },
+          { timeout: 10000 },
+          priorCompany
         );
         const currentUrl = decodeURIComponent(page.url());
         const companyMatch = currentUrl.match(/currentCompany=\["?(\d+)"?\]/);
-        extractedCompanyNumber = companyMatch?.[1] ?? null;
+        const candidate = companyMatch?.[1] ?? null;
+        // Entity guard: reject an ID equal to the pre-application snapshot (the
+        // filter click never took) so we never return a stale, wrong-entity ID.
+        extractedCompanyNumber = candidate && candidate !== priorCompany ? candidate : null;
       } catch (error) {
-        logger.warn('Timed out waiting for company parameter in URL:', error);
+        logger.warn('Timed out waiting for a fresh company parameter in URL:', error);
       }
 
       // Analyze search results content
@@ -495,6 +514,12 @@ export class LinkedInService {
         await this.puppeteer.goto(`${config.linkedin.baseUrl}/search/results/people/`);
       }
 
+      // Snapshot any geoUrn already on the page we're about to filter. Unlike
+      // searchCompany, applyLocationFilter re-navigates only when NOT already on
+      // a people page, so a stale geoUrn from a prior search can linger; the
+      // entity guard below rejects it unless our application changes it.
+      const priorGeo = decodeURIComponent(page.url()).match(/geoUrn=\["?(\d+)"?\]/)?.[1] ?? null;
+
       // Click "Locations" filter button
       const locationFilterClicked = await this._paced(1500, 2500, () =>
         this._clickFilterButton('Locations')
@@ -517,23 +542,48 @@ export class LinkedInService {
       );
       if (!suggestionClicked) {
         logger.warn(`No matching location suggestion found for: ${companyLocation}`);
+        // Mirror searchCompany: capture the typeahead/suggestion DOM so the stale
+        // suggestion selectors can be repaired against live markup. Previously
+        // only the company path dumped here, so location drift went undiagnosed.
+        try {
+          await this._dumpSearchHtml('location-suggestion-failure', await page.content());
+        } catch {
+          // best-effort
+        }
         return null;
       }
 
       // Click "Show results" to apply the filter (may auto-apply on selection)
       await this._paced(500, 1000, () => this._clickShowResults());
 
-      // Wait for URL to update with geo parameter
+      // Wait for the URL to carry a geoUrn that DIFFERS from the pre-application
+      // snapshot — one our suggestion actually produced. A bare /geoUrn=/ check
+      // resolves instantly against a lingering param and would yield a wrong-
+      // entity geo ID (silently collecting off-filter, wrong-location results).
       let extractedGeoNumber: string | null = null;
       try {
-        await page.waitForFunction(() => /geoUrn=/.test(decodeURIComponent(window.location.href)), {
-          timeout: 10000,
-        });
+        await page.waitForFunction(
+          (prior) => {
+            const m = decodeURIComponent(window.location.href).match(/geoUrn=\["?(\d+)"?\]/);
+            return !!m && m[1] !== prior;
+          },
+          { timeout: 10000 },
+          priorGeo
+        );
         const currentUrl = decodeURIComponent(page.url());
         const geoMatch = currentUrl.match(/geoUrn=\["?(\d+)"?\]/);
-        extractedGeoNumber = geoMatch?.[1] ?? null;
+        const candidate = geoMatch?.[1] ?? null;
+        // Entity guard: reject an ID equal to the pre-application snapshot (the
+        // filter click never took) so we never return a stale, wrong-entity ID.
+        // In the normal flow priorGeo is null (company search sets currentCompany,
+        // not geoUrn), so a fresh geoUrn is always accepted. The only case this
+        // errs on is re-applying the SAME location already present on the page —
+        // it can't be distinguished from a stale param by URL alone, so we
+        // conservatively drop it. That's now a non-fatal degrade (searchController
+        // proceeds company-only with a warning), never a wrong-location result.
+        extractedGeoNumber = candidate && candidate !== priorGeo ? candidate : null;
       } catch (error) {
-        logger.warn('Timed out waiting for geoUrn parameter in URL:', error);
+        logger.warn('Timed out waiting for a fresh geoUrn parameter in URL:', error);
       }
 
       // Analyze search results content

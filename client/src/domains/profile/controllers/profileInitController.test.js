@@ -4,6 +4,8 @@ import { ProfileInitService } from '../services/profileInitService.js';
 import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { profileInitMonitor } from '../utils/profileInitMonitor.js';
 import { validateLinkedInCredentials } from '../../../shared/utils/credentialValidator.js';
+import { BurstThrottleManager } from '../../automation/utils/burstThrottleManager.js';
+import config from '#shared-config/index.js';
 
 // Mock dependencies
 vi.mock('#utils/logger.js', () => ({
@@ -205,6 +207,32 @@ describe('ProfileInitController', () => {
 
       expect(result.statusCode).toBe(200);
       expect(result.status).toBe('success');
+    });
+  });
+
+  describe('burst throttle wiring (P1-1 stealth)', () => {
+    it('injects a BurstThrottleManager into ProfileInitService when stealth is enabled', async () => {
+      config.puppeteer.enableStealth = true;
+
+      await controller.performProfileInit(mockReq, mockRes);
+
+      expect(ProfileInitService).toHaveBeenCalled();
+      // 6th positional constructor arg is the burstThrottleManager; the live
+      // consumer (profileBatchProcessing) paces each scrape through it.
+      const ctorArgs = ProfileInitService.mock.calls.at(-1);
+      expect(ctorArgs[5]).toBeInstanceOf(BurstThrottleManager);
+    });
+
+    it('passes no throttle when stealth is disabled', async () => {
+      config.puppeteer.enableStealth = false;
+      try {
+        await controller.performProfileInit(mockReq, mockRes);
+
+        const ctorArgs = ProfileInitService.mock.calls.at(-1);
+        expect(ctorArgs[5]).toBeUndefined();
+      } finally {
+        config.puppeteer.enableStealth = true;
+      }
     });
   });
 });

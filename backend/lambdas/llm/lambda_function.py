@@ -85,6 +85,7 @@ OPS = {
     'generate_message',
     'analyze_message_patterns',
     'analyze_tone',
+    'get_quota_status',
 }
 METERED_OPS = {
     'generate_ideas',
@@ -216,6 +217,22 @@ def lambda_handler(event, _context):
         op = body.get('operation')
         if not op or op not in OPS:
             return api_response(400, {'error': 'Invalid operation'}, event)
+
+        # get_quota_status powers the billing "Usage" meter. The community edition
+        # has no quotas, so always report an open/unlimited status — in the same
+        # shape the (non-overlaid) frontend expects from the pro build.
+        if op == 'get_quota_status':
+            return api_response(
+                200,
+                {
+                    'allowed': True,
+                    'remaining': None,
+                    'dailyLimit': None,
+                    'monthlyRemaining': None,
+                    'monthlyLimit': None,
+                },
+                event,
+            )
 
         # Auto-provision tier on first call (best-effort, non-blocking): a tier
         # row that fails to materialize here is recoverable on a later call, so

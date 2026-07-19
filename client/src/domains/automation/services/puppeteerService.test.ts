@@ -69,6 +69,7 @@ describe('PuppeteerService', () => {
 
     service = new PuppeteerService();
     config.puppeteer.enableFingerprintNoise = true;
+    config.puppeteer.enableStealth = true;
   });
 
   it('uses fingerprint profile if available', async () => {
@@ -113,6 +114,36 @@ describe('PuppeteerService', () => {
 
     expect(page.setUserAgent).toHaveBeenCalled();
     expect(page.evaluateOnNewDocument).toHaveBeenCalledTimes(4); // 1 evasion + 3 noise
+  });
+
+  it('launches new-headless (headless: true) and omits --disable-gpu', async () => {
+    vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+      throw new Error('No profile');
+    });
+    config.puppeteer.headless = true;
+
+    const puppeteer = await import('puppeteer');
+    await service.initialize();
+
+    const launchArg = vi.mocked(puppeteer.default.launch).mock.calls.at(-1)?.[0] as any;
+    // New headless (shares the real Chrome binary), not the easily-fingerprinted
+    // chrome-headless-shell ('shell').
+    expect(launchArg.headless).toBe(true);
+    // GPU stays enabled so it doesn't contradict the spoofed discrete-GPU renderer.
+    expect(launchArg.args).not.toContain('--disable-gpu');
+  });
+
+  it('injects no stealth scripts when enableStealth is disabled', async () => {
+    vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+      throw new Error('No profile');
+    });
+    config.puppeteer.enableStealth = false;
+    config.puppeteer.enableFingerprintNoise = true; // sub-toggle on, master gate off
+
+    const page = await service.initialize();
+
+    // Master gate off ⇒ neither headless-evasion nor fingerprint-noise scripts run.
+    expect(page.evaluateOnNewDocument).not.toHaveBeenCalled();
   });
 
   describe('close() listener cleanup', () => {

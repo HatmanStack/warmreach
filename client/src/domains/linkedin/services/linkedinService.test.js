@@ -287,12 +287,29 @@ describe('LinkedInService', () => {
     it('returns company number from URL', async () => {
       const page = mockPuppeteer.getPage();
       page.waitForFunction.mockResolvedValue();
-      page.url.mockReturnValue(
-        'https://www.linkedin.com/search/results/people/?currentCompany=["12345"]'
-      );
+      // 1st url() read is the pre-application snapshot (no currentCompany); the
+      // freshly-applied filter then adds it, so the entity guard accepts it.
+      page.url
+        .mockReturnValueOnce('https://www.linkedin.com/search/results/people/')
+        .mockReturnValue(
+          'https://www.linkedin.com/search/results/people/?currentCompany=["12345"]'
+        );
 
       const result = await service.searchCompany('TestCorp');
       expect(result).toBe('12345');
+    });
+
+    it('returns null when the company param is stale (filter never applied)', async () => {
+      const page = mockPuppeteer.getPage();
+      page.waitForFunction.mockResolvedValue();
+      // Same currentCompany present before AND after: the suggestion click never
+      // took, so the entity guard rejects the stale, wrong-entity ID.
+      page.url.mockReturnValue(
+        'https://www.linkedin.com/search/results/people/?currentCompany=["999"]'
+      );
+
+      const result = await service.searchCompany('TestCorp');
+      expect(result).toBeNull();
     });
 
     it('returns null when suggestion not found', async () => {
@@ -368,15 +385,26 @@ describe('LinkedInService', () => {
 
     it('returns geo number from URL on success', async () => {
       const page = mockPuppeteer.getPage();
-      page.url.mockReturnValue('https://www.linkedin.com/search/results/people/');
       page.waitForFunction.mockResolvedValue();
-      // After waitForFunction, url() should return the updated URL
+      // 1st url() read is the nav check, 2nd is the pre-application snapshot
+      // (both geo-less); the freshly-applied filter then adds geoUrn.
       page.url
+        .mockReturnValueOnce('https://www.linkedin.com/search/results/people/')
         .mockReturnValueOnce('https://www.linkedin.com/search/results/people/')
         .mockReturnValue('https://www.linkedin.com/search/results/people/?geoUrn=["103644278"]');
 
       const result = await service.applyLocationFilter('New York');
       expect(result).toBe('103644278');
+    });
+
+    it('returns null when the geo param is stale (filter never applied)', async () => {
+      const page = mockPuppeteer.getPage();
+      page.waitForFunction.mockResolvedValue();
+      // geoUrn already present before we act and unchanged after — stale, reject.
+      page.url.mockReturnValue('https://www.linkedin.com/search/results/people/?geoUrn=["555"]');
+
+      const result = await service.applyLocationFilter('New York');
+      expect(result).toBeNull();
     });
   });
 

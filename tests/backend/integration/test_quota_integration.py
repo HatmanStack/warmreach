@@ -39,9 +39,12 @@ class TestQuotaIntegration:
             service.report_usage(user_id, 'search', count=1)
         assert 'Daily quota exceeded' in str(exc.value)
         
-        # 5. Verify status also reports exceeded
-        with pytest.raises(QuotaExceededError):
-            service.get_quota_status(user_id, 'search')
+        # 5. get_quota_status is a read-only reporting snapshot — over the cap it
+        # returns a denied status rather than raising (enforcement lives in
+        # report_usage/reserve_usage), so the billing meter can render "0 left".
+        status = service.get_quota_status(user_id, 'search')
+        assert status['allowed'] is False
+        assert status['remaining'] == 0
 
     def test_monthly_quota_exhaustion(self, dynamodb_table):
         """Test monthly quota exhaustion independently of daily."""

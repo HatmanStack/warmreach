@@ -158,6 +158,37 @@ describe('SearchController', () => {
     });
   });
 
+  describe('_extractCompanyData (geo/company symmetry)', () => {
+    it('degrades to company-only (does not throw) when a location cannot be resolved', async () => {
+      const linkedInService = {
+        searchCompany: vi.fn().mockResolvedValue('12345'),
+        applyLocationFilter: vi.fn().mockResolvedValue(null),
+      };
+      const state = { companyName: 'TechCorp', companyLocation: 'Atlantis' };
+
+      // A requested-but-unresolvable location is a warning, not a hard failure:
+      // the company filter resolved, so proceed company-only with a null geo.
+      const result = await controller._extractCompanyData(linkedInService, state);
+
+      expect(result.extractedCompanyNumber).toBe('12345');
+      expect(result.extractedGeoNumber).toBeFalsy();
+      expect(linkedInService.applyLocationFilter).toHaveBeenCalledWith('Atlantis');
+    });
+
+    it('does not call the location filter when no location was requested', async () => {
+      const linkedInService = {
+        searchCompany: vi.fn().mockResolvedValue('12345'),
+        applyLocationFilter: vi.fn(),
+      };
+      const state = { companyName: 'TechCorp' };
+
+      const result = await controller._extractCompanyData(linkedInService, state);
+
+      expect(result.extractedCompanyNumber).toBe('12345');
+      expect(linkedInService.applyLocationFilter).not.toHaveBeenCalled();
+    });
+  });
+
   describe('_loadLinksFromFile typed-error narrowing', () => {
     it('returns [] on ENOENT (NodeJS.ErrnoException narrowing)', async () => {
       const err = Object.assign(new Error('not found'), { code: 'ENOENT' });

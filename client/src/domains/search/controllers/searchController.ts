@@ -265,6 +265,19 @@ export class SearchController {
 
     if (!extractedGeoNumber && state.companyLocation) {
       extractedGeoNumber = await linkedInService.applyLocationFilter(state.companyLocation);
+      if (!extractedGeoNumber) {
+        // Degrade-with-warning (not fail-loud): a requested location we can't
+        // resolve to a geoUrn shouldn't abort the whole run — the company filter
+        // still yields useful (if broader) results, and a transient LinkedIn
+        // typeahead miss shouldn't fail the search. Surface it loudly and
+        // proceed company-only; the resolved-filters log below records the null
+        // geo so off-filter drift stays diagnosable.
+        logger.warn(
+          `[search] location "${state.companyLocation}" could not be resolved to a geo filter; ` +
+            `proceeding with company-only results (location filter dropped)`,
+          { phase: 'search', companyLocation: state.companyLocation }
+        );
+      }
     }
 
     // These two IDs build the people-search URL; if either is unexpectedly

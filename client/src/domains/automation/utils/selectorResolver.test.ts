@@ -3,6 +3,10 @@ import { SelectorResolver, SelectorNotFoundError } from './selectorResolver.js';
 import { SelectorRegistry } from './selectorRegistry.js';
 import { createMockPage } from '../../../setupTests.js';
 
+vi.mock('#utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 describe('SelectorResolver', () => {
   const mockRegistry: SelectorRegistry = {
     'test:point': [
@@ -188,6 +192,112 @@ describe('SelectorResolver', () => {
       await expect(
         resolver.resolvePresentWithWait(page as any, 'test:point', { timeout: 50 })
       ).rejects.toThrowError(SelectorNotFoundError);
+    });
+  });
+
+  describe('self-heal telemetry', () => {
+    it('records which strategy matched in the health report', async () => {
+      const page = createMockPage();
+      page.$.mockResolvedValueOnce({}); // preferred (aria) matches
+
+      const resolver = new SelectorResolver(mockRegistry);
+      await resolver.resolve(page as any, 'test:point');
+
+      const entry = resolver
+        .getSelectorHealthReport()
+        .find((h) => h.interactionPoint === 'test:point');
+      expect(entry?.lastMatchedStrategy).toBe('aria');
+      expect(entry?.matchesByStrategy.aria).toBe(1);
+      expect(entry?.fallbackMatches).toBe(0);
+      expect(entry?.promotedStrategy).toBeNull();
+    });
+
+    it('promotes a fallback only after sustained wins, then tries it first', async () => {
+      const page = createMockPage();
+      const resolver = new SelectorResolver(mockRegistry);
+      const health = () =>
+        resolver.getSelectorHealthReport().find((h) => h.interactionPoint === 'test:point');
+
+      // Preferred (aria) misses, fallback (css) matches. A single win is NOT
+      // enough to promote — that would let a fluke reorder the cascade forever.
+      page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
+      await resolver.resolve(page as any, 'test:point');
+      expect(health()?.promotedStrategy).toBeNull();
+      expect(health()?.fallbackMatches).toBe(1);
+
+      // Two more consecutive fallback wins reach the promotion threshold (3).
+      for (let i = 0; i < 2; i++) {
+        page.$.mockReset();
+        page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
+        await resolver.resolve(page as any, 'test:point');
+      }
+      expect(health()?.promotedStrategy).toBe('css');
+      expect(health()?.fallbackMatches).toBe(3);
+
+      // Next resolve tries the promoted css FIRST — a single $ call resolves it.
+      page.$.mockReset();
+      page.$.mockResolvedValueOnce({});
+      const result = await resolver.resolve(page as any, 'test:point');
+      expect(result).toBeTruthy();
+      expect(page.$).toHaveBeenCalledTimes(1);
+      expect(page.$).toHaveBeenCalledWith('.test-btn');
+    });
+
+    it('demotes a promoted strategy once the preferred selector matches again', async () => {
+      const page = createMockPage();
+      const resolver = new SelectorResolver(mockRegistry);
+
+      // Promote css via three consecutive fallback wins.
+      for (let i = 0; i < 3; i++) {
+        page.$.mockReset();
+        page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
+        await resolver.resolve(page as any, 'test:point');
+      }
+      expect(
+        resolver.getSelectorHealthReport().find((h) => h.interactionPoint === 'test:point')
+          ?.promotedStrategy
+      ).toBe('css');
+
+      // css is now tried first; make it MISS so the loop falls through to aria,
+      // which matches — reclaiming the front and clearing the promotion.
+      page.$.mockReset();
+      page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
+      await resolver.resolve(page as any, 'test:point');
+
+      expect(
+        resolver.getSelectorHealthReport().find((h) => h.interactionPoint === 'test:point')
+          ?.promotedStrategy
+      ).toBeNull();
+    });
+
+    it('does not mutate the shared registry when promoting', async () => {
+      const page = createMockPage();
+      const resolver = new SelectorResolver(mockRegistry);
+
+      // Three fallback wins → css promoted on the instance, not the registry array.
+      for (let i = 0; i < 3; i++) {
+        page.$.mockReset();
+        page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
+        await resolver.resolve(page as any, 'test:point');
+      }
+
+      expect(mockRegistry['test:point'][0].strategy).toBe('aria');
+    });
+
+    it('records a failure when a required resolution exhausts the cascade', async () => {
+      const page = createMockPage();
+      page.$.mockResolvedValue(null);
+
+      const resolver = new SelectorResolver(mockRegistry);
+      await expect(resolver.resolveRequired(page as any, 'test:point')).rejects.toThrowError(
+        SelectorNotFoundError
+      );
+
+      const entry = resolver
+        .getSelectorHealthReport()
+        .find((h) => h.interactionPoint === 'test:point');
+      expect(entry?.failures).toBe(1);
+      expect(entry?.lastFailureAt).toBeTruthy();
     });
   });
 });

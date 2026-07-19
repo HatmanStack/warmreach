@@ -15,7 +15,9 @@ import {
   type ProfileInitState,
 } from '../services/profileInitService.js';
 import { LocalProfileScraper } from '../../linkedin/services/localProfileScraper.js';
+import { BurstThrottleManager } from '../../automation/utils/burstThrottleManager.js';
 import { HealingRequiredError } from '../../automation/utils/healingError.js';
+import { config } from '#shared-config/index.js';
 import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { profileInitMonitor } from '../utils/profileInitMonitor.js';
 
@@ -267,16 +269,28 @@ export class ProfileInitController {
         );
       }
 
+      // Pace bulk profile-init imports through the burst/break throttle when the
+      // native stealth stack is enabled. The manager was previously only ever
+      // constructed in its own test, so hundreds of profile scrapes ran back-to-
+      // back with no human-like bursts or cooldowns — exactly the rapid-fire
+      // pattern LinkedIn rate-limits on. ProfileInitService consumes it in
+      // profileBatchProcessing (waitForNext() before each scraped profile).
+      const burstThrottleManager = config.puppeteer.enableStealth
+        ? new BurstThrottleManager()
+        : undefined;
+
       // Initialize ProfileInitService with all required services
       const profileInitService = new ProfileInitService(
         services.puppeteerService,
         services.linkedInService,
         services.linkedInContactService,
         services.dynamoDBService,
-        localProfileScraper
+        localProfileScraper,
+        burstThrottleManager
       );
       logger.info('ProfileInitService constructed', {
         hasLocalProfileScraper: !!localProfileScraper,
+        hasBurstThrottle: !!burstThrottleManager,
       });
 
       // Set auth token for DynamoDB operations. jwtToken is validated upstream

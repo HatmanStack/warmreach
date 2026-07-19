@@ -1,5 +1,6 @@
 import type { Page, ElementHandle } from 'puppeteer';
 import { SelectorRegistry, SelectorStrategy } from './selectorRegistry.js';
+import { logger } from '#utils/logger.js';
 
 export class SelectorNotFoundError extends Error {
   public interactionPoint: string;
@@ -13,8 +14,152 @@ export class SelectorNotFoundError extends Error {
   }
 }
 
+/**
+ * Per-interaction-point resolution health, surfaced by {@link
+ * SelectorResolver.getSelectorHealthReport}. Makes DOM drift visible *before* a
+ * cascade runs out of fallbacks: if `promotedStrategy` is set, the canonical
+ * `preferredStrategy` selector has stopped matching in the wild.
+ */
+export interface SelectorHealth {
+  interactionPoint: string;
+  /** The cascade's canonical first strategy (registry index 0). */
+  preferredStrategy: string;
+  /** Strategy auto-promoted to the front (last-working); null = still preferred. */
+  promotedStrategy: string | null;
+  /** Successful-match count keyed by strategy name. */
+  matchesByStrategy: Record<string, number>;
+  /** Matches served by a strategy other than the canonical preferred one. */
+  fallbackMatches: number;
+  /** Times every strategy in the cascade missed on a required resolution. */
+  failures: number;
+  lastMatchedStrategy: string | null;
+  lastMatchedAt: string | null;
+  lastFailureAt: string | null;
+}
+
 export class SelectorResolver {
+  /** Consecutive matches by one fallback strategy required before auto-promoting it. */
+  private static readonly PROMOTION_THRESHOLD = 3;
+
+  /** interactionPoint -> accumulated resolution health. */
+  private health = new Map<string, SelectorHealth>();
+  /** interactionPoint -> strategy name auto-promoted to the front of the cascade. */
+  private promotions = new Map<string, string>();
+  /** interactionPoint -> current run of consecutive matches by a single fallback strategy. */
+  private _fallbackStreak = new Map<string, { strategy: string; count: number }>();
+
   constructor(private registry: SelectorRegistry) {}
+
+  /**
+   * The cascade for an interaction point, reordered so a previously-promoted
+   * (last-working) strategy is tried first. Non-destructive: the registry array
+   * is never mutated, so the canonical order is preserved for drift reporting
+   * and the promotion overlay stays isolated to this resolver instance.
+   */
+  private _ordered(interactionPoint: string, cascade: SelectorStrategy[]): SelectorStrategy[] {
+    const promoted = this.promotions.get(interactionPoint);
+    if (!promoted) return cascade;
+    const idx = cascade.findIndex((s) => s.strategy === promoted);
+    if (idx <= 0) return cascade; // absent, or already first
+    const reordered = [...cascade];
+    const [hit] = reordered.splice(idx, 1);
+    reordered.unshift(hit!);
+    return reordered;
+  }
+
+  private _healthFor(interactionPoint: string, cascade: SelectorStrategy[]): SelectorHealth {
+    let entry = this.health.get(interactionPoint);
+    if (!entry) {
+      entry = {
+        interactionPoint,
+        preferredStrategy: cascade[0]?.strategy ?? '(none)',
+        promotedStrategy: null,
+        matchesByStrategy: {},
+        fallbackMatches: 0,
+        failures: 0,
+        lastMatchedStrategy: null,
+        lastMatchedAt: null,
+        lastFailureAt: null,
+      };
+      this.health.set(interactionPoint, entry);
+    }
+    return entry;
+  }
+
+  /**
+   * Record which strategy satisfied an interaction point. When the winner is not
+   * the cascade's canonical preferred strategy, the preferred selector has
+   * drifted: promote the winner so subsequent resolves try it first, and log the
+   * transition once so DOM drift is visible before the cascade exhausts.
+   */
+  private _recordMatch(
+    interactionPoint: string,
+    cascade: SelectorStrategy[],
+    strategyObj: SelectorStrategy
+  ): void {
+    const entry = this._healthFor(interactionPoint, cascade);
+    const name = strategyObj.strategy;
+    entry.matchesByStrategy[name] = (entry.matchesByStrategy[name] ?? 0) + 1;
+    entry.lastMatchedStrategy = name;
+    entry.lastMatchedAt = new Date().toISOString();
+
+    const preferred = this.registry[interactionPoint]?.[0]?.strategy;
+    if (!preferred) return;
+
+    if (name === preferred) {
+      // The canonical selector matched again — demote any earlier promotion and
+      // reset the streak so a stale promotion can't outlive the drift that
+      // justified it. When a promoted strategy misses, the resolve loop falls
+      // through to the preferred; its match here is what reclaims the front.
+      if (this.promotions.delete(interactionPoint)) {
+        entry.promotedStrategy = null;
+      }
+      this._fallbackStreak.delete(interactionPoint);
+      return;
+    }
+
+    // A non-preferred strategy won. Require SUSTAINED evidence (a run of matches
+    // by the same fallback) before reordering the cascade, so a single fluke
+    // match can't permanently promote a worse selector ahead of the preferred.
+    entry.fallbackMatches += 1;
+    const streak = this._fallbackStreak.get(interactionPoint);
+    const count = streak && streak.strategy === name ? streak.count + 1 : 1;
+    this._fallbackStreak.set(interactionPoint, { strategy: name, count });
+
+    if (
+      count >= SelectorResolver.PROMOTION_THRESHOLD &&
+      this.promotions.get(interactionPoint) !== name
+    ) {
+      this.promotions.set(interactionPoint, name);
+      entry.promotedStrategy = name;
+      logger.warn(
+        `[selector-health] "${interactionPoint}" resolved via fallback "${name}" ${count}x in a row; ` +
+          `preferred "${preferred}" appears to have drifted — promoting the fallback to the front of the cascade`,
+        { interactionPoint, matchedStrategy: name, preferredStrategy: preferred, streak: count }
+      );
+    }
+  }
+
+  private _recordFailure(interactionPoint: string, cascade: SelectorStrategy[]): void {
+    const entry = this._healthFor(interactionPoint, cascade);
+    entry.failures += 1;
+    entry.lastFailureAt = new Date().toISOString();
+    logger.warn(
+      `[selector-health] "${interactionPoint}" resolution failed — every cascade strategy missed`,
+      { interactionPoint, strategiesTried: cascade.length }
+    );
+  }
+
+  /**
+   * Snapshot of per-interaction-point selector health for drift reporting.
+   * Returns copies so callers can't mutate internal counters.
+   */
+  getSelectorHealthReport(): SelectorHealth[] {
+    return Array.from(this.health.values()).map((entry) => ({
+      ...entry,
+      matchesByStrategy: { ...entry.matchesByStrategy },
+    }));
+  }
 
   async resolve(page: Page, interactionPoint: string): Promise<ElementHandle | null> {
     const cascade = this.registry[interactionPoint];
@@ -22,10 +167,11 @@ export class SelectorResolver {
       throw new Error(`Unknown interaction point or empty cascade: ${interactionPoint}`);
     }
 
-    for (const strategyObj of cascade) {
+    for (const strategyObj of this._ordered(interactionPoint, cascade)) {
       try {
         const result = await page.$(strategyObj.selector);
         if (result) {
+          this._recordMatch(interactionPoint, cascade, strategyObj);
           return result;
         }
       } catch {
@@ -41,10 +187,11 @@ export class SelectorResolver {
       throw new Error(`Unknown interaction point: ${interactionPoint}`);
     }
 
-    for (const strategyObj of cascade) {
+    for (const strategyObj of this._ordered(interactionPoint, cascade)) {
       try {
         const results = await page.$$(strategyObj.selector);
         if (results && results.length > 0) {
+          this._recordMatch(interactionPoint, cascade, strategyObj);
           return results;
         }
       } catch {
@@ -58,6 +205,7 @@ export class SelectorResolver {
     const cascade = this.registry[interactionPoint];
     const result = await this.resolve(page, interactionPoint);
     if (!result) {
+      this._recordFailure(interactionPoint, cascade || []);
       throw new SelectorNotFoundError(interactionPoint, cascade || []);
     }
     return result;
@@ -77,7 +225,7 @@ export class SelectorResolver {
     const perStrategyTimeout = 2000;
     const startTime = Date.now();
 
-    for (const strategyObj of cascade) {
+    for (const strategyObj of this._ordered(interactionPoint, cascade)) {
       if (Date.now() - startTime >= overallTimeout) {
         break; // Hard cap
       }
@@ -95,6 +243,7 @@ export class SelectorResolver {
 
         const result = await page.waitForSelector(populatedSelector, { timeout: waitTime });
         if (result) {
+          this._recordMatch(interactionPoint, cascade, strategyObj);
           return result;
         }
       } catch {
@@ -102,6 +251,7 @@ export class SelectorResolver {
       }
     }
 
+    this._recordFailure(interactionPoint, cascade);
     throw new SelectorNotFoundError(interactionPoint, cascade);
   }
 
@@ -127,7 +277,7 @@ export class SelectorResolver {
     const startTime = Date.now();
 
     while (Date.now() - startTime < overallTimeout) {
-      for (const strategyObj of cascade) {
+      for (const strategyObj of this._ordered(interactionPoint, cascade)) {
         let handles: ElementHandle[] = [];
         try {
           handles = await page.$$(strategyObj.selector);
@@ -137,6 +287,7 @@ export class SelectorResolver {
         for (const handle of handles) {
           const box = await handle.boundingBox().catch(() => null);
           if (box && box.width > 0 && box.height > 0) {
+            this._recordMatch(interactionPoint, cascade, strategyObj);
             return handle;
           }
           await handle.dispose().catch(() => {});
@@ -145,6 +296,7 @@ export class SelectorResolver {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
 
+    this._recordFailure(interactionPoint, cascade);
     throw new SelectorNotFoundError(interactionPoint, cascade);
   }
 
@@ -170,10 +322,11 @@ export class SelectorResolver {
     const startTime = Date.now();
 
     while (Date.now() - startTime < overallTimeout) {
-      for (const strategyObj of cascade) {
+      for (const strategyObj of this._ordered(interactionPoint, cascade)) {
         try {
           const el = await page.$(strategyObj.selector);
           if (el) {
+            this._recordMatch(interactionPoint, cascade, strategyObj);
             return el;
           }
         } catch {
@@ -183,6 +336,7 @@ export class SelectorResolver {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
 
+    this._recordFailure(interactionPoint, cascade);
     throw new SelectorNotFoundError(interactionPoint, cascade);
   }
 
@@ -196,7 +350,7 @@ export class SelectorResolver {
       throw new Error(`Unknown interaction point: ${interactionPoint}`);
     }
 
-    for (const strategyObj of cascade) {
+    for (const strategyObj of this._ordered(interactionPoint, cascade)) {
       let populatedSelector = strategyObj.selector;
       for (const [key, value] of Object.entries(params)) {
         populatedSelector = populatedSelector.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
@@ -205,6 +359,7 @@ export class SelectorResolver {
       try {
         const result = await page.$(populatedSelector);
         if (result) {
+          this._recordMatch(interactionPoint, cascade, strategyObj);
           return result;
         }
       } catch {
