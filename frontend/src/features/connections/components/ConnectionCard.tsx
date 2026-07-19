@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -11,6 +12,7 @@ import {
   Tag,
   Users,
   StickyNote,
+  ChevronDown,
 } from 'lucide-react';
 import { FeatureGate, useTier } from '@/features/tier';
 import { RelationshipStrengthBadge } from './RelationshipStrengthBadge';
@@ -68,6 +70,7 @@ const ConnectionCard = ({
   const [isTagsOpen, setIsTagsOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [showIntroPaths, setShowIntroPaths] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const { isFeatureEnabled } = useTier();
 
   useEffect(() => {
@@ -75,16 +78,25 @@ const ConnectionCard = ({
   }, [connection.profile_picture_url]);
 
   /**
-   * Handles card click events, opening LinkedIn profile in new tab
+   * Row click toggles the expanded detail panel (About, Skills, Education, …)
+   * rather than navigating away. Opening the LinkedIn profile now lives on the
+   * "View on LinkedIn" button inside the expanded panel.
    */
   const handleClick = () => {
+    setIsExpanded((prev) => !prev);
+  };
+
+  /**
+   * Open the connection's LinkedIn profile (or a people-search fallback for new
+   * connections without a URL) in a new tab. Invoked from the expanded panel;
+   * stops propagation so it never re-toggles the row.
+   */
+  const handleViewOnLinkedIn = (e: React.MouseEvent) => {
+    e.stopPropagation();
     const url = buildLinkedInProfileUrl(connection);
     if (url) {
       window.open(url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-    // Final fallback: use existing callback logic
-    if (isNewConnection && onNewConnectionClick) {
+    } else if (isNewConnection && onNewConnectionClick) {
       onNewConnectionClick(connection);
     } else if (onSelect) {
       onSelect(connection.id);
@@ -386,18 +398,35 @@ const ConnectionCard = ({
                 <ExternalLink className="h-4 w-4 text-blue-400" />
               )}
               {isSelected && <Badge className="bg-blue-600 text-white">Selected</Badge>}
+              {/* Expand/collapse affordance — the whole row toggles the panel. */}
+              <ChevronDown
+                data-testid="expand-chevron"
+                className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform ${
+                  isExpanded ? 'rotate-180' : ''
+                }`}
+                aria-hidden="true"
+              />
             </div>
           </div>
 
-          {/* Job Title and Place of Work on Same Line */}
+          {/* Subtitle: Title · Company on one line. Falls back to the LinkedIn
+              headline when there's no structured title, and to a muted dash when
+              nothing is known — so the line stays present and consistent on every
+              row instead of collapsing or showing a lone icon. */}
           <div className="flex items-center text-slate-300 text-sm mb-2 flex-wrap">
-            <User className="h-3 w-3 mr-1 flex-shrink-0" />
-            <span className="truncate">{connection.position}</span>
-            {connection.company && (
+            {connection.position || connection.headline ? (
               <>
-                <Building className="h-3 w-3 ml-3 mr-1 flex-shrink-0" />
-                <span className="truncate">{connection.company}</span>
+                <User className="h-3 w-3 mr-1 flex-shrink-0" />
+                <span className="truncate">{connection.position || connection.headline}</span>
+                {connection.company && (
+                  <>
+                    <Building className="h-3 w-3 ml-3 mr-1 flex-shrink-0" />
+                    <span className="truncate">{connection.company}</span>
+                  </>
+                )}
               </>
+            ) : (
+              <span className="text-slate-500">—</span>
             )}
           </div>
 
@@ -489,6 +518,63 @@ const ConnectionCard = ({
           )}
         </div>
       </div>
+
+      {/* Expanded detail panel — richer profile info in place of navigating away.
+          Stops click propagation so interacting inside it never re-toggles the row. */}
+      {isExpanded && (
+        <div
+          data-testid="connection-expanded"
+          className="mt-3 pt-3 border-t border-white/10 space-y-3 text-sm"
+          onClick={(e: React.MouseEvent) => e.stopPropagation()}
+        >
+          {connection.headline && (
+            <div>
+              <p className="text-slate-400 text-xs uppercase tracking-wide mb-0.5">Headline</p>
+              <p className="text-slate-200">{connection.headline}</p>
+            </div>
+          )}
+          {connection.about && (
+            <div>
+              <p className="text-slate-400 text-xs uppercase tracking-wide mb-0.5">About</p>
+              <p className="text-slate-200 whitespace-pre-wrap">{connection.about}</p>
+            </div>
+          )}
+          {connection.skills && (
+            <div>
+              <p className="text-slate-400 text-xs uppercase tracking-wide mb-0.5">Skills</p>
+              <p className="text-slate-200">{connection.skills}</p>
+            </div>
+          )}
+          {connection.education && (
+            <div>
+              <p className="text-slate-400 text-xs uppercase tracking-wide mb-0.5">Education</p>
+              <p className="text-slate-200">{connection.education}</p>
+            </div>
+          )}
+          {connection.location && (
+            <div>
+              <p className="text-slate-400 text-xs uppercase tracking-wide mb-0.5">Location</p>
+              <p className="text-slate-200">{connection.location}</p>
+            </div>
+          )}
+          {!connection.headline &&
+            !connection.about &&
+            !connection.skills &&
+            !connection.education &&
+            !connection.location && (
+              <p className="text-slate-500">No additional profile details yet.</p>
+            )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleViewOnLinkedIn}
+            data-testid="view-on-linkedin"
+          >
+            <ExternalLink className="h-4 w-4 mr-1" />
+            View on LinkedIn
+          </Button>
+        </div>
+      )}
 
       {/* Summary Modal */}
       <Dialog open={isSummaryOpen} onOpenChange={setIsSummaryOpen}>

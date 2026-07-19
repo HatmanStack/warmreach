@@ -6,6 +6,20 @@ vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
+// Pin the dev-only forceRescrape toggle off so an ambient
+// PROFILE_INIT_FORCE_RESCRAPE=true (a developer's .env) can't flip the
+// default-behavior assertions below.
+vi.mock('#shared-config/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#shared-config/index.js')>();
+  return {
+    ...actual,
+    config: {
+      ...actual.config,
+      linkedin: { ...actual.config.linkedin, forceRescrape: false },
+    },
+  };
+});
+
 vi.mock('#utils/randomHelpers.js', () => ({
   RandomHelpers: {
     randomDelay: vi.fn().mockResolvedValue(undefined),
@@ -52,6 +66,7 @@ describe('profileBatchProcessing', () => {
       batchSize: 100,
       dynamoDBService: {
         checkEdgeExists: vi.fn().mockResolvedValue(false),
+        getEdgeState: vi.fn().mockResolvedValue({ exists: false, status: null }),
         saveImportCheckpoint: vi.fn().mockResolvedValue({}),
       },
       burstThrottleManager: {
@@ -99,13 +114,43 @@ describe('profileBatchProcessing', () => {
       expect(result.errors).toBe(0);
     });
 
-    it('should skip connections where edge already exists', async () => {
-      mockService.dynamoDBService.checkEdgeExists.mockResolvedValue(true);
+    it('should skip connections where an already-synced edge exists', async () => {
+      // Batch is connectionType 'ally' and the stored status is already 'ally'
+      // (no conversion) -> short-circuit.
+      mockService.dynamoDBService.getEdgeState.mockResolvedValue({
+        exists: true,
+        status: 'ally',
+      });
       const state = { requestId: 'req1' };
       const result = await processBatch(mockService, 'data/batch.json', state);
 
       expect(result.skipped).toBe(2);
       expect(result.processed).toBe(0);
+    });
+
+    it('should re-scrape (not skip) when a possible/outgoing contact converts to ally', async () => {
+      // Batch is connectionType 'ally'; stored edge status is 'possible' -> this
+      // is a conversion, so the profile must be re-scraped with forceScrape=true
+      // rather than skipped.
+      const { processConnection } = await import('./profileScraping.js');
+      mockService.dynamoDBService.getEdgeState.mockResolvedValue({
+        exists: true,
+        status: 'possible',
+      });
+      const state = { requestId: 'req1' };
+      const result = await processBatch(mockService, 'data/batch.json', state);
+
+      expect(result.skipped).toBe(0);
+      expect(result.processed).toBe(2);
+      // 6th arg (forceScrape) must be true for a conversion.
+      expect(processConnection).toHaveBeenCalledWith(
+        mockService,
+        'p1',
+        expect.anything(),
+        'ally',
+        undefined,
+        true
+      );
     });
 
     it('should use burst throttle between connections', async () => {

@@ -67,16 +67,31 @@ class EdgeQueryService(BaseService):
 
             edge_exists = 'Item' in response
             edge_data = response.get('Item', {}) if edge_exists else {}
+            status = edge_data.get('status') if edge_exists else None
+
+            # For an existing 'ally' edge, also report whether the profile has a
+            # usable name. Edges created before the local scraper was wired stored
+            # blank names; the client uses hasName=False to re-scrape and backfill
+            # instead of skipping (those names would otherwise stay blank forever).
+            # Only pay the extra metadata read for allies — the only case whose
+            # skip-vs-rescrape decision depends on it.
+            has_name = None
+            if edge_exists and status == 'ally':
+                meta = self.table.get_item(Key={'PK': f'PROFILE#{profile_id_b64}', 'SK': '#METADATA'}).get('Item', {})
+                name = str(meta.get('name') or '').strip()
+                first = str(meta.get('firstName') or meta.get('first_name') or '').strip()
+                has_name = bool(name or first)
 
             return {
                 'success': True,
                 'exists': edge_exists,
                 'profileId': profile_id_b64,
                 'edge_data': {
-                    'status': edge_data.get('status'),
+                    'status': status,
                     'addedAt': edge_data.get('addedAt'),
                     'updatedAt': edge_data.get('updatedAt'),
                     'processedAt': edge_data.get('processedAt'),
+                    'hasName': has_name,
                 }
                 if edge_exists
                 else None,
@@ -182,6 +197,36 @@ class EdgeQueryService(BaseService):
         if edge_item.get('status') == 'possible':
             conversion_likelihood = self._calculate_conversion_likelihood(profile_data, edge_item)
 
+        # Surface search provenance ("why surfaced") as tags so first-contact
+        # tooling (icebreakers) and the connection card can reference the company
+        # / role / location the contact was found under. Deduped and appended
+        # after any user-applied tags, never clobbering them.
+        tags = list(edge_item.get('tags', []) or [])
+        for prov_key in ('sourceCompany', 'sourceRole', 'sourceLocation'):
+            prov_val = edge_item.get(prov_key)
+            if prov_val and prov_val not in tags:
+                tags.append(prov_val)
+
+        # Also expose provenance as discrete fields (not just folded into tags)
+        # so the frontend can group "possible" connections by the search run that
+        # surfaced them (company + role + location) without having to guess which
+        # tag is which.
+        source_company = edge_item.get('sourceCompany', '')
+        source_role = edge_item.get('sourceRole', '')
+        source_location = edge_item.get('sourceLocation', '')
+
+        # Skills are persisted as a delimiter-joined string by the scraper, so an
+        # isinstance(..., list) gate would always fall through to []. Derive the
+        # common-interest chips from whichever shape is stored (list or joined
+        # string) so interest-based matching/sorting actually sees them.
+        skills_value = profile_data.get('skills', '')
+        if isinstance(skills_value, list):
+            common_interests = [str(s).strip() for s in skills_value if str(s).strip()]
+        elif isinstance(skills_value, str) and skills_value.strip():
+            common_interests = [s.strip() for s in skills_value.split(',') if s.strip()]
+        else:
+            common_interests = []
+
         return {
             'id': profile_id,
             'first_name': first_name,
@@ -190,12 +235,21 @@ class EdgeQueryService(BaseService):
             'company': profile_data.get('currentCompany', ''),
             'location': profile_data.get('currentLocation', ''),
             'headline': profile_data.get('headline', ''),
+            # About / Skills / Education are captured by the local profile scraper
+            # (About as free text; Skills and Education as delimiter-joined
+            # strings). They power the connection card's expanded detail panel.
+            'about': profile_data.get('about', ''),
+            'skills': profile_data.get('skills', ''),
+            'education': profile_data.get('education', ''),
             'recent_activity': profile_data.get('summary', ''),
-            'common_interests': profile_data.get('skills', []) if isinstance(profile_data.get('skills'), list) else [],
+            'common_interests': common_interests,
             'messages': message_count,
             'date_added': edge_item.get('addedAt', ''),
             'linkedin_url': profile_data.get('originalUrl', ''),
-            'tags': edge_item.get('tags', []),
+            'tags': tags,
+            'source_company': source_company,
+            'source_role': source_role,
+            'source_location': source_location,
             'last_action_summary': edge_item.get('lastActionSummary', ''),
             'status': edge_item.get('status', ''),
             'conversion_likelihood': conversion_likelihood,

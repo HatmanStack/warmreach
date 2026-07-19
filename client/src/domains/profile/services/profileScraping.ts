@@ -6,6 +6,7 @@
  */
 
 import { logger } from '#utils/logger.js';
+import { config } from '#shared-config/index.js';
 import { LinkedInErrorHandler } from '../../linkedin/utils/linkedinErrorHandler.js';
 import type { MasterIndex, ProfileInitService } from './profileInitService.js';
 
@@ -45,17 +46,21 @@ export async function processConnection(
   connectionProfileId: string,
   state: ProfileInitState,
   connectionType: string,
-  pictureUrl?: string
+  pictureUrl?: string,
+  forceScrape = false
 ): Promise<void> {
   const requestId = state.requestId || 'unknown';
   const startTime = Date.now();
 
   try {
-    logger.debug(`Processing connection: ${connectionProfileId}`, {
+    logger.info(`[connection] processing ${connectionProfileId}`, {
+      phase: 'connection',
       requestId,
       profileId: connectionProfileId,
+      connectionType,
       currentBatch: state.currentBatch,
       currentIndex: state.currentIndex,
+      hasPictureUrl: !!pictureUrl,
     });
 
     let databaseResult: unknown = null;
@@ -64,31 +69,86 @@ export async function processConnection(
       // Local scraping with cap and staleness checks
       try {
         const canScrape = (await service.dynamoDBService.canScrapeToday?.()) ?? true;
+        logger.debug(`[connection] scrape gate for ${connectionProfileId}`, {
+          phase: 'connection',
+          profileId: connectionProfileId,
+          canScrape,
+        });
         if (!canScrape) {
-          logger.warn(`Daily scrape cap reached, skipping scrape for ${connectionProfileId}`);
+          logger.warn(
+            `[connection] daily scrape cap reached, skipping scrape for ${connectionProfileId}`,
+            {
+              phase: 'connection',
+              profileId: connectionProfileId,
+            }
+          );
         } else {
           const needsScrape = await service.dynamoDBService.getProfileDetails(connectionProfileId);
-          if (needsScrape && service.localProfileScraper) {
+          const forceRescrape = config.linkedin.forceRescrape === true;
+          logger.info(`[connection] staleness check for ${connectionProfileId}`, {
+            phase: 'connection',
+            profileId: connectionProfileId,
+            needsScrape: !!needsScrape,
+            forceRescrape,
+            forceScrape,
+            hasScraper: !!service.localProfileScraper,
+          });
+          if ((needsScrape || forceRescrape || forceScrape) && service.localProfileScraper) {
             const scrapedData =
               await service.localProfileScraper.scrapeProfile(connectionProfileId);
-            await service.dynamoDBService.createProfileMetadata?.(connectionProfileId, {
+            const metadata = {
               name: scrapedData.name || '',
               headline: scrapedData.headline || '',
+              about: scrapedData.about || '',
+              skills: (scrapedData.skills ?? []).join(', '),
               currentTitle: scrapedData.currentPosition?.title || '',
               currentCompany: scrapedData.currentPosition?.company || '',
               currentLocation: scrapedData.location || '',
-              ...(pictureUrl ? { profilePictureUrl: pictureUrl } : {}),
+              education: (scrapedData.education ?? [])
+                .map((e) => [e.school, e.degree].filter(Boolean).join(' — '))
+                .filter(Boolean)
+                .join('; '),
+              // Use only the photo scraped from the member's own profile page.
+              // The list-page `pictureUrl` map mis-resolves to the viewer's own
+              // avatar in the 2026 DOM, so writing it would stamp the same wrong
+              // photo on everyone — better to write none and show initials.
+              ...(scrapedData.profilePictureUrl
+                ? { profilePictureUrl: scrapedData.profilePictureUrl }
+                : {}),
+            };
+            logger.info(`[connection] writing scraped metadata for ${connectionProfileId}`, {
+              phase: 'connection',
+              profileId: connectionProfileId,
+              metadata,
+              allTextFieldsEmpty:
+                !metadata.name &&
+                !metadata.headline &&
+                !metadata.currentTitle &&
+                !metadata.currentCompany &&
+                !metadata.currentLocation,
             });
+            await service.dynamoDBService.createProfileMetadata?.(connectionProfileId, metadata);
             await service.dynamoDBService.incrementDailyScrapeCount?.();
-            logger.debug(`Profile scraped locally: ${connectionProfileId}`);
+            logger.info(`[connection] scraped + metadata stored: ${connectionProfileId}`, {
+              phase: 'connection',
+              profileId: connectionProfileId,
+            });
           } else if (!needsScrape) {
-            logger.debug(`Profile is fresh, skipping scrape: ${connectionProfileId}`);
+            logger.info(`[connection] profile is fresh, skipping scrape: ${connectionProfileId}`, {
+              phase: 'connection',
+              profileId: connectionProfileId,
+            });
           }
         }
       } catch (scrapeErr) {
-        logger.warn(`Local scrape failed for ${connectionProfileId} (non-fatal)`, {
-          error: (scrapeErr as Error).message,
-        });
+        logger.warn(
+          `[connection] local scrape failed for ${connectionProfileId} (non-fatal, using slug fallback)`,
+          {
+            phase: 'connection',
+            profileId: connectionProfileId,
+            error: (scrapeErr as Error).message,
+          }
+        );
         // Create a basic fallback metadata record
         try {
           const name = connectionProfileId
@@ -96,9 +156,18 @@ export async function processConnection(
             .split('-')
             .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
             .join(' ');
+          logger.info(
+            `[connection] writing slug-derived fallback name for ${connectionProfileId}`,
+            {
+              phase: 'connection',
+              profileId: connectionProfileId,
+              fallbackName: name,
+            }
+          );
+          // No photo here: the scrape failed, so there's no per-member photo,
+          // and the list-page `pictureUrl` is the viewer's own avatar.
           await service.dynamoDBService.createProfileMetadata?.(connectionProfileId, {
             name,
-            ...(pictureUrl ? { profilePictureUrl: pictureUrl } : {}),
           });
         } catch {
           // non-fatal
@@ -106,9 +175,11 @@ export async function processConnection(
       }
 
       // Create database entry for the connection
-      logger.debug(`Creating database entry for connection: ${connectionProfileId}`, {
+      logger.info(`[connection] upserting edge status for ${connectionProfileId}`, {
+        phase: 'connection',
         requestId,
         profileId: connectionProfileId,
+        connectionType,
       });
 
       databaseResult = await service.dynamoDBService.upsertEdgeStatus(
@@ -117,8 +188,13 @@ export async function processConnection(
       );
 
       // Trigger RAGStack ingestion (fire-and-forget)
+      logger.debug(`[connection] triggering RAGStack ingestion for ${connectionProfileId}`, {
+        phase: 'connection',
+        profileId: connectionProfileId,
+      });
       service.triggerRAGStackIngestion(connectionProfileId, state).catch((err: Error) => {
-        logger.debug('Async RAGStack ingestion failed (non-blocking)', {
+        logger.warn('[connection] async RAGStack ingestion failed (non-blocking)', {
+          phase: 'connection',
           requestId,
           profileId: connectionProfileId,
           error: err.message,
@@ -126,7 +202,8 @@ export async function processConnection(
       });
 
       const processingDuration = Date.now() - startTime;
-      logger.debug(`Successfully processed connection: ${connectionProfileId}`, {
+      logger.info(`[connection] done: ${connectionProfileId}`, {
+        phase: 'connection',
         requestId,
         profileId: connectionProfileId,
         processingDuration,

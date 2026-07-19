@@ -65,7 +65,7 @@ export class WsClient {
     // Authorization header. Query-string tokens can surface in access logs, so the
     // API Gateway WebSocket stage access logs must be configured to scrub `token`.
     const wsUrl = `${this._url}?token=${encodeURIComponent(this._token)}&clientType=${this._clientType}`;
-    logger.info(`WS connecting to ${this._url}`);
+    logger.debug(`WS connecting to ${this._url}`);
 
     // Detach handlers from any prior socket so a late open/message/close/error
     // event from a dead socket cannot reach the new connection state. The prior
@@ -78,7 +78,7 @@ export class WsClient {
     this._ws = new WebSocket(wsUrl);
 
     this._ws.on('open', () => {
-      logger.info('WS connected');
+      logger.debug('WS connected');
       this._retryMs = INITIAL_RETRY_MS;
       this._lastSeenAt = Date.now();
       this._startHeartbeat();
@@ -100,7 +100,15 @@ export class WsClient {
     });
 
     this._ws.on('close', (code: number, reason: Buffer) => {
-      logger.info(`WS closed: ${code} ${reason.toString()}`);
+      // 1000 = normal closure; routine traffic, not worth flooding the
+      // terminal. Anything else (server kicked us, network, auth) stays
+      // at warn so it shows up under the new prod log level.
+      const reasonStr = reason.toString();
+      if (code === 1000) {
+        logger.debug(`WS closed: ${code} ${reasonStr}`);
+      } else {
+        logger.warn(`WS closed: ${code} ${reasonStr}`);
+      }
       this._stopHeartbeat();
       this._onDisconnect();
       this._scheduleReconnect();
@@ -172,7 +180,7 @@ export class WsClient {
     // half. Spreads reconnect attempts so clients do not all retry in lockstep
     // (thundering herd) after a shared-backend outage.
     const delay = cappedDelay / 2 + Math.random() * (cappedDelay / 2);
-    logger.info(`WS reconnecting in ${Math.round(delay)}ms`);
+    logger.debug(`WS reconnecting in ${Math.round(delay)}ms`);
     setTimeout(() => this.connect(), delay);
     this._retryMs = Math.min(this._retryMs * 2, MAX_RETRY_MS);
   }

@@ -14,6 +14,7 @@ export { connectionDataContextService } from './services/connectionDataContextSe
 
 // Utils
 export * from './utils/connectionFiltering';
+export * from './utils/connectionGrouping';
 
 // Hooks
 export { useConnectionsManager } from './hooks/useConnectionsManager';

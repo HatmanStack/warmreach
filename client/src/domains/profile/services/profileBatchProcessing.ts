@@ -6,6 +6,7 @@
  */
 
 import { logger } from '#utils/logger.js';
+import { config } from '#shared-config/index.js';
 import { LinkedInErrorHandler } from '../../linkedin/utils/linkedinErrorHandler.js';
 import { RandomHelpers } from '#utils/randomHelpers.js';
 import { profileInitMonitor } from '../utils/profileInitMonitor.js';
@@ -118,6 +119,13 @@ export async function processConnectionType(
       maxScrolls: 15,
     });
 
+    logger.info(`[type] retrieved ${connections?.length ?? 0} ${connectionType} connection ids`, {
+      phase: 'type',
+      connectionType,
+      count: connections?.length ?? 0,
+      sample: (connections ?? []).slice(0, 5),
+    });
+
     if (!connections || connections.length === 0) {
       logger.info(`No ${connectionType} connections found`);
       return result;
@@ -126,6 +134,14 @@ export async function processConnectionType(
     let pictureUrls: Record<string, string> = {};
     try {
       pictureUrls = await service.puppeteer.extractProfilePictures();
+      logger.info(
+        `[type] extracted ${Object.keys(pictureUrls).length} profile pictures for ${connectionType}`,
+        {
+          phase: 'type',
+          connectionType,
+          pictureCount: Object.keys(pictureUrls).length,
+        }
+      );
     } catch (error) {
       logger.warn('Failed to extract profile pictures (non-fatal):', error);
     }
@@ -293,18 +309,85 @@ export async function processBatch(
       try {
         state.currentIndex = i;
 
-        logger.debug(`Processing connection ${i + 1}/${batchData.connections.length}`, {
-          requestId,
-          batchNumber: batchData.batchNumber,
-          connectionIndex: i,
+        logger.info(
+          `[batch] connection ${i + 1}/${batchData.connections.length}: ${connectionProfileId}`,
+          {
+            phase: 'batch',
+            requestId,
+            batchNumber: batchData.batchNumber,
+            connectionIndex: i,
+            profileId: connectionProfileId,
+            status: connectionStatus,
+          }
+        );
+
+        const {
+          exists: edgeExists,
+          status: storedStatus,
+          hasName: storedHasName,
+        } = await service.dynamoDBService.getEdgeState(connectionProfileId);
+        const forceRescrape = config.linkedin.forceRescrape === true;
+
+        // Conversion: a search-sourced contact (possible/outgoing) now appearing
+        // in the Connections (ally) list has just become a 1st-degree connection.
+        // That unlocks richer profile data (contact info, full about, mutuals),
+        // so re-scrape + enrich to equip first contact instead of skipping. Only
+        // the promotion INTO 'ally' is treated as a conversion — other
+        // already-synced edges still short-circuit for efficiency.
+        const isConversionToAlly =
+          edgeExists &&
+          connectionStatus === 'ally' &&
+          (storedStatus === 'possible' || storedStatus === 'outgoing');
+
+        // Backfill: an ally edge created before the scraper was wired stored no
+        // name (blank/slug-derived). The old always-false edge check used to
+        // re-scrape everything and quietly repaired these; now that the check is
+        // correct they would be skipped and stay blank forever. Re-scrape an
+        // existing ally the backend reports as nameless so the heal survives.
+        const isBlankNameAlly =
+          edgeExists &&
+          connectionStatus === 'ally' &&
+          storedStatus === 'ally' &&
+          storedHasName === false;
+
+        const needsRescrape = forceRescrape || isConversionToAlly || isBlankNameAlly;
+
+        logger.info(`[batch] edge-exists check for ${connectionProfileId}: ${edgeExists}`, {
+          phase: 'batch',
           profileId: connectionProfileId,
-          status: connectionStatus,
+          edgeExists,
+          storedStatus,
+          storedHasName,
+          connectionStatus,
+          isConversionToAlly,
+          isBlankNameAlly,
+          forceRescrape,
         });
 
-        const edgeExists = await service.dynamoDBService.checkEdgeExists(connectionProfileId);
+        if (edgeExists && needsRescrape) {
+          const reason = isConversionToAlly
+            ? `converted ${storedStatus} -> ally`
+            : isBlankNameAlly
+              ? 'existing ally has no stored name'
+              : 'forceRescrape is on';
+          logger.info(`[batch] re-scraping ${connectionProfileId}: ${reason}`, {
+            phase: 'batch',
+            profileId: connectionProfileId,
+          });
+        }
 
-        if (edgeExists) {
-          logger.debug(`Skipping ${connectionProfileId}: Edge already exists`);
+        if (edgeExists && !needsRescrape) {
+          // An already-synced edge short-circuits the scrape below. If a prior
+          // run created edges with empty names, those connections are skipped
+          // here and never re-scraped (forceRescrape heals them) — this log
+          // makes that visible.
+          logger.info(
+            `[batch] skipping ${connectionProfileId}: edge already exists (no re-scrape)`,
+            {
+              phase: 'batch',
+              profileId: connectionProfileId,
+            }
+          );
 
           result.skipped++;
           result.connections.push({
@@ -328,7 +411,17 @@ export async function processBatch(
         }
 
         const pictureUrl = batchData.pictureUrls?.[connectionProfileId];
-        await processConnection(service, connectionProfileId, state, connectionStatus, pictureUrl);
+        // Force the scrape (bypassing the <30d staleness skip) when the now-
+        // unlocked 1st-degree data must be captured: on a conversion to ally, or
+        // when re-scraping an existing ally whose name was never stored.
+        await processConnection(
+          service,
+          connectionProfileId,
+          state,
+          connectionStatus,
+          pictureUrl,
+          isConversionToAlly || isBlankNameAlly
+        );
 
         await service.dynamoDBService.saveImportCheckpoint?.({
           batchIndex: batchData.batchNumber,
@@ -352,7 +445,8 @@ export async function processBatch(
           batchProgress: `${i + 1}/${batchData.connections.length}`,
         });
 
-        logger.debug(`Successfully processed connection ${connectionProfileId} at index ${i}`, {
+        logger.info(`[batch] processed ${connectionProfileId} at index ${i}`, {
+          phase: 'batch',
           requestId,
           profileId: connectionProfileId,
           connectionIndex: i,

@@ -7,10 +7,21 @@ interface ContactProcessorConfig {
   paths: { linksFile: string; goodConnectionsFile: string };
 }
 
+interface SearchContext {
+  company?: string;
+  role?: string;
+  location?: string;
+}
+
 interface LinkedInServiceLike {
   // Matches the concrete LinkedInService return (isGoodContact is optional);
-  // callers read it as a truthy check.
-  analyzeContactActivity(link: string, jwtToken: string): Promise<{ isGoodContact?: boolean }>;
+  // callers read it as a truthy check. searchContext carries the search-run
+  // provenance recorded as edge tags on each good contact.
+  analyzeContactActivity(
+    link: string,
+    jwtToken: string,
+    searchContext?: SearchContext
+  ): Promise<{ isGoodContact?: boolean }>;
 }
 
 interface DynamoDBServiceLike {
@@ -20,22 +31,27 @@ interface DynamoDBServiceLike {
   canScrapeToday(): Promise<boolean>;
   incrementDailyScrapeCount(): Promise<unknown>;
   createProfileMetadata(link: string, data: Record<string, string | undefined>): Promise<unknown>;
-  updateProfilePictureUrl(link: string, pictureUrl: string): Promise<unknown>;
 }
 
 interface LocalProfileScraperLike {
   scrapeProfile(link: string): Promise<{
-    name: string;
-    headline: string;
-    currentPosition?: { title?: string; company?: string };
-    location: string;
+    name: string | null;
+    headline: string | null;
+    location: string | null;
+    about?: string | null;
+    profilePictureUrl?: string | null;
+    currentPosition?: { title?: string; company?: string } | null;
+    education?: Array<{ school?: string; degree?: string }>;
+    skills?: string[];
   }>;
 }
 
 interface ProcessState {
   resumeIndex: number;
   jwtToken: string;
+  companyName?: string;
   companyRole?: string;
+  companyLocation?: string;
   recursionCount: number;
   lastPartialLinksFile?: string | null;
   [key: string]: unknown;
@@ -62,12 +78,19 @@ export class ContactProcessor {
   async processAllContacts(
     uniqueLinks: string[],
     state: ProcessState,
-    onHealingNeeded: (params: ProcessState) => Promise<void>,
-    pictureUrls: Record<string, string> = {}
+    onHealingNeeded: (params: ProcessState) => Promise<void>
   ): Promise<string[] | undefined> {
     const goodContacts: string[] = await this._loadExistingGoodContacts();
     let errorQueue: string[] = [];
     let i = state.resumeIndex;
+
+    // The search terms that surfaced this batch — recorded as edge provenance on
+    // each good contact so first contact can reference why they were found.
+    const searchContext: SearchContext = {
+      company: state.companyName,
+      role: state.companyRole,
+      location: state.companyLocation,
+    };
 
     while (i < uniqueLinks.length) {
       const link = uniqueLinks[i]!;
@@ -84,7 +107,7 @@ export class ContactProcessor {
           goodContacts,
           i,
           uniqueLinks.length,
-          pictureUrls[link]
+          searchContext
         );
         if (result.processed) {
           errorQueue = [];
@@ -122,29 +145,46 @@ export class ContactProcessor {
     goodContacts: string[],
     index: number,
     total: number,
-    pictureUrl: string | undefined
+    searchContext?: SearchContext
   ): Promise<{ processed: boolean }> {
     logger.info(`Analyzing contact ${index + 1}/${total}: ${link}`);
-    const result = await this.linkedInService.analyzeContactActivity(link, jwtToken);
+    const result = await this.linkedInService.analyzeContactActivity(link, jwtToken, searchContext);
 
     if (result.isGoodContact) {
       goodContacts.push(link);
       logger.info(`Found good contact: ${link} (${goodContacts.length})`);
 
-      // Scrape profile locally if stale and under daily cap
+      // Scrape profile locally if stale and under daily cap. Mirrors the
+      // profile-init connection flow (profileScraping.ts) so search-created
+      // connections get the same rich metadata rather than rendering as
+      // "Unknown".
       try {
         const needsScrape = await this.dynamoDBService.getProfileDetails(link);
         const canScrape = await this.dynamoDBService.canScrapeToday();
         if (needsScrape && canScrape && this.localProfileScraper) {
           const scrapedData = await this.localProfileScraper.scrapeProfile(link);
           await this.dynamoDBService.incrementDailyScrapeCount();
-          await this.dynamoDBService.createProfileMetadata(link, {
-            name: scrapedData.name,
-            headline: scrapedData.headline,
-            currentTitle: scrapedData.currentPosition?.title,
-            currentCompany: scrapedData.currentPosition?.company,
-            currentLocation: scrapedData.location,
-          });
+          const metadata: Record<string, string | undefined> = {
+            name: scrapedData.name || '',
+            headline: scrapedData.headline || '',
+            about: scrapedData.about || '',
+            skills: (scrapedData.skills ?? []).join(', '),
+            currentTitle: scrapedData.currentPosition?.title || '',
+            currentCompany: scrapedData.currentPosition?.company || '',
+            currentLocation: scrapedData.location || '',
+            education: (scrapedData.education ?? [])
+              .map((e) => [e.school, e.degree].filter(Boolean).join(' — '))
+              .filter(Boolean)
+              .join('; '),
+            // Only the photo scraped from the member's own profile page. The
+            // list-page picture map mis-resolves to the viewer's own avatar in
+            // the 2026 DOM, so writing it would stamp the same wrong photo on
+            // everyone — write none and let the UI show initials instead.
+            ...(scrapedData.profilePictureUrl
+              ? { profilePictureUrl: scrapedData.profilePictureUrl }
+              : {}),
+          };
+          await this.dynamoDBService.createProfileMetadata(link, metadata);
           logger.info('Profile scraped and metadata stored', { profileId: link });
         } else if (!needsScrape) {
           logger.info('Profile is fresh, skipping scrape', { profileId: link });
@@ -156,14 +196,17 @@ export class ContactProcessor {
         logger.warn(`Local scrape failed for ${link} (non-fatal)`, {
           error: errMsg,
         });
-      }
-
-      // Update profile picture URL if available (non-fatal)
-      if (pictureUrl) {
+        // Fall back to a slug-derived display name so the connection still
+        // shows a human-readable name instead of "Unknown" when scraping fails.
         try {
-          await this.dynamoDBService.updateProfilePictureUrl(link, pictureUrl);
+          const name = link
+            .replace(/-\d+$/, '')
+            .split('-')
+            .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+            .join(' ');
+          await this.dynamoDBService.createProfileMetadata(link, { name });
         } catch {
-          logger.warn(`Failed to update profile picture for ${link} (non-fatal)`);
+          // non-fatal
         }
       }
 

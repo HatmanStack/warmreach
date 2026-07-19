@@ -323,6 +323,48 @@ class TestUpsertStatusAtomicTransaction:
         assert 'Item' in reverse
         assert reverse['Item']['status'] == 'possible'
 
+    def test_upsert_status_persists_and_preserves_provenance(self, dynamodb_table):
+        """Provenance written on the 'possible' edge must survive the
+        outgoing -> ally transitions (Update, not Put, on the forward edge)."""
+        import boto3
+
+        dynamodb_client = boto3.client('dynamodb', region_name='us-east-1')
+        service = EdgeDataService(table=dynamodb_table, dynamodb_client=dynamodb_client)
+
+        profile_id = 'https://linkedin.com/in/provenance-test'
+        profile_id_b64 = encode_profile_id(profile_id)
+        key = {'PK': 'USER#test-user', 'SK': f'PROFILE#{profile_id_b64}'}
+
+        # First surfaced by search with provenance.
+        service.upsert_status(
+            'test-user',
+            profile_id,
+            'possible',
+            provenance={
+                'source': 'search',
+                'sourceCompany': 'Acme',
+                'sourceRole': 'Engineer',
+                'sourceLocation': 'NYC',
+            },
+        )
+        item = dynamodb_table.get_item(Key=key)['Item']
+        assert item['source'] == 'search'
+        assert item['sourceCompany'] == 'Acme'
+        assert item['sourceRole'] == 'Engineer'
+        assert item['sourceLocation'] == 'NYC'
+
+        # Later transitions carry no provenance and must not clobber it.
+        service.upsert_status('test-user', profile_id, 'outgoing')
+        service.upsert_status('test-user', profile_id, 'ally')
+
+        item = dynamodb_table.get_item(Key=key)['Item']
+        assert item['status'] == 'ally'
+        assert item['GSI1SK'] == f'STATUS#ally#PROFILE#{profile_id_b64}'
+        assert item['sourceCompany'] == 'Acme'
+        assert item['sourceRole'] == 'Engineer'
+        assert item['sourceLocation'] == 'NYC'
+        assert item['source'] == 'search'
+
     def test_upsert_status_transaction_failure(self):
         """Mock transact_write_items to raise TransactionCanceledException,
         verify neither edge exists and ExternalServiceError is raised."""
@@ -676,6 +718,112 @@ class TestFormatConnectionObjectNotes:
         result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
 
         assert result['notes'] == []
+
+
+class TestFormatConnectionObjectProvenanceTags:
+    """Search provenance is surfaced as tags for first-contact tooling."""
+
+    def test_provenance_appended_to_tags_without_clobbering_user_tags(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+        edge_item = {
+            'status': 'ally',
+            'messages': [],
+            'tags': ['VIP'],
+            'sourceCompany': 'Acme',
+            'sourceRole': 'Engineer',
+            'sourceLocation': 'NYC',
+        }
+        profile_data = {'name': 'John Doe'}
+
+        result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
+
+        assert result['tags'] == ['VIP', 'Acme', 'Engineer', 'NYC']
+
+    def test_no_provenance_leaves_tags_untouched(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+        edge_item = {'status': 'ally', 'messages': [], 'tags': ['VIP']}
+        profile_data = {'name': 'John Doe'}
+
+        result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
+
+        assert result['tags'] == ['VIP']
+
+    def test_duplicate_provenance_value_not_repeated(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+        edge_item = {'status': 'ally', 'messages': [], 'tags': ['Acme'], 'sourceCompany': 'Acme'}
+        profile_data = {'name': 'John Doe'}
+
+        result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
+
+        assert result['tags'] == ['Acme']
+
+    def test_provenance_exposed_as_discrete_fields(self):
+        """Provenance is also surfaced as structured fields so the frontend can
+        group 'possible' connections by the search run that surfaced them."""
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+        edge_item = {
+            'status': 'possible',
+            'messages': [],
+            'sourceCompany': 'Amazon',
+            'sourceRole': 'software',
+            'sourceLocation': 'Seattle',
+        }
+        profile_data = {'name': 'John Doe'}
+
+        result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
+
+        assert result['source_company'] == 'Amazon'
+        assert result['source_role'] == 'software'
+        assert result['source_location'] == 'Seattle'
+
+    def test_missing_provenance_fields_default_to_empty_string(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+        edge_item = {'status': 'possible', 'messages': []}
+        profile_data = {'name': 'John Doe'}
+
+        result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
+
+        assert result['source_company'] == ''
+        assert result['source_role'] == ''
+        assert result['source_location'] == ''
+
+
+class TestFormatConnectionObjectAboutSkillsEducation:
+    """Tests for about/skills/education in _format_connection_object."""
+
+    def test_about_skills_education_forwarded_from_profile(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+        edge_item = {'status': 'ally', 'messages': []}
+        profile_data = {
+            'name': 'John Doe',
+            'about': 'Building great software.',
+            'skills': 'Python, TypeScript, AWS',
+            'education': 'MIT — BS, Computer Science',
+        }
+
+        result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
+
+        assert result['about'] == 'Building great software.'
+        assert result['skills'] == 'Python, TypeScript, AWS'
+        assert result['education'] == 'MIT — BS, Computer Science'
+
+    def test_about_skills_education_default_empty(self):
+        mock_table = MagicMock()
+        service = EdgeDataService(table=mock_table)
+        edge_item = {'status': 'ally', 'messages': []}
+        profile_data = {'name': 'John Doe'}
+
+        result = service._queries_svc._format_connection_object('profile-1', profile_data, edge_item)
+
+        assert result['about'] == ''
+        assert result['skills'] == ''
+        assert result['education'] == ''
 
 
 # ---- Opportunity Stage Management Tests ----

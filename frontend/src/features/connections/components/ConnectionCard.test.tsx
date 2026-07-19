@@ -1,3 +1,8 @@
+// Community ConnectionCard: the card renders a compact row without the pro
+// edition's click-to-expand detail panel (About / Skills / Education). These
+// tests therefore cover rendering and interactions directly, and do NOT mirror
+// the pro test's expand-then-"View on LinkedIn" flow — that behavior does not
+// exist in this edition's card.
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import ConnectionCard from './ConnectionCard';

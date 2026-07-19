@@ -69,3 +69,9 @@ frontend/coverage.json
 
 # Generated API docs (typedoc + mkdocstrings) — built in CI, not committed
 docs/api/
+
+# Client runtime output (search links, good/possible connections, profile-init state)
+/data/
+
+# Editor / tool backups (e.g. settings.json.bak.<timestamp>)
+*.bak*

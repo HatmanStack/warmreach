@@ -331,20 +331,22 @@ export class ConfigValidator {
       });
     }
 
-    // Log errors
+    // Embed the message in the string. These are positional string args;
+    // the Winston logger has no splat() format, so passing them as a second
+    // argument drops them into the SPLAT symbol and they never print — the
+    // line shows "Configuration warning:" with an empty body.
     result.errors.forEach((error) => {
-      logger.error('Configuration error:', error);
+      logger.error(`Configuration error: ${error}`);
     });
 
-    // Log warnings
     result.warnings.forEach((warning) => {
-      logger.warn('Configuration warning:', warning);
+      logger.warn(`Configuration warning: ${warning}`);
     });
 
     // Log recommendations in development
     if (config.nodeEnv === 'development') {
       result.recommendations.forEach((recommendation) => {
-        logger.info('Configuration recommendation:', recommendation);
+        logger.info(`Configuration recommendation: ${recommendation}`);
       });
     }
   }

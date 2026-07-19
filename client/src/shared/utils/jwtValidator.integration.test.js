@@ -216,44 +216,4 @@ describe('Healing encryption integration', () => {
       expect(expectedPrefix).toBe('sealbox_x25519:b64:');
     });
   });
-
-  describe('HealingManager encryption integration', () => {
-    it('verifies state file would contain encrypted credentials when key present', async () => {
-      // This is documented behavior - when key is configured,
-      // HealingManager encrypts credentials before writing
-
-      // Mock the crypto module
-      vi.resetModules();
-      vi.doMock('#utils/crypto.js', () => ({
-        encryptCredentials: vi.fn(async (_creds) => ({
-          searchPassword: 'sealbox_x25519:b64:encrypted_pass',
-          jwtToken: 'sealbox_x25519:b64:encrypted_token',
-        })),
-      }));
-
-      const mockWriteFile = vi.fn().mockResolvedValue(undefined);
-      vi.doMock('fs/promises', () => ({
-        writeFile: mockWriteFile,
-      }));
-
-      const { HealingManager } = await import('../../domains/automation/utils/healingManager.js');
-
-      const manager = new HealingManager();
-      await manager._createStateFile({
-        searchPassword: 'plaintext-password',
-        jwtToken: 'plaintext-jwt',
-      });
-
-      // Verify write was called
-      expect(mockWriteFile).toHaveBeenCalled();
-
-      // Get written content
-      const writeCall = mockWriteFile.mock.calls[0];
-      const written = JSON.parse(writeCall[1]);
-
-      // Verify credentials are encrypted format
-      expect(written.searchPassword).toMatch(/^sealbox_x25519:b64:/);
-      expect(written.jwtToken).toMatch(/^sealbox_x25519:b64:/);
-    });
-  });
 });

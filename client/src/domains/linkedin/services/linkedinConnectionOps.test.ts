@@ -85,13 +85,46 @@ describe('linkedinConnectionOps', () => {
   });
 
   describe('sendConnectionRequest', () => {
-    it('should send request and return result', async () => {
-      mockResolver.resolveWithWait.mockResolvedValue({ click: vi.fn() });
+    it('confirms a new request when pending appears after the click, not before', async () => {
+      // Pre-click snapshot (timeout 500) sees no pending; post-click it appears.
+      mockResolver.resolveWithWait.mockImplementation((_page, key, opts) => {
+        if (key === 'connection:pending' && opts?.timeout === 500) return Promise.resolve(null);
+        return Promise.resolve({ click: vi.fn() });
+      });
 
       const result = await sendConnectionRequest(mockService, 'p1', 'jwt-token');
 
-      expect(result.status).toBe('sent');
+      // Honest status comes from a real transition to pending / the sent toast.
       expect(result.confirmationFound).toBe(true);
+      expect(['sent', 'pending']).toContain(result.status);
+    });
+
+    it('does NOT confirm when the profile was already pending before the click', async () => {
+      // A prior outstanding invite: pending is present the whole time and there
+      // is no invitation-sent toast, so nothing new actually registered.
+      mockResolver.resolveWithWait.mockImplementation((_page, key) =>
+        key === 'connection:invitation-sent'
+          ? Promise.resolve(null)
+          : Promise.resolve({ click: vi.fn() })
+      );
+
+      const result = await sendConnectionRequest(mockService, 'p1', 'jwt-token');
+
+      expect(result.confirmationFound).toBe(false);
+      expect(result.status).toBe('unconfirmed');
+    });
+
+    it('returns unconfirmed when no sent/pending signal appears', async () => {
+      mockResolver.resolveWithWait.mockImplementation((_page, key) =>
+        key === 'connection:pending' || key === 'connection:invitation-sent'
+          ? Promise.resolve(null)
+          : Promise.resolve({ click: vi.fn() })
+      );
+
+      const result = await sendConnectionRequest(mockService, 'p1', 'jwt-token');
+
+      expect(result.confirmationFound).toBe(false);
+      expect(result.status).toBe('unconfirmed');
     });
 
     it('should throw when modal does not appear', async () => {

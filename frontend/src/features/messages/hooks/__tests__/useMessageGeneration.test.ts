@@ -24,6 +24,18 @@ vi.mock('@/features/workflow', () => ({
   }),
 }));
 
+vi.mock('@/shared/services/commandService', () => ({
+  commandService: {
+    dispatch: vi.fn().mockResolvedValue({ commandId: 'cmd-1' }),
+    // Deliver a confirmed result immediately so handleSendMessage resolves
+    // deterministically without a real WebSocket.
+    onCommandMessage: vi.fn((commandId: string, cb: (m: unknown) => void) => {
+      cb({ commandId, action: 'result', data: { data: { deliveryStatus: 'delivered' } } });
+      return () => {};
+    }),
+  },
+}));
+
 vi.mock('@/features/messages', async (importActual) => {
   const actual = await importActual<any>();
   return {
@@ -144,7 +156,8 @@ describe('useMessageGeneration', () => {
     clearTimeoutSpy.mockRestore();
   });
 
-  it('should handle send message', async () => {
+  it('should dispatch the real send-message command and record the message', async () => {
+    const { commandService } = await import('@/shared/services/commandService');
     const { result } = renderHook(() => useMessageGeneration(defaultOptions), { wrapper: Wrapper });
 
     await act(async () => {
@@ -155,6 +168,17 @@ describe('useMessageGeneration', () => {
       await result.current.handleSendMessage('A custom message');
     });
 
+    // Dispatches the live linkedin:send-message route with the exact payload
+    // field names the client's sendMessageDirect expects.
+    expect(commandService.dispatch).toHaveBeenCalledWith(
+      'linkedin:send-message',
+      expect.objectContaining({
+        recipientProfileId: expect.any(String),
+        messageContent: 'A custom message',
+      })
+    );
+    // On a confirmed delivery the message is reflected in the thread.
+    expect(result.current.messageHistory.some((m) => m.content === 'A custom message')).toBe(true);
     expect(result.current.messageModalOpen).toBe(true);
   });
 
@@ -211,5 +235,77 @@ describe('useMessageGeneration', () => {
     await waitFor(() => {
       expect(result.current.workflowState).toBe('completed');
     });
+  });
+
+  it('does NOT record the message when the agent reports delivery failed', async () => {
+    const { commandService } = await import('@/shared/services/commandService');
+    vi.mocked(commandService.onCommandMessage).mockImplementationOnce(
+      (commandId: string, cb: (m: unknown) => void) => {
+        cb({ commandId, action: 'error' });
+        return () => {};
+      }
+    );
+
+    const { result } = renderHook(() => useMessageGeneration(defaultOptions), { wrapper: Wrapper });
+    await act(async () => {
+      await result.current.handleMessageClick(mockConnections[0]);
+    });
+    await act(async () => {
+      await result.current.handleSendMessage('Unsent message');
+    });
+
+    // A failed send must never appear in the thread as though it went out.
+    expect(result.current.messageHistory.some((m) => m.content === 'Unsent message')).toBe(false);
+  });
+
+  it('does NOT record the message when delivery is unconfirmed', async () => {
+    const { commandService } = await import('@/shared/services/commandService');
+    vi.mocked(commandService.onCommandMessage).mockImplementationOnce(
+      (commandId: string, cb: (m: unknown) => void) => {
+        cb({ commandId, action: 'result', data: { data: { deliveryStatus: 'unconfirmed' } } });
+        return () => {};
+      }
+    );
+
+    const { result } = renderHook(() => useMessageGeneration(defaultOptions), { wrapper: Wrapper });
+    await act(async () => {
+      await result.current.handleMessageClick(mockConnections[0]);
+    });
+    await act(async () => {
+      await result.current.handleSendMessage('Maybe sent');
+    });
+
+    // Unconfirmed delivery must not be recorded — a false record discourages resend.
+    expect(result.current.messageHistory.some((m) => m.content === 'Maybe sent')).toBe(false);
+  });
+
+  it('clears the in-flight delivery-wait timer on unmount', async () => {
+    const { commandService } = await import('@/shared/services/commandService');
+    // Never deliver a result, so the 45s delivery timer stays pending.
+    vi.mocked(commandService.onCommandMessage).mockImplementationOnce(() => () => {});
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+
+    const { result, unmount } = renderHook(() => useMessageGeneration(defaultOptions), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await result.current.handleMessageClick(mockConnections[0]);
+    });
+
+    // Kick off the send; it blocks on the delivery Promise (no result arrives).
+    act(() => {
+      void result.current.handleSendMessage('Pending message');
+    });
+    await waitFor(() => {
+      expect(commandService.dispatch).toHaveBeenCalled();
+    });
+
+    clearTimeoutSpy.mockClear();
+    unmount();
+
+    // The cleanup effect must cancel the pending delivery timer so it can't fire
+    // against a stale closure after the component is gone.
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    clearTimeoutSpy.mockRestore();
   });
 });

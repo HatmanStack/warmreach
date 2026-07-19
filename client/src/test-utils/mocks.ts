@@ -33,6 +33,7 @@ export function mockDynamoDBService() {
   const mockGetProfileDetails = vi.fn().mockResolvedValue(true);
   const mockUpsertEdgeStatus = vi.fn().mockResolvedValue({ success: true });
   const mockCheckEdgeExists = vi.fn().mockResolvedValue(false);
+  const mockGetEdgeState = vi.fn().mockResolvedValue({ exists: false, status: null });
   const mockUpdateMessages = vi.fn().mockResolvedValue({ success: true });
   const mockMarkBadContact = vi.fn().mockResolvedValue(true);
   const mockCreateProfileMetadata = vi.fn().mockResolvedValue({});
@@ -43,6 +44,7 @@ export function mockDynamoDBService() {
       getProfileDetails: mockGetProfileDetails,
       upsertEdgeStatus: mockUpsertEdgeStatus,
       checkEdgeExists: mockCheckEdgeExists,
+      getEdgeState: mockGetEdgeState,
       updateMessages: mockUpdateMessages,
       markBadContact: mockMarkBadContact,
       createProfileMetadata: mockCreateProfileMetadata,
@@ -60,6 +62,7 @@ export function mockDynamoDBService() {
     mockGetProfileDetails,
     mockUpsertEdgeStatus,
     mockCheckEdgeExists,
+    mockGetEdgeState,
     mockUpdateMessages,
     mockMarkBadContact,
     mockCreateProfileMetadata,

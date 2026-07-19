@@ -4,8 +4,10 @@ import {
   isConnectionStatus,
   isMessageSender,
   isValidISODate,
+  isValidNumber,
   isValidUrl,
   isPositiveInteger,
+  isConversionLikelihood,
   isConnection,
   isMessage,
   isProgressState,
@@ -15,6 +17,29 @@ import {
 } from './guards';
 
 describe('Guards', () => {
+  describe('isValidNumber', () => {
+    it('should return true for finite numbers', () => {
+      expect(isValidNumber(0)).toBe(true);
+      expect(isValidNumber(-3.5)).toBe(true);
+    });
+    it('should return false for NaN, Infinity, and non-numbers', () => {
+      expect(isValidNumber(NaN)).toBe(false);
+      expect(isValidNumber(Infinity)).toBe(false);
+      expect(isValidNumber('5')).toBe(false);
+    });
+  });
+
+  describe('isConversionLikelihood', () => {
+    it('should return true for valid enum values', () => {
+      expect(isConversionLikelihood('high')).toBe(true);
+      expect(isConversionLikelihood('medium')).toBe(true);
+      expect(isConversionLikelihood('low')).toBe(true);
+    });
+    it('should return false for anything else', () => {
+      expect(isConversionLikelihood('unknown')).toBe(false);
+      expect(isConversionLikelihood(null)).toBe(false);
+    });
+  });
   describe('isNonEmptyString', () => {
     it('should return true for valid non-empty strings', () => {
       expect(isNonEmptyString('a')).toBe(true);

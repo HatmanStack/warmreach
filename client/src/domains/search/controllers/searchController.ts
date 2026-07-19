@@ -13,7 +13,8 @@ import { SearchRequestValidator } from '../utils/searchRequestValidator.js';
 import { SearchStateManager, type SearchState } from '../utils/searchStateManager.js';
 import { LinkCollector } from '../../linkedin/utils/linkCollector.js';
 import { ContactProcessor } from '../../linkedin/utils/contactProcessor.js';
-import { HealingManager } from '../../automation/utils/healingManager.js';
+import { LocalProfileScraper } from '../../linkedin/services/localProfileScraper.js';
+import { HealingRequiredError } from '../../automation/utils/healingError.js';
 import fs from 'fs/promises';
 
 /**
@@ -43,6 +44,10 @@ interface SearchResult {
   uniqueLinks: string[];
   stats: { successRate: string };
 }
+
+// Cap on in-process healing resumes before a run is aborted with a real error
+// (rather than silently looping or ending with partial results).
+const MAX_HEALING_ATTEMPTS = 3;
 
 export class SearchController {
   async performSearch(
@@ -132,16 +137,8 @@ export class SearchController {
     }
 
     try {
-      const result = await this.performSearchFromState(state);
-
-      if (result === undefined) {
-        res.status(202).json({
-          status: 'healing',
-          message: 'Worker process started for healing/recovery.',
-        });
-        return;
-      }
-
+      const result = await this.runSearchWithHealing(state);
+      if (result === undefined) throw new Error('Search returned no result');
       res.json(this._buildSuccessResponse(result, { companyName, companyRole, companyLocation }));
     } catch (e) {
       logger.error('Search failed:', e);
@@ -149,9 +146,56 @@ export class SearchController {
     }
   }
 
+  /**
+   * Runs a search and transparently resumes in-process when a phase requests
+   * healing. Each attempt re-invokes performSearchFromState from the resume
+   * state with a fresh browser (the prior attempt's `finally` closes its own).
+   * Capped at MAX_HEALING_ATTEMPTS so a persistently-failing run ends with a
+   * real error instead of the old silent worker-spawn no-op.
+   */
+  async runSearchWithHealing(state: SearchState): Promise<SearchResult | undefined> {
+    let current = state;
+    for (;;) {
+      try {
+        return await this.performSearchFromState(current);
+      } catch (error: unknown) {
+        if (!(error instanceof HealingRequiredError)) throw error;
+        const next = error.healState as SearchState;
+        const attempt = next.recursionCount || 0;
+        if (attempt > MAX_HEALING_ATTEMPTS) {
+          logger.error('[search] healing recursion cap reached — aborting run', {
+            phase: 'search',
+            recursionCount: attempt,
+            healPhase: next.healPhase,
+            healReason: next.healReason,
+          });
+          throw new Error(
+            `Search healing exceeded ${MAX_HEALING_ATTEMPTS} attempts (last reason: ${next.healReason || 'unknown'})`
+          );
+        }
+        logger.warn('[search] healing — resuming in-process', {
+          phase: 'search',
+          recursionCount: attempt,
+          healPhase: next.healPhase,
+          healReason: next.healReason,
+          resumeIndex: next.resumeIndex,
+        });
+        current = next;
+      }
+    }
+  }
+
   async performSearchFromState(state: SearchState): Promise<SearchResult | undefined> {
     const services = await this._initializeServices();
     let searchData: SearchData = { uniqueLinks: [], pictureUrls: {} };
+
+    logger.info('[search] performSearch requested', {
+      phase: 'search',
+      companyName: state.companyName,
+      companyRole: state.companyRole,
+      companyLocation: state.companyLocation,
+      healPhase: state.healPhase,
+    });
 
     try {
       await this._performLogin(services.linkedInService, state);
@@ -166,13 +210,15 @@ export class SearchController {
 
       const goodContacts = await this._processContacts(
         services,
-        searchData.uniqueLinks,
-        state,
-        searchData.pictureUrls
+        searchData.uniqueLinks || [],
+        state
       );
 
       return this._buildSearchResult(goodContacts ?? [], searchData.uniqueLinks);
     } catch (error: unknown) {
+      // A healing request is a resume signal, not a failure — let the
+      // run-with-healing loop handle it without logging a scary "failed".
+      if (error instanceof HealingRequiredError) throw error;
       logger.error('Search failed:', error);
       throw error;
     } finally {
@@ -221,6 +267,16 @@ export class SearchController {
       extractedGeoNumber = await linkedInService.applyLocationFilter(state.companyLocation);
     }
 
+    // These two IDs build the people-search URL; if either is unexpectedly
+    // null the results page will be generic/empty, so surface them explicitly.
+    logger.info('[search] company/geo filters resolved', {
+      phase: 'search',
+      companyName: state.companyName,
+      companyLocation: state.companyLocation,
+      extractedCompanyNumber,
+      extractedGeoNumber,
+    });
+
     return { extractedCompanyNumber, extractedGeoNumber };
   }
 
@@ -251,25 +307,40 @@ export class SearchController {
   async _processContacts(
     services: LinkedInServices,
     uniqueLinks: string[],
-    state: SearchState,
-    pictureUrls: Record<string, string> = {}
+    state: SearchState
   ): Promise<string[] | undefined> {
+    // serviceFactory hands ContactProcessor its OWN DynamoDBService instance,
+    // separate from the one LinkedInService authenticates internally during
+    // analyzeContactActivity. Without setting the token on this instance, every
+    // getProfileDetails / createProfileMetadata call for a good contact 401s —
+    // so no name/headline is ever written and the connection renders as
+    // "Unknown".
+    services.dynamoDBService.setAuthToken(state.jwtToken);
+
+    // Wire the local profile scraper off the persistent browser page (same
+    // pattern as profile-init). With it null, good contacts are stored as bare
+    // status edges with no scraped profile metadata, so names stay empty.
+    const page = services.puppeteerService.getPage();
+    const localProfileScraper = page ? new LocalProfileScraper(page) : null;
+    if (!localProfileScraper) {
+      logger.warn(
+        'No active browser page for search; profile scraping disabled, names will be empty'
+      );
+    }
+
     const contactProcessor = new ContactProcessor(
       services.linkedInService,
       services.dynamoDBService,
       config,
-      null
+      localProfileScraper
     );
 
     logger.info(
       `Loaded ${uniqueLinks.length} unique links to process. Starting at index: ${state.resumeIndex}`
     );
 
-    return await contactProcessor.processAllContacts(
-      uniqueLinks,
-      state,
-      (restartParams) => this._handleContactProcessingHealing(restartParams),
-      pictureUrls
+    return await contactProcessor.processAllContacts(uniqueLinks, state, (restartParams) =>
+      this._handleContactProcessingHealing(restartParams)
     );
   }
 
@@ -303,9 +374,10 @@ export class SearchController {
     });
   }
 
-  async _initiateHealing(healingParams: Record<string, unknown>) {
-    const healingManager = new HealingManager();
-    await healingManager.healAndRestart(healingParams);
+  async _initiateHealing(healingParams: Record<string, unknown>): Promise<never> {
+    // In-process healing: unwind the current attempt (its `finally` closes the
+    // browser) so runSearchWithHealing can resume from this state.
+    throw new HealingRequiredError(healingParams);
   }
 
   async _loadLinksFromFile(filePath: string | null): Promise<string[]> {
@@ -394,12 +466,6 @@ export class SearchController {
     };
   }
 
-  // Legacy method for backward compatibility
-  async healAndRestart(params: Record<string, unknown>) {
-    const healingManager = new HealingManager();
-    await healingManager.healAndRestart(params);
-  }
-
   /**
    * Transport-agnostic search method for WebSocket command dispatch.
    * Calls the service layer directly instead of simulating an HTTP request.
@@ -460,15 +526,8 @@ export class SearchController {
       await FileHelpers.writeJSON(config.paths.goodConnectionsFile, []);
     }
 
-    const result = await this.performSearchFromState(state);
-
-    if (result === undefined) {
-      return {
-        statusCode: 202,
-        status: 'healing',
-        message: 'Worker process started for healing/recovery.',
-      };
-    }
+    const result = await this.runSearchWithHealing(state);
+    if (result === undefined) throw new Error('Search returned no result');
 
     return {
       statusCode: 200,

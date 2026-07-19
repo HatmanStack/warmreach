@@ -6,6 +6,20 @@ vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
+// Pin the dev-only forceRescrape toggle off so an ambient
+// PROFILE_INIT_FORCE_RESCRAPE=true (a developer's .env) can't flip the
+// default-behavior assertions below.
+vi.mock('#shared-config/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#shared-config/index.js')>();
+  return {
+    ...actual,
+    config: {
+      ...actual.config,
+      linkedin: { ...actual.config.linkedin, forceRescrape: false },
+    },
+  };
+});
+
 vi.mock('../../linkedin/utils/linkedinErrorHandler.js', () => ({
   LinkedInErrorHandler: {
     categorizeError: vi.fn().mockReturnValue({ category: 'SYSTEM' }),
@@ -79,13 +93,34 @@ describe('profileScraping', () => {
       );
     });
 
-    it('should pass picture URL to metadata', async () => {
-      await processConnection(mockService, 'p1', state, 'ally', 'https://pic.url');
+    it('writes the scraped profile photo and ignores the list-page picture URL', async () => {
+      // The list-page URL (5th arg) resolves to the viewer's own avatar in the
+      // 2026 DOM, so it must be ignored; the photo comes from the member's own
+      // scraped profile page.
+      mockService.localProfileScraper.scrapeProfile.mockResolvedValue({
+        name: 'Jane Doe',
+        headline: 'Engineer',
+        location: 'SF',
+        currentPosition: { title: 'Engineer', company: 'Acme' },
+        profilePictureUrl: 'https://media.licdn.com/own-photo',
+      });
+
+      await processConnection(mockService, 'p1', state, 'ally', 'https://list-page-viewer-avatar');
 
       expect(mockService.dynamoDBService.createProfileMetadata).toHaveBeenCalledWith(
         'p1',
-        expect.objectContaining({ profilePictureUrl: 'https://pic.url' })
+        expect.objectContaining({ profilePictureUrl: 'https://media.licdn.com/own-photo' })
       );
+    });
+
+    it('omits the photo when the scrape yields none (no list-page fallback)', async () => {
+      // Base scrapeProfile mock returns no profilePictureUrl. Even with a
+      // list-page URL passed, none must be written — better initials than the
+      // wrong (viewer) avatar.
+      await processConnection(mockService, 'p1', state, 'ally', 'https://list-page-viewer-avatar');
+
+      const call = mockService.dynamoDBService.createProfileMetadata.mock.calls[0];
+      expect(call?.[1]).not.toHaveProperty('profilePictureUrl');
     });
   });
 

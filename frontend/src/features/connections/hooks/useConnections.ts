@@ -24,6 +24,13 @@ export const useConnections = (filters?: { status?: string; tags?: string[]; lim
       return await connectionsApiService.getConnectionsByStatus(statusFilter);
     },
     enabled: !!user,
+    // Connection metadata (About, photos, …) is rewritten out-of-band by the
+    // Electron scrape agent, which the web app can't observe. Without this the
+    // 5-minute global staleTime serves a snapshot captured mid-scrape. Treat
+    // the list as always-stale so returning to the page (mount) or the tab
+    // (window focus, enabled globally) always refetches the latest.
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   // Mutation for updating connection status

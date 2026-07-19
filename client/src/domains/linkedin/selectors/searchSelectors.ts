@@ -2,14 +2,25 @@ import { SelectorRegistry } from '../../automation/utils/selectorRegistry.js';
 
 export const searchSelectors: SelectorRegistry = {
   'search:filter-button': [
+    // 2026: the filter pill is a `div[role="button"]` whose inner element
+    // carries `aria-label="Filter by {name}"`. Target that — a click bubbles to
+    // the role=button parent — instead of the old `<button>` / bare `<label>`,
+    // which is not the clickable element (was: "Node is either not clickable").
+    { strategy: 'aria-filter-by-exact', selector: '[aria-label="Filter by {filterName}"]' },
+    { strategy: 'aria-filter-by-partial', selector: '[aria-label*="Filter by {filterName}"]' },
     { strategy: 'puppeteer-aria', selector: '::-p-aria({filterName})' },
     { strategy: 'aria-exact', selector: 'button[aria-label="{filterName} filter"]' },
     { strategy: 'aria-partial', selector: 'button[aria-label*="{filterName}"]' },
   ],
   'search:filter-input': [
+    // 2026: the company/location typeahead is `<input placeholder="Add a …">`
+    // with NO aria-label/role/type — so match on placeholder FIRST. The
+    // aria-label strategies never matched the 2026 input and, being first, they
+    // burned the whole resolve budget (each strategy waits up to the per-strategy
+    // timeout) before the placeholder strategy was ever tried.
+    { strategy: 'placeholder', selector: 'input[placeholder*="Add a"]' },
     { strategy: 'aria-company', selector: 'input[aria-label*="Add a company"]' },
     { strategy: 'aria-location', selector: 'input[aria-label*="Add a location"]' },
-    { strategy: 'placeholder', selector: 'input[placeholder*="Add a"]' },
     { strategy: 'role', selector: 'input[role="combobox"]' },
     { strategy: 'role-nested', selector: '[role="listbox"] input' },
     { strategy: 'css', selector: 'fieldset input[type="text"]' },

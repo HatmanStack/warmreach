@@ -111,6 +111,15 @@ export interface Connection {
   /** LinkedIn headline/professional summary (optional) */
   headline?: string;
 
+  /** LinkedIn "About" free-text section (optional) */
+  about?: string;
+
+  /** Top skills, delimiter-joined string as scraped (optional) */
+  skills?: string;
+
+  /** Education entries, delimiter-joined string as scraped (optional) */
+  education?: string;
+
   /** Recent activity or summary text (optional) */
   recent_activity?: string;
 
@@ -128,6 +137,15 @@ export interface Connection {
 
   /** Array of tags for categorization (optional) */
   tags?: string[];
+
+  /** Company the search that surfaced this 'possible' contact filtered on (optional) */
+  source_company?: string;
+
+  /** Role/keyword the surfacing search filtered on (optional) */
+  source_role?: string;
+
+  /** Location the surfacing search filtered on (optional) */
+  source_location?: string;
 
   /** Summary of last action taken with this connection (optional) */
   last_action_summary?: string;

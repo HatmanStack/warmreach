@@ -11,6 +11,16 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd $CLAUDE_PROJECT_DIR && (npm run typecheck:frontend 2>&1; npm run typecheck:client 2>&1; npm run typecheck:admin 2>&1) | tail -40"
+          }
+        ]
+      }
     ]
   }
 }

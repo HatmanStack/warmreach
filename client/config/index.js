@@ -16,8 +16,8 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 const parseBoolean = (value, defaultValue = false) => {
   if (value === undefined || value === null) return defaultValue;
   const normalized = String(value).trim().toLowerCase();
-  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
-  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
   return defaultValue;
 };
 
@@ -39,7 +39,7 @@ export const config = {
   // CORS
   frontendUrls: process.env.FRONTEND_URLS?.split(',') || [
     'http://localhost:3000',
-    'http://localhost:5173'
+    'http://localhost:5173',
   ],
 
   // LinkedIn Search
@@ -48,8 +48,8 @@ export const config = {
     testingMode: parseBoolean(process.env.LINKEDIN_TESTING_MODE, false),
     // Base URL for LinkedIn (auto-set to localhost:3333 when testingMode is true)
     baseUrl: parseBoolean(process.env.LINKEDIN_TESTING_MODE, false)
-      ? (process.env.LINKEDIN_BASE_URL || 'http://localhost:3333')
-      : (process.env.LINKEDIN_BASE_URL || 'https://www.linkedin.com'),
+      ? process.env.LINKEDIN_BASE_URL || 'http://localhost:3333'
+      : process.env.LINKEDIN_BASE_URL || 'https://www.linkedin.com',
     recencyHours: parseInt(process.env.RECENCY_HOURS) || 6,
     recencyDays: parseInt(process.env.RECENCY_DAYS) || 5,
     recencyWeeks: parseInt(process.env.RECENCY_WEEKS) || 3,
@@ -57,6 +57,24 @@ export const config = {
     threshold: parseInt(process.env.THRESHOLD) || 8,
     pageNumberStart: parseInt(process.env.PAGE_NUMBER_START) || 1,
     pageNumberEnd: parseInt(process.env.PAGE_NUMBER_END) || 100,
+    // Dev/testing cap on how many connections per list (ally/incoming/outgoing)
+    // profile-init ingests. 0 = no cap (ingest the entire list). Set e.g. 10 to
+    // start small while iterating instead of pulling the full network.
+    maxConnectionsPerType: parseInt(process.env.PROFILE_INIT_MAX_CONNECTIONS) || 0,
+    // Dev toggle: when true, profile-init re-scrapes connections even if an edge
+    // already exists (normally an existing edge short-circuits the scrape). Lets
+    // us re-run scraping against the same connections while iterating on
+    // selectors without manually clearing edges. Leave false in production.
+    forceRescrape: parseBoolean(process.env.PROFILE_INIT_FORCE_RESCRAPE, false),
+    // Dev toggle: dump each scraped profile's raw HTML to
+    // <userData>/logs/profile-dumps for offline selector analysis. Leave false
+    // in production.
+    scrapeDumpHtml: parseBoolean(process.env.PROFILE_SCRAPE_DUMP_HTML, false),
+    // Dev toggle: dump every search results page's raw HTML to
+    // <userData>/logs/search-dumps. Note: empty result pages are dumped
+    // automatically regardless of this flag, so an empty page is never
+    // undiagnosed. Leave false in production.
+    searchDumpHtml: parseBoolean(process.env.SEARCH_DUMP_HTML, false),
   },
 
   // Puppeteer
@@ -99,9 +117,18 @@ export const config = {
 
     // Rate Limiting (Requirement 9.4)
     rateLimitWindow: parseInt(process.env.RATE_LIMIT_WINDOW) || 60000, // 1 minute
-    rateLimitMax: Math.min(parseInt(process.env.RATE_LIMIT_MAX) || 10, RATE_LIMIT_CEILINGS.rateLimitMax),
-    dailyInteractionLimit: Math.min(parseInt(process.env.DAILY_INTERACTION_LIMIT) || 500, RATE_LIMIT_CEILINGS.dailyInteractionLimit),
-    hourlyInteractionLimit: Math.min(parseInt(process.env.HOURLY_INTERACTION_LIMIT) || 100, RATE_LIMIT_CEILINGS.hourlyInteractionLimit),
+    rateLimitMax: Math.min(
+      parseInt(process.env.RATE_LIMIT_MAX) || 10,
+      RATE_LIMIT_CEILINGS.rateLimitMax
+    ),
+    dailyInteractionLimit: Math.min(
+      parseInt(process.env.DAILY_INTERACTION_LIMIT) || 500,
+      RATE_LIMIT_CEILINGS.dailyInteractionLimit
+    ),
+    hourlyInteractionLimit: Math.min(
+      parseInt(process.env.HOURLY_INTERACTION_LIMIT) || 100,
+      RATE_LIMIT_CEILINGS.hourlyInteractionLimit
+    ),
 
     // Retry Configuration (Requirement 4.4)
     retryAttempts: parseInt(process.env.INTERACTION_RETRY_ATTEMPTS) || 3,
@@ -112,8 +139,14 @@ export const config = {
     // Human Behavior Simulation (Requirement 9.4)
     humanDelayMin: parseInt(process.env.HUMAN_DELAY_MIN) || 1000,
     humanDelayMax: parseInt(process.env.HUMAN_DELAY_MAX) || 3000,
-    actionsPerMinute: Math.min(parseInt(process.env.ACTIONS_PER_MINUTE) || 8, RATE_LIMIT_CEILINGS.actionsPerMinute),
-    actionsPerHour: Math.min(parseInt(process.env.ACTIONS_PER_HOUR) || 100, RATE_LIMIT_CEILINGS.actionsPerHour),
+    actionsPerMinute: Math.min(
+      parseInt(process.env.ACTIONS_PER_MINUTE) || 8,
+      RATE_LIMIT_CEILINGS.actionsPerMinute
+    ),
+    actionsPerHour: Math.min(
+      parseInt(process.env.ACTIONS_PER_HOUR) || 100,
+      RATE_LIMIT_CEILINGS.actionsPerHour
+    ),
 
     // Typing Simulation
     typingSpeedMin: parseInt(process.env.TYPING_SPEED_MIN) || 80, // WPM equivalent in ms
@@ -169,7 +202,7 @@ export const config = {
     debugMode: process.env.LINKEDIN_DEBUG_MODE === 'true',
     screenshotOnError: process.env.SCREENSHOT_ON_ERROR === 'true',
     savePageSourceOnError: process.env.SAVE_PAGE_SOURCE_ON_ERROR === 'true',
-    verboseLogging: process.env.VERBOSE_LOGGING === 'true'
+    verboseLogging: process.env.VERBOSE_LOGGING === 'true',
   },
 
   // File Paths

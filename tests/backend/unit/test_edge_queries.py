@@ -194,3 +194,89 @@ class TestBatchGetProfileMetadata:
         result = service.batch_get_profile_metadata(['a', 'b'])
 
         assert len(result) == 2
+
+
+class TestCheckExistsHasName:
+    """The hasName re-scrape signal that backfills blank-era ally names."""
+
+    def test_ally_reports_hasName_true_when_named(self):
+        mock_table = MagicMock()
+        pid = _encode('profile-1')
+        mock_table.get_item.side_effect = [
+            {'Item': {'status': 'ally', 'addedAt': '2024-01-01'}},
+            {'Item': {'PK': f'PROFILE#{pid}', 'SK': '#METADATA', 'name': 'John Doe'}},
+        ]
+        service = EdgeQueryService(table=mock_table)
+
+        result = service.check_exists('u1', 'profile-1')
+
+        assert result['edge_data']['hasName'] is True
+
+    def test_ally_reports_hasName_false_when_metadata_blank(self):
+        mock_table = MagicMock()
+        mock_table.get_item.side_effect = [
+            {'Item': {'status': 'ally'}},
+            {'Item': {}},  # metadata node has no name
+        ]
+        service = EdgeQueryService(table=mock_table)
+
+        result = service.check_exists('u1', 'profile-1')
+
+        assert result['edge_data']['hasName'] is False
+
+    def test_ally_reports_hasName_true_from_first_name_field(self):
+        mock_table = MagicMock()
+        mock_table.get_item.side_effect = [
+            {'Item': {'status': 'ally'}},
+            {'Item': {'firstName': 'Ada'}},
+        ]
+        service = EdgeQueryService(table=mock_table)
+
+        result = service.check_exists('u1', 'profile-1')
+
+        assert result['edge_data']['hasName'] is True
+
+    def test_non_ally_edge_skips_metadata_read(self):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {'Item': {'status': 'possible'}}
+        service = EdgeQueryService(table=mock_table)
+
+        result = service.check_exists('u1', 'profile-1')
+
+        assert result['edge_data']['hasName'] is None
+        # No second (metadata) read for a non-ally edge.
+        assert mock_table.get_item.call_count == 1
+
+
+class TestCommonInterests:
+    """common_interests derives from skills whether stored as string or list."""
+
+    def _connection_with_skills(self, skills_value):
+        mock_table = MagicMock()
+        pid = _encode('john')
+        mock_table.query.return_value = {
+            'Items': [
+                {'PK': 'USER#u1', 'SK': f'PROFILE#{pid}', 'status': 'ally', 'addedAt': '2024-01-01', 'messages': []}
+            ],
+            'LastEvaluatedKey': None,
+        }
+        meta = {'PK': f'PROFILE#{pid}', 'SK': '#METADATA', 'name': 'John'}
+        if skills_value is not None:
+            meta['skills'] = skills_value
+        mock_dynamodb = MagicMock()
+        mock_dynamodb.batch_get_item.return_value = {'Responses': {'test-table': [meta]}}
+        mock_table.table_name = 'test-table'
+        service = EdgeQueryService(table=mock_table, dynamodb_resource=mock_dynamodb)
+        return service.get_connections_by_status('u1')['connections'][0]
+
+    def test_from_joined_string(self):
+        conn = self._connection_with_skills('Python, AWS, Rust')
+        assert conn['common_interests'] == ['Python', 'AWS', 'Rust']
+
+    def test_from_list(self):
+        conn = self._connection_with_skills(['Python', 'AWS'])
+        assert conn['common_interests'] == ['Python', 'AWS']
+
+    def test_empty_when_absent(self):
+        conn = self._connection_with_skills(None)
+        assert conn['common_interests'] == []

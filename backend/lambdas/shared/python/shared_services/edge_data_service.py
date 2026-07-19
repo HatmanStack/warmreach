@@ -64,9 +64,15 @@ class EdgeDataService(BaseService):
     # ---- Status operations (delegated to EdgeStatusService) ----
 
     def upsert_status(
-        self, user_id: str, profile_id: str, status: str, added_at: str | None = None, messages: list | None = None
+        self,
+        user_id: str,
+        profile_id: str,
+        status: str,
+        added_at: str | None = None,
+        messages: list | None = None,
+        provenance: dict | None = None,
     ) -> dict[str, Any]:
-        return self._status_svc.upsert_status(user_id, profile_id, status, added_at, messages)
+        return self._status_svc.upsert_status(user_id, profile_id, status, added_at, messages, provenance)
 
     # ---- Message operations (delegated to EdgeMessageService) ----
 

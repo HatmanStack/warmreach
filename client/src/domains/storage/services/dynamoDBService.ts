@@ -42,6 +42,17 @@ class DynamoDBService {
   ): Promise<Record<string, unknown>> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const operation = (body?.operation as string) ?? '(none)';
+    const profileId = body?.profileId as string | undefined;
+    logger.debug(`[api] POST ${path} op=${operation}`, {
+      phase: 'api',
+      method: 'POST',
+      path,
+      operation,
+      profileId,
+      hasBaseUrl: !!this.baseURL,
+      hasAuthToken: !!this.authToken,
+    });
     try {
       const response = await fetch(`${this.baseURL}${path}`, {
         method: 'POST',
@@ -50,12 +61,30 @@ class DynamoDBService {
         signal: controller.signal,
       });
 
+      logger.debug(`[api] POST ${path} op=${operation} -> ${response.status}`, {
+        phase: 'api',
+        path,
+        operation,
+        profileId,
+        status: response.status,
+        ok: response.ok,
+      });
+
       if (!response.ok) {
         throw await this._buildError(response);
       }
 
       return await response.json();
     } catch (error) {
+      logger.warn(`[api] POST ${path} op=${operation} failed`, {
+        phase: 'api',
+        path,
+        operation,
+        profileId,
+        hasBaseUrl: !!this.baseURL,
+        hasAuthToken: !!this.authToken,
+        error: error instanceof Error ? error.message : String(error),
+      });
       if (error instanceof Error && 'statusCode' in error) throw error;
       throw this.handleError(error);
     } finally {
@@ -72,6 +101,15 @@ class DynamoDBService {
   ): Promise<Record<string, unknown>> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const profileId = params?.profileId;
+    logger.debug(`[api] GET ${path}`, {
+      phase: 'api',
+      method: 'GET',
+      path,
+      profileId,
+      hasBaseUrl: !!this.baseURL,
+      hasAuthToken: !!this.authToken,
+    });
     try {
       let url = `${this.baseURL}${path}`;
       const qs = new URLSearchParams(params).toString();
@@ -83,12 +121,28 @@ class DynamoDBService {
         signal: controller.signal,
       });
 
+      logger.debug(`[api] GET ${path} -> ${response.status}`, {
+        phase: 'api',
+        path,
+        profileId,
+        status: response.status,
+        ok: response.ok,
+      });
+
       if (!response.ok) {
         throw await this._buildError(response);
       }
 
       return await response.json();
     } catch (error) {
+      logger.warn(`[api] GET ${path} failed`, {
+        phase: 'api',
+        path,
+        profileId,
+        hasBaseUrl: !!this.baseURL,
+        hasAuthToken: !!this.authToken,
+        error: error instanceof Error ? error.message : String(error),
+      });
       if (error instanceof Error && 'statusCode' in error) throw error;
       throw this.handleError(error);
     } finally {
@@ -251,24 +305,48 @@ class DynamoDBService {
   }
 
   /**
-   * Check if an edge relationship exists between user and connection profile.
-   * The user ID is extracted from the JWT token in the Lambda function.
+   * Fetch the current edge relationship state (existence + stored status)
+   * between the user and a connection profile. The user ID is extracted from the
+   * JWT token in the Lambda function.
+   *
+   * NOTE: the backend `check_exists` operation returns its payload directly
+   * (`{ success, exists, profileId, edge_data: { status, ... } }`), NOT nested
+   * under a `result` key like most edge operations. Reading `data.result.exists`
+   * (the previous behaviour) therefore always yielded `undefined` -> `false`,
+   * silently disabling the edge-exists skip and hiding the stored status. Read
+   * the fields off the top level.
    */
-  async checkEdgeExists(connectionProfileId: string): Promise<boolean> {
+  async getEdgeState(
+    connectionProfileId: string
+  ): Promise<{ exists: boolean; status: string | null; hasName: boolean | null }> {
     try {
       const data = await this._post('edges', {
         operation: 'check_exists',
         profileId: connectionProfileId,
       });
-      const result = data?.result as Record<string, unknown> | undefined;
-      const exists = !!result?.exists;
-      logger.info(`Edge existence for ${connectionProfileId}: ${exists}`);
-      return exists;
+      const exists = !!data?.exists;
+      const edgeData = data?.edge_data as Record<string, unknown> | null | undefined;
+      const status = (edgeData?.status as string | undefined) ?? null;
+      // hasName is only reported for existing 'ally' edges (null otherwise). It
+      // lets batch processing re-scrape allies whose name was never captured.
+      const hasName = (edgeData?.hasName as boolean | undefined) ?? null;
+      logger.info(
+        `Edge state for ${connectionProfileId}: exists=${exists}, status=${status ?? 'none'}, hasName=${hasName ?? 'n/a'}`
+      );
+      return { exists, status, hasName };
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      logger.warn(`checkEdgeExists failed for ${connectionProfileId}: ${errMsg}`);
-      return false;
+      logger.warn(`getEdgeState failed for ${connectionProfileId}: ${errMsg}`);
+      return { exists: false, status: null, hasName: null };
     }
+  }
+
+  /**
+   * Check if an edge relationship exists between user and connection profile.
+   * Thin wrapper over {@link getEdgeState}.
+   */
+  async checkEdgeExists(connectionProfileId: string): Promise<boolean> {
+    return (await this.getEdgeState(connectionProfileId)).exists;
   }
 
   /**

@@ -14,7 +14,8 @@ import {
   type InitializationResult,
   type ProfileInitState,
 } from '../services/profileInitService.js';
-import { HealingManager } from '../../automation/utils/healingManager.js';
+import { LocalProfileScraper } from '../../linkedin/services/localProfileScraper.js';
+import { HealingRequiredError } from '../../automation/utils/healingError.js';
 import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { profileInitMonitor } from '../utils/profileInitMonitor.js';
 
@@ -32,12 +33,15 @@ interface ProfileInitErrorDetails {
 /**
  * Wrapped result returned by the profile-init pipeline on success. The pipeline
  * nests the service's {@link InitializationResult} under `profileData` alongside
- * timing stats; `undefined` signals that healing was triggered instead.
+ * timing stats.
  */
 interface ProfileInitResult {
   profileData: InitializationResult;
   stats: { initializationTime: string };
 }
+
+// Cap on in-process healing resumes before a run is aborted with a real error.
+const MAX_HEALING_ATTEMPTS = 3;
 
 export class ProfileInitController {
   async performProfileInit(
@@ -47,6 +51,14 @@ export class ProfileInitController {
   ): Promise<void> {
     const requestId = this._generateRequestId();
     const startTime = Date.now();
+
+    // In-process self-healing (P0-1) can resume through up to
+    // MAX_HEALING_ATTEMPTS full login+scrape cycles, producing no bytes on the
+    // response socket for minutes. Disable this handler's idle timeouts so a
+    // long heal isn't dropped mid-run by the default socket timeout; the healing
+    // loop's own cap bounds total duration. Guarded for non-HTTP callers/tests.
+    req.setTimeout?.(0);
+    res.setTimeout?.(0);
 
     // Enhanced request logging with request ID for tracking
     this._logRequestDetails(req, requestId);
@@ -107,34 +119,11 @@ export class ProfileInitController {
         isResuming: ProfileInitStateManager.isResumingState(state),
       });
 
-      const result = await this.performProfileInitFromState(state);
-
+      const result = await this.runProfileInitWithHealing(state);
+      // In-process healing never returns undefined on success (it throws on an
+      // unrecoverable failure); narrow here so the typed downstream is sound.
       if (result === undefined) {
-        const healingDuration = Date.now() - startTime;
-        logger.info('Profile initialization triggered healing process', {
-          requestId,
-          healingDuration,
-          recursionCount: state.recursionCount,
-        });
-
-        // Record healing in monitoring
-        profileInitMonitor.recordHealing(requestId, {
-          recursionCount: state.recursionCount,
-          healPhase: state.healPhase,
-          healReason: state.healReason,
-        });
-
-        res.status(202).json({
-          status: 'healing',
-          message: 'Worker process started for healing/recovery.',
-          requestId,
-          healingInfo: {
-            phase: state.healPhase,
-            reason: state.healReason,
-            recursionCount: state.recursionCount,
-          },
-        });
-        return;
+        throw new Error('Profile initialization returned no result');
       }
 
       const totalDuration = Date.now() - startTime;
@@ -184,6 +173,50 @@ export class ProfileInitController {
     }
   }
 
+  /**
+   * Runs profile-init and transparently resumes in-process when a recoverable
+   * error requests healing. Each attempt re-invokes performProfileInitFromState
+   * from the resume state with a fresh browser; capped at MAX_HEALING_ATTEMPTS
+   * so a persistently-failing run ends with a real error instead of the old
+   * silent worker-spawn no-op.
+   */
+  async runProfileInitWithHealing(state: ProfileInitState): Promise<ProfileInitResult | undefined> {
+    let current = state;
+    for (;;) {
+      try {
+        return await this.performProfileInitFromState(current);
+      } catch (error: unknown) {
+        if (!(error instanceof HealingRequiredError)) throw error;
+        const next = error.healState as ProfileInitState;
+        const attempt = next.recursionCount || 0;
+        if (attempt > MAX_HEALING_ATTEMPTS) {
+          logger.error('Profile-init healing recursion cap reached — aborting run', {
+            recursionCount: attempt,
+            healPhase: next.healPhase,
+            healReason: next.healReason,
+          });
+          throw new Error(
+            `Profile init healing exceeded ${MAX_HEALING_ATTEMPTS} attempts (last reason: ${next.healReason || 'unknown'})`
+          );
+        }
+        logger.warn('Profile-init healing — resuming in-process', {
+          recursionCount: attempt,
+          healPhase: next.healPhase,
+          healReason: next.healReason,
+        });
+        // Record the healing attempt so the monitor's counters/dashboards reflect
+        // in-process recoveries (the worker-spawn path that used to call this was
+        // removed with P0-1; without this a run that heals reports zero events).
+        profileInitMonitor.recordHealing(next.requestId || current.requestId || 'unknown', {
+          recursionCount: attempt,
+          healPhase: next.healPhase,
+          healReason: next.healReason,
+        });
+        current = next;
+      }
+    }
+  }
+
   async performProfileInitFromState(
     state: ProfileInitState
   ): Promise<ProfileInitResult | undefined> {
@@ -200,6 +233,8 @@ export class ProfileInitController {
 
       return this._buildProfileInitResult(profileData);
     } catch (error: unknown) {
+      // A healing request is a resume signal, not a failure.
+      if (error instanceof HealingRequiredError) throw error;
       logger.error('Profile initialization failed:', error);
       throw error;
     } finally {
@@ -218,13 +253,31 @@ export class ProfileInitController {
     logger.info('Processing user profile initialization...');
 
     try {
+      // Wire the local profile scraper. Without it, ProfileInitService's
+      // localProfileScraper stays null and every connection is stored as a
+      // status edge with no scraped name/headline (the "list shows but no
+      // names" symptom). The scraper drives the persistent browser page, which
+      // is created in puppeteerService.initialize() and reused for login,
+      // connection listing, and per-profile scraping.
+      const page = services.puppeteerService.getPage();
+      const localProfileScraper = page ? new LocalProfileScraper(page) : undefined;
+      if (!localProfileScraper) {
+        logger.warn(
+          'No active browser page at profile-init; scraping disabled and names will be empty'
+        );
+      }
+
       // Initialize ProfileInitService with all required services
       const profileInitService = new ProfileInitService(
         services.puppeteerService,
         services.linkedInService,
         services.linkedInContactService,
-        services.dynamoDBService
+        services.dynamoDBService,
+        localProfileScraper
       );
+      logger.info('ProfileInitService constructed', {
+        hasLocalProfileScraper: !!localProfileScraper,
+      });
 
       // Set auth token for DynamoDB operations. jwtToken is validated upstream
       // before a state reaches here; the guard satisfies the type and is a
@@ -241,10 +294,11 @@ export class ProfileInitController {
     } catch (error: unknown) {
       logger.error('Profile initialization processing failed:', error);
 
-      // Check if this is a recoverable error that should trigger healing
+      // Check if this is a recoverable error that should trigger healing.
+      // _handleProfileInitHealing throws HealingRequiredError → the
+      // runProfileInitWithHealing loop resumes in-process from the heal state.
       if (this._shouldTriggerHealing(error)) {
         await this._handleProfileInitHealing(state);
-        return undefined; // Signal healing in progress
       }
 
       throw error;
@@ -374,9 +428,10 @@ export class ProfileInitController {
     return false;
   }
 
-  async _initiateHealing(healingParams: Record<string, unknown>): Promise<void> {
-    const healingManager = new HealingManager();
-    await healingManager.healAndRestart(healingParams);
+  async _initiateHealing(healingParams: Record<string, unknown>): Promise<never> {
+    // In-process healing: unwind the current attempt (its `finally` closes the
+    // browser) so runProfileInitWithHealing can resume from this state.
+    throw new HealingRequiredError(healingParams);
   }
 
   async _cleanupServices(services: Partial<LinkedInServices> | null): Promise<void> {
@@ -395,7 +450,9 @@ export class ProfileInitController {
       };
 
     logger.info('Profile init request body received:', {
-      searchName,
+      // Redact the LinkedIn email — it lands in on-disk log rotations,
+      // and the agent now injects it into every linkedin:* command.
+      searchName: searchName ? '[REDACTED]' : 'not provided',
       hasPassword: !!searchPassword,
       hasJwtToken: !!jwtToken,
     });
@@ -612,9 +669,16 @@ export class ProfileInitController {
       throw err;
     }
 
+    // Direct/WebSocket path historically only accepted encrypted creds
+    // (linkedinCredentialsCiphertext from the frontend's session store).
+    // The agent now injects plaintext searchName/searchPassword from its
+    // local CredentialStore at the commandRouter level, so honour those
+    // if present. Ciphertext still wins when both are supplied.
     const state = ProfileInitStateManager.buildInitialState({
-      searchName: null,
-      searchPassword: null,
+      searchName: payload.linkedinCredentialsCiphertext ? null : (payload.searchName ?? null),
+      searchPassword: payload.linkedinCredentialsCiphertext
+        ? null
+        : (payload.searchPassword ?? null),
       credentialsCiphertext: payload.linkedinCredentialsCiphertext,
       jwtToken,
       requestId,
@@ -628,21 +692,8 @@ export class ProfileInitController {
       isResuming: ProfileInitStateManager.isResumingState(state),
     });
 
-    const result = await this.performProfileInitFromState(state);
-
-    if (result === undefined) {
-      profileInitMonitor.recordHealing(requestId, {
-        recursionCount: state.recursionCount,
-        healPhase: state.healPhase,
-        healReason: state.healReason,
-      });
-      return {
-        statusCode: 202,
-        status: 'healing',
-        message: 'Worker process started for healing/recovery.',
-        requestId,
-      };
-    }
+    const result = await this.runProfileInitWithHealing(state);
+    if (result === undefined) throw new Error('Profile initialization returned no result');
 
     profileInitMonitor.recordSuccess(requestId, result);
     return {

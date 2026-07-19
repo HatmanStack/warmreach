@@ -105,6 +105,87 @@ export class SelectorResolver {
     throw new SelectorNotFoundError(interactionPoint, cascade);
   }
 
+  /**
+   * Like resolveWithWait, but returns the first cascade match that is actually
+   * rendered (has a non-zero bounding box). LinkedIn's React login ships a
+   * hidden duplicate form whose inputs/buttons match the same selectors but
+   * have no clickable point, so plain resolveWithWait returns the first DOM
+   * match (often the hidden one) and .click()/.type() target a dead element.
+   * Polls until a laid-out element appears or the timeout elapses.
+   */
+  async resolveVisibleWithWait(
+    page: Page,
+    interactionPoint: string,
+    options?: { timeout?: number }
+  ): Promise<ElementHandle> {
+    const cascade = this.registry[interactionPoint];
+    if (!cascade || cascade.length === 0) {
+      throw new Error(`Unknown interaction point: ${interactionPoint}`);
+    }
+
+    const overallTimeout = options?.timeout ?? 10000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < overallTimeout) {
+      for (const strategyObj of cascade) {
+        let handles: ElementHandle[] = [];
+        try {
+          handles = await page.$$(strategyObj.selector);
+        } catch {
+          continue; // unsupported/invalid selector — try next strategy
+        }
+        for (const handle of handles) {
+          const box = await handle.boundingBox().catch(() => null);
+          if (box && box.width > 0 && box.height > 0) {
+            return handle;
+          }
+          await handle.dispose().catch(() => {});
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    throw new SelectorNotFoundError(interactionPoint, cascade);
+  }
+
+  /**
+   * Poll for the first cascade match to be PRESENT in the DOM (no visibility
+   * requirement), re-scanning until found or the timeout elapses. Use for
+   * "has this page loaded" checks where the target may render late or flicker
+   * during React hydration (a visible-only check rejects it mid-churn). The
+   * timeout floors at 30s, so a missing/zero option can't make it bail early.
+   */
+  async resolvePresentWithWait(
+    page: Page,
+    interactionPoint: string,
+    options?: { timeout?: number }
+  ): Promise<ElementHandle> {
+    const cascade = this.registry[interactionPoint];
+    if (!cascade || cascade.length === 0) {
+      throw new Error(`Unknown interaction point: ${interactionPoint}`);
+    }
+
+    const requested = options?.timeout;
+    const overallTimeout = typeof requested === 'number' && requested > 0 ? requested : 30000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < overallTimeout) {
+      for (const strategyObj of cascade) {
+        try {
+          const el = await page.$(strategyObj.selector);
+          if (el) {
+            return el;
+          }
+        } catch {
+          // unsupported/invalid selector — try next strategy
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    throw new SelectorNotFoundError(interactionPoint, cascade);
+  }
+
   async resolveWithParams(
     page: Page,
     interactionPoint: string,

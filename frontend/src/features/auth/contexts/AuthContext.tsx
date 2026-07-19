@@ -72,6 +72,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initializeAuth();
   }, []);
 
+  // On every authenticated session (page refresh, sign-in), best-effort
+  // push current Cognito tokens to the locally-running desktop agent so
+  // it can (re)subscribe to the cloud WebSocket. Mirrors the /auth/clear
+  // call on signOut. Silent no-op when the agent isn't running.
+  useEffect(() => {
+    if (!user || !isCognitoConfigured) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const payload = await CognitoAuthService.getDesktopAgentTokens();
+        if (!payload) return;
+        if (cancelled) return;
+        await fetch('http://localhost:3001/auth/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        // Silent no-op — desktop agent not running or unreachable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
   const initializeAuth = async () => {
     if (isCognitoConfigured) {
       // Use AWS Cognito

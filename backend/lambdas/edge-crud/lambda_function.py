@@ -97,8 +97,17 @@ def _handle_upsert_status(body, user_id, event, edge_cache):
     if not pid:
         return api_response(400, {'error': 'profileId required'}, event)
     updates = body.get('updates', {})
+    # Search provenance ("why surfaced"): persisted once on the edge and kept
+    # across status transitions so it can equip first contact after conversion.
+    _provenance_fields = {'source', 'sourceCompany', 'sourceRole', 'sourceLocation'}
+    provenance = {k: v for k, v in updates.items() if k in _provenance_fields and v}
     result = _edge_data_service.upsert_status(
-        user_id, pid, updates.get('status', 'pending'), updates.get('addedAt'), updates.get('messages')
+        user_id,
+        pid,
+        updates.get('status', 'pending'),
+        updates.get('addedAt'),
+        updates.get('messages'),
+        provenance=provenance or None,
     )
     write_activity(
         table,

@@ -4,14 +4,15 @@ import { LinkedInCredentialStep } from './LinkedInCredentialStep';
 import { ImportConnectionsStep } from './ImportConnectionsStep';
 import { ExploreNetworkStep } from './ExploreNetworkStep';
 
-const STEP_COMPONENTS = [
-  LinkedInCredentialStep,
-  ImportConnectionsStep,
-  ExploreNetworkStep,
-];
+const STEP_COMPONENTS = [LinkedInCredentialStep, ImportConnectionsStep, ExploreNetworkStep];
 
 export const OnboardingOverlay = () => {
   const { isOnboarding, currentStep } = useOnboarding();
+
+  // Dev pause: set VITE_DISABLE_ONBOARDING=true in the frontend .env to
+  // suppress the onboarding overlay while developing. Defaults to showing
+  // onboarding, so production builds are unaffected.
+  if (import.meta.env.VITE_DISABLE_ONBOARDING === 'true') return null;
 
   if (!isOnboarding) return null;
 

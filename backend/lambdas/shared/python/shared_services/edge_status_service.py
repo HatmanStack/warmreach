@@ -30,37 +30,85 @@ class EdgeStatusService(BaseService):
         return self._dynamodb_client_override
 
     def upsert_status(
-        self, user_id: str, profile_id: str, status: str, added_at: str | None = None, messages: list | None = None
+        self,
+        user_id: str,
+        profile_id: str,
+        status: str,
+        added_at: str | None = None,
+        messages: list | None = None,
+        provenance: dict | None = None,
     ) -> dict[str, Any]:
-        """Create or update edge status (idempotent upsert)."""
+        """Create or update edge status (idempotent upsert).
+
+        The forward edge is written with an UPDATE (not a full-item PUT) so a
+        status transition does not clobber durable attributes set earlier in the
+        pipeline — tags, notes, messages, relationshipScore, and the search
+        ``provenance`` (source/company/role/location) recorded when the contact
+        was first surfaced. ``provenance`` values are written with if_not_exists
+        so the original "why surfaced" context survives all the way to ``ally``.
+        """
         try:
             profile_id_b64 = encode_profile_id(profile_id)
             current_time = datetime.now(UTC).isoformat()
-
-            user_profile_edge = {
-                'PK': f'USER#{user_id}',
-                'SK': f'PROFILE#{profile_id_b64}',
-                'status': status,
-                'addedAt': added_at or current_time,
-                'updatedAt': current_time,
-                'messages': messages or [],
-                'GSI1PK': f'USER#{user_id}',
-                'GSI1SK': f'STATUS#{status}#PROFILE#{profile_id_b64}',
-            }
-            if status == 'processed':
-                user_profile_edge['processedAt'] = current_time
-
             serializer = TypeSerializer()
-            serialized_item = {k: serializer.serialize(v) for k, v in user_profile_edge.items()}
             table_name = self.table.table_name
+
+            # Forward edge (USER#|PROFILE#) — UPDATE preserves unnamed attributes.
+            # GSI1SK encodes the status, so it must be rewritten every transition.
+            fwd_set = [
+                'GSI1PK = :gsi1pk',
+                'GSI1SK = :gsi1sk',
+                '#status = :status',
+                'addedAt = if_not_exists(addedAt, :added)',
+                'updatedAt = :updated',
+            ]
+            fwd_names = {'#status': 'status'}
+            # DynamoDB AttributeValue map: entries take different shapes ({'S':..},
+            # {'L':..}, serializer output), so annotate the value type broadly.
+            fwd_values: dict[str, Any] = {
+                ':gsi1pk': {'S': f'USER#{user_id}'},
+                ':gsi1sk': {'S': f'STATUS#{status}#PROFILE#{profile_id_b64}'},
+                ':status': {'S': status},
+                ':added': {'S': added_at or current_time},
+                ':updated': {'S': current_time},
+            }
+            # Replace messages only when explicitly provided; otherwise seed [] on
+            # first write and preserve any existing conversation on later upserts.
+            if messages is not None:
+                fwd_set.append('messages = :messages')
+                fwd_values[':messages'] = serializer.serialize(messages)
+            else:
+                fwd_set.append('messages = if_not_exists(messages, :emptyMessages)')
+                fwd_values[':emptyMessages'] = {'L': []}
+            if status == 'processed':
+                fwd_set.append('processedAt = :processedAt')
+                fwd_values[':processedAt'] = {'S': current_time}
+            # Search provenance: write once, keep across transitions. Alias every
+            # key via ExpressionAttributeNames to avoid DynamoDB reserved words
+            # (e.g. "source").
+            if provenance:
+                for i, (key, val) in enumerate(provenance.items()):
+                    if val in (None, ''):
+                        continue
+                    name_ph = f'#pv{i}'
+                    val_ph = f':pv{i}'
+                    fwd_set.append(f'{name_ph} = if_not_exists({name_ph}, {val_ph})')
+                    fwd_names[name_ph] = key
+                    fwd_values[val_ph] = serializer.serialize(val)
 
             try:
                 self._dynamodb_client.transact_write_items(
                     TransactItems=[
                         {
-                            'Put': {
+                            'Update': {
                                 'TableName': table_name,
-                                'Item': serialized_item,
+                                'Key': {
+                                    'PK': {'S': f'USER#{user_id}'},
+                                    'SK': {'S': f'PROFILE#{profile_id_b64}'},
+                                },
+                                'UpdateExpression': 'SET ' + ', '.join(fwd_set),
+                                'ExpressionAttributeNames': fwd_names,
+                                'ExpressionAttributeValues': fwd_values,
                             },
                         },
                         {

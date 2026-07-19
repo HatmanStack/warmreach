@@ -3,6 +3,7 @@ import {
   validateConnection,
   validateMessage,
   sanitizeConnectionData,
+  sanitizeMessageData,
   validateConnections,
   sanitizeConnectionStatus,
   sanitizeMessageSender,
@@ -106,6 +107,88 @@ describe('Validators', () => {
       });
       expect(result?.first_name.length).toBe(100);
       expect(result?.recent_activity?.length).toBe(2000);
+    });
+
+    it('preserves scraped about/skills/education through the sanitize whitelist', () => {
+      // A null conversion_likelihood forces connections down the sanitize path;
+      // these fields must survive it or the expanded card shows nothing.
+      const result = sanitizeConnectionData({
+        id: '1',
+        first_name: 'Gavin',
+        last_name: 'Mendeck',
+        position: 'Architecture',
+        company: 'NASA',
+        status: 'ally',
+        conversion_likelihood: null,
+        about: 'My goal is to accelerate the exploration of space.',
+        skills: 'Systems Engineering, Spacecraft',
+        education: 'Texas A&M University — BS, Aerospace Engineering',
+      });
+      expect(result?.about).toBe('My goal is to accelerate the exploration of space.');
+      expect(result?.skills).toBe('Systems Engineering, Spacecraft');
+      expect(result?.education).toBe('Texas A&M University — BS, Aerospace Engineering');
+    });
+
+    it('preserves search provenance through the sanitize whitelist', () => {
+      // Without this, a search-sourced connection down the sanitize path loses
+      // source_* and groupConnectionsByRun drops it into "Earlier connections".
+      const result = sanitizeConnectionData({
+        id: '1',
+        first_name: 'Ada',
+        status: 'possible',
+        conversion_likelihood: null,
+        source_company: 'Anduril',
+        source_role: 'Software Engineer',
+        source_location: 'San Diego',
+      });
+      expect(result?.source_company).toBe('Anduril');
+      expect(result?.source_role).toBe('Software Engineer');
+      expect(result?.source_location).toBe('San Diego');
+    });
+
+    it('sanitizes a valid message_history entry, dropping malformed ones', () => {
+      const result = sanitizeConnectionData({
+        id: '1',
+        first_name: 'Ada',
+        status: 'ally',
+        message_history: [
+          { id: 'm1', content: 'hi', timestamp: '2024-01-01T10:00:00.000Z', sender: 'me' },
+          { id: 'm2', content: '', timestamp: '2024-01-01T10:00:00.000Z', sender: 'them' },
+        ],
+      });
+      expect(result?.message_history).toHaveLength(1);
+      expect(result?.message_history?.[0]?.sender).toBe('user');
+    });
+  });
+
+  describe('sanitizeMessageData', () => {
+    it('sanitizes a valid message and maps the sender alias', () => {
+      const msg = sanitizeMessageData({
+        id: 'm1',
+        content: 'hello',
+        timestamp: '2024-01-01T10:00:00.000Z',
+        sender: 'them',
+      });
+      expect(msg?.id).toBe('m1');
+      expect(msg?.content).toBe('hello');
+      expect(msg?.sender).toBe('connection');
+    });
+
+    it('returns null for a non-object', () => {
+      expect(sanitizeMessageData('nope')).toBeNull();
+      expect(sanitizeMessageData(null)).toBeNull();
+    });
+
+    it('returns null when content, timestamp, or sender is invalid', () => {
+      expect(
+        sanitizeMessageData({ content: '', timestamp: '2024-01-01T10:00:00.000Z', sender: 'me' })
+      ).toBeNull();
+      expect(
+        sanitizeMessageData({ content: 'hi', timestamp: 'not-a-date', sender: 'me' })
+      ).toBeNull();
+      expect(
+        sanitizeMessageData({ content: 'hi', timestamp: '2024-01-01T10:00:00.000Z', sender: 'bot' })
+      ).toBeNull();
     });
   });
 

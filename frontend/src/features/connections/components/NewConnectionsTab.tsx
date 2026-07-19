@@ -1,13 +1,15 @@
 import type React from 'react';
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { UserPlus, Building, User, Search, X, Loader2, AlertCircle, Info } from 'lucide-react';
-import { VirtualConnectionList } from '@/features/connections';
+import { UserPlus, Building, User, Search, Loader2, AlertCircle, Info } from 'lucide-react';
+import { filterConnections, groupConnectionsByRun } from '@/features/connections';
+import ConnectionFiltersComponent from './ConnectionFilters';
+import NewConnectionGroup from './NewConnectionGroup';
 import { ConnectionSearchBar } from './ConnectionSearchBar';
-import type { Connection } from '@/types';
+import type { Connection, ConnectionFilters } from '@/types';
 
 interface NewConnectionsTabProps {
   searchResults: Connection[];
@@ -39,52 +41,65 @@ const NewConnectionsTab = ({
   });
   const [activeTags, setActiveTags] = useState<string[]>([]);
 
+  // Popover filters (company / location / conversion) applied within groups.
+  const [filters, setFilters] = useState<ConnectionFilters>({});
+
+  // Locally hide cards the user removes/connects so they vanish immediately,
+  // before the parent's React Query cache refetches.
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+
+  // Which run groups are expanded. The newest run auto-expands (see effect).
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const autoExpandedRef = useRef<string | null>(null);
+
   // Local search query state for client-side filtering
   // Note: NewConnections shows "possible" contacts which are NOT ingested into RAGStack
   // per ADR-007, so we use client-side filtering instead of semantic search
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Use real data from props instead of fake data, filtering for 'possible' status only
-  const displayResults = searchResults.filter((connection) => connection.status === 'possible');
+  // Only "possible" contacts belong in this discovery view.
+  const possibleConnections = useMemo(
+    () => searchResults.filter((connection) => connection.status === 'possible'),
+    [searchResults]
+  );
 
-  // Client-side filtering for possible contacts (not in RAGStack)
-  const filteredBySearch = useMemo(() => {
-    if (!searchQuery.trim()) return displayResults;
-
-    const query = searchQuery.toLowerCase().trim();
-    return displayResults.filter(
-      (c) =>
-        c.first_name?.toLowerCase().includes(query) ||
-        c.last_name?.toLowerCase().includes(query) ||
-        c.company?.toLowerCase().includes(query) ||
-        c.position?.toLowerCase().includes(query) ||
-        c.headline?.toLowerCase().includes(query)
-    );
-  }, [displayResults, searchQuery]);
-
-  // Sort connections based on active tags
-  const sortedConnections = useMemo(() => {
-    if (activeTags.length === 0) {
-      return filteredBySearch;
+  // Full filter pipeline: drop removed → popover filters → text query.
+  const displayResults = useMemo(() => {
+    let result = possibleConnections;
+    if (removedIds.size > 0) {
+      result = result.filter((c) => !removedIds.has(c.id));
     }
+    if (Object.keys(filters).length > 0) {
+      result = filterConnections(result, filters);
+    }
+    const query = searchQuery.toLowerCase().trim();
+    if (query) {
+      result = result.filter(
+        (c) =>
+          c.first_name?.toLowerCase().includes(query) ||
+          c.last_name?.toLowerCase().includes(query) ||
+          c.company?.toLowerCase().includes(query) ||
+          c.position?.toLowerCase().includes(query) ||
+          c.headline?.toLowerCase().includes(query)
+      );
+    }
+    return result;
+  }, [possibleConnections, removedIds, filters, searchQuery]);
 
-    return [...filteredBySearch].sort((a, b) => {
-      const aTagsMatch = (a.tags || a.common_interests || []).filter((tag) =>
-        activeTags.includes(tag)
-      ).length;
-      const bTagsMatch = (b.tags || b.common_interests || []).filter((tag) =>
-        activeTags.includes(tag)
-      ).length;
+  // Group the visible contacts by the search run that surfaced them.
+  const groups = useMemo(() => groupConnectionsByRun(displayResults), [displayResults]);
 
-      // Sort by number of matching tags (descending)
-      if (aTagsMatch !== bTagsMatch) {
-        return bTagsMatch - aTagsMatch;
-      }
+  const totalShown = displayResults.length;
 
-      // If same number of matches, sort alphabetically
-      return `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`);
-    });
-  }, [filteredBySearch, activeTags]);
+  // Auto-expand the newest run whenever it changes (initial load or a fresh
+  // search landing), without collapsing anything the user opened manually.
+  useEffect(() => {
+    const newest = groups.find((g) => !g.isUngrouped) ?? groups[0];
+    if (newest && autoExpandedRef.current !== newest.key) {
+      autoExpandedRef.current = newest.key;
+      setExpandedKeys((prev) => new Set(prev).add(newest.key));
+    }
+  }, [groups]);
 
   const handleSearch = () => {
     onSearch({
@@ -93,26 +108,35 @@ const NewConnectionsTab = ({
     });
   };
 
-  const clearAllTags = () => {
-    setActiveTags([]);
-  };
-
   const clearSearch = () => {
     setSearchQuery('');
   };
 
-  // Handle connection removal - parent component manages cache via React Query
+  const toggleGroup = useCallback((key: string) => {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  // Handle connection removal - hide locally and inform the parent so its
+  // React Query source-of-truth updates.
   const handleRemoveConnection = useCallback(
-    (connectionId: string, newStatus: 'processed' | 'outgoing') => {
-      // Inform parent (Dashboard) so its source-of-truth updates via React Query
-      if (onRemoveConnection) {
+    (connectionId: string, newStatus: string) => {
+      setRemovedIds((prev) => new Set(prev).add(connectionId));
+      if (onRemoveConnection && (newStatus === 'processed' || newStatus === 'outgoing')) {
         onRemoveConnection(connectionId, newStatus);
       }
     },
     [onRemoveConnection]
   );
 
-  // Handle tag clicks for filtering
+  // Handle tag clicks (visual highlight across cards)
   const handleTagClick = useCallback((tag: string) => {
     setActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   }, []);
@@ -127,18 +151,14 @@ const NewConnectionsTab = ({
             <div className="flex items-center justify-between">
               <CardTitle className="text-white flex items-center">
                 <UserPlus className="h-5 w-5 mr-2" />
-                Discover New Connections ({sortedConnections.length})
+                Discover New Connections ({totalShown})
               </CardTitle>
-              {activeTags.length > 0 && (
-                <Button
-                  size="sm"
-                  onClick={clearAllTags}
-                  className="bg-slate-700 hover:bg-slate-600 text-white border-slate-600 hover:border-slate-500"
-                >
-                  <X className="h-3 w-3 mr-1" />
-                  Clear Filters
-                </Button>
-              )}
+              <ConnectionFiltersComponent
+                connections={possibleConnections}
+                filters={filters}
+                onFiltersChange={setFilters}
+                isNewConnection={true}
+              />
             </div>
 
             {/* Client-side Search Bar */}
@@ -152,7 +172,7 @@ const NewConnectionsTab = ({
               />
 
               {/* Empty Search Results */}
-              {isSearchActive && sortedConnections.length === 0 && (
+              {isSearchActive && totalShown === 0 && (
                 <div className="bg-slate-700/30 border border-slate-600/30 rounded-lg p-4 text-center">
                   <p className="text-slate-300 mb-2">No matches found for "{searchQuery}"</p>
                   <Button
@@ -172,7 +192,7 @@ const NewConnectionsTab = ({
               <div className="relative">
                 <Building className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <Input
-                  placeholder="Company (coming soon)"
+                  placeholder="Company"
                   value={searchFilters.company}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                     setSearchFilters((prev) => ({ ...prev, company: e.target.value }))
@@ -183,7 +203,7 @@ const NewConnectionsTab = ({
               <div className="relative">
                 <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <Input
-                  placeholder="Job Title (coming soon)"
+                  placeholder="Job Title"
                   value={searchFilters.job}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                     setSearchFilters((prev) => ({ ...prev, job: e.target.value }))
@@ -194,7 +214,7 @@ const NewConnectionsTab = ({
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <Input
-                  placeholder="Location (coming soon)"
+                  placeholder="Location"
                   value={searchFilters.location}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                     setSearchFilters((prev) => ({ ...prev, location: e.target.value }))
@@ -246,10 +266,10 @@ const NewConnectionsTab = ({
               </div>
             )}
 
-            {/* New Connections with Virtual Scrolling */}
+            {/* Grouped new connections */}
             {!connectionsLoading && !connectionsError && (
               <>
-                {sortedConnections.length === 0 ? (
+                {totalShown === 0 ? (
                   <div className="flex items-center justify-center h-64 text-slate-400 p-6">
                     <div className="text-center">
                       <UserPlus className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -262,21 +282,18 @@ const NewConnectionsTab = ({
                     </div>
                   </div>
                 ) : (
-                  <div className="p-6">
-                    <VirtualConnectionList
-                      connections={sortedConnections}
-                      isNewConnection={true}
-                      onRemove={
-                        handleRemoveConnection as (connectionId: string, newStatus: string) => void
-                      }
-                      onTagClick={handleTagClick}
-                      activeTags={activeTags}
-                      className="min-h-[80vh]"
-                      itemHeight={260} // Card height + margins for proper spacing
-                      showFilters={true}
-                      sortBy="conversion_likelihood"
-                      sortOrder="desc"
-                    />
+                  <div className="p-4 space-y-3">
+                    {groups.map((group) => (
+                      <NewConnectionGroup
+                        key={group.key}
+                        group={group}
+                        isExpanded={expandedKeys.has(group.key)}
+                        onToggle={toggleGroup}
+                        onRemove={handleRemoveConnection}
+                        onTagClick={handleTagClick}
+                        activeTags={activeTags}
+                      />
+                    ))}
                   </div>
                 )}
               </>

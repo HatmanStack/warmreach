@@ -114,27 +114,58 @@ export async function sendConnectionRequest(
       throw new LinkedInError('Send button not found within the modal.', 'ELEMENT_NOT_FOUND');
     }
 
+    // A profile can already show "Pending" from a prior outstanding invite, and
+    // the modal Send can silently no-op — so snapshot the pending state first.
+    // Only a *transition* to pending (below) counts as a confirmed new request.
+    const wasPendingBefore = await linkedinResolver
+      .resolveWithWait(page, 'connection:pending', { timeout: 500 })
+      .then((el) => !!el)
+      .catch(() => false);
+
     await service.humanBehavior.simulateHumanMouseMovement(page, sendButton);
     await sendButton.click();
     logger.info('Clicked send button in modal.');
 
-    await Promise.race([
-      linkedinResolver.resolveWithWait(page, 'connection:invitation-sent', { timeout: 5000 }),
-      linkedinResolver.resolveWithWait(page, 'connection:pending', { timeout: 5000 }),
-    ]).catch(() => null);
+    // Confirm the request actually registered instead of assuming success.
+    // 'connection:pending' (button flips to "Pending") is the robust 2026
+    // signal; 'connection:invitation-sent' is a legacy toast that may be absent.
+    const confirmation = await Promise.race([
+      linkedinResolver
+        .resolveWithWait(page, 'connection:pending', { timeout: 5000 })
+        .then((el) => (el ? 'pending' : null))
+        .catch(() => null),
+      linkedinResolver
+        .resolveWithWait(page, 'connection:invitation-sent', { timeout: 5000 })
+        .then((el) => (el ? 'sent' : null))
+        .catch(() => null),
+    ]);
 
-    logger.info('Connection request confirmation found.');
+    // A pre-existing "Pending" is not proof THIS request registered; require a
+    // transition to pending, or the (legacy) invitation-sent toast.
+    const confirmationFound =
+      confirmation === 'sent' || (confirmation === 'pending' && !wasPendingBefore);
+    const status = confirmationFound && confirmation ? confirmation : 'unconfirmed';
+
+    if (confirmationFound) {
+      logger.info('Connection request confirmed', { profileId, signal: confirmation });
+    } else {
+      logger.warn(
+        'Connection request click completed but could not confirm it sent (no pending/invitation-sent signal)',
+        { profileId }
+      );
+    }
+
     const requestId = `conn_req_${Date.now()}`;
 
     service.humanBehavior.recordAction('connection_request_sent', {
       requestId,
-      confirmationFound: true,
+      confirmationFound,
     });
     try {
       await service.ensureEdge(profileId, 'outgoing', jwtToken);
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      logger.debug('Failed to create edge for connection request', {
+      logger.warn('Failed to persist edge for connection request', {
         error: errMsg,
         profileId,
       });
@@ -142,9 +173,9 @@ export async function sendConnectionRequest(
 
     return {
       requestId,
-      status: 'sent',
+      status,
       sentAt: new Date().toISOString(),
-      confirmationFound: true,
+      confirmationFound,
     };
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);

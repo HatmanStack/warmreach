@@ -199,6 +199,46 @@ def test_create_profile_operation(dynamodb_table_with_data, api_gateway_event_po
     assert isinstance(body, dict)
 
 
+def test_create_profile_persists_about_skills_education(
+    dynamodb_table_with_data, lambda_context, dynamodb_api_module
+):
+    """Regression: the create operation must persist the scraped About/Skills/
+    Education fields. `about` was previously dropped by the write-path whitelist,
+    so the connection card's expanded panel always came back empty."""
+    event = {
+        'httpMethod': 'POST',
+        'headers': {'origin': 'http://localhost:5173', 'Content-Type': 'application/json'},
+        'requestContext': {'authorizer': {'claims': {'sub': 'test-user-123'}}},
+        'body': json.dumps({
+            'operation': 'create',
+            'profileId': 'https://www.linkedin.com/in/janedoe',
+            'updates': {
+                'name': 'Jane Doe',
+                'about': 'Building great software.',
+                'skills': 'Python, AWS',
+                'education': 'MIT — BS, Computer Science',
+                'currentTitle': 'Engineer',
+            },
+        }),
+    }
+
+    # The module-level boto3 resource is created at import time, before this
+    # test's mock_aws context is active, so its table is not moto-patched.
+    # Rebind the injected table (the DI seam the service exposes) to the
+    # mocked table so the write actually lands in moto.
+    dynamodb_api_module.service.table = dynamodb_table_with_data
+
+    response = dynamodb_api_module.lambda_handler(event, lambda_context)
+    assert response['statusCode'] == 201
+
+    metadata = next(
+        item for item in dynamodb_table_with_data.scan()['Items'] if item.get('SK') == '#METADATA'
+    )
+    assert metadata['about'] == 'Building great software.'
+    assert metadata['skills'] == 'Python, AWS'
+    assert metadata['education'] == 'MIT — BS, Computer Science'
+
+
 def test_update_user_settings_operation(dynamodb_table_with_data, api_gateway_event_post, lambda_context, dynamodb_api_module):
     """Test updating user settings"""
     event = api_gateway_event_post.copy()

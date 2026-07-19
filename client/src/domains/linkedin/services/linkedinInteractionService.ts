@@ -392,7 +392,7 @@ export class LinkedInInteractionService {
     return messagingOps.composeAndSendMessage(this._self, messageContent);
   }
 
-  async waitForMessageSent(): Promise<void> {
+  async waitForMessageSent(): Promise<boolean> {
     return messagingOps.waitForMessageSent(this._self);
   }
 

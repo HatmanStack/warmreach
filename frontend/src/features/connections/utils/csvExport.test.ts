@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { escapeCsvValue, buildConnectionsCsvContent } from './csvExport';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { escapeCsvValue, buildConnectionsCsvContent, exportConnectionsCsv } from './csvExport';
 import { buildConnection } from '@/test-utils';
 
 describe('escapeCsvValue', () => {
@@ -122,5 +122,32 @@ describe('buildConnectionsCsvContent', () => {
     ];
     const content = buildConnectionsCsvContent(connections);
     expect(content).toContain('2024-06-15T10:00:00Z');
+  });
+});
+
+describe('exportConnectionsCsv', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('builds a blob and triggers a dated CSV download', () => {
+    // jsdom doesn't implement the object-URL APIs; stub them and the anchor click.
+    const createObjectURL = vi.fn(() => 'blob:mock');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL });
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
+
+    exportConnectionsCsv([buildConnection({ first_name: 'John', last_name: 'Doe' })]);
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    const link = clickSpy.mock.instances[0] as HTMLAnchorElement;
+    expect(link.download).toMatch(/^warmreach-connections-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock');
+    // The anchor must be cleaned up, not left in the DOM.
+    expect(document.querySelector('a[download]')).toBeNull();
+
+    vi.unstubAllGlobals();
   });
 });

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProfileInitController } from './profileInitController.js';
 import { ProfileInitService } from '../services/profileInitService.js';
-import { HealingManager } from '../../automation/utils/healingManager.js';
 import { ProfileInitStateManager } from '../utils/profileInitStateManager.js';
 import { profileInitMonitor } from '../utils/profileInitMonitor.js';
 import { validateLinkedInCredentials } from '../../../shared/utils/credentialValidator.js';
@@ -16,7 +15,9 @@ vi.mock('../../../shared/utils/serviceFactory.js', () => ({
     linkedInService: {},
     linkedInContactService: {},
     dynamoDBService: { setAuthToken: vi.fn() },
-    puppeteerService: {},
+    // getPage() is called by _processUserProfile to wire the LocalProfileScraper;
+    // returning null leaves the (fully-mocked) service without a scraper.
+    puppeteerService: { getPage: vi.fn().mockReturnValue(null) },
   }),
   cleanupLinkedInServices: vi.fn().mockResolvedValue(undefined),
 }));
@@ -29,14 +30,6 @@ vi.mock('../services/profileInitService.js', () => ({
   ProfileInitService: vi.fn().mockImplementation(function () {
     return {
       initializeUserProfile: vi.fn().mockResolvedValue({ profileId: 'user-123' }),
-    };
-  }),
-}));
-
-vi.mock('../../automation/utils/healingManager.js', () => ({
-  HealingManager: vi.fn().mockImplementation(function () {
-    return {
-      healAndRestart: vi.fn().mockResolvedValue(undefined),
     };
   }),
 }));
@@ -87,29 +80,30 @@ describe('ProfileInitController', () => {
       recursionCount: 0,
     });
 
-    ProfileInitStateManager.createHealingState.mockReturnValue({
-      recursionCount: 1,
-      healPhase: 'profile-init',
-      healReason: 'test',
-    });
+    // Mirror the real createHealingState: carry an incremented recursionCount
+    // (via the extra arg _handleProfileInitHealing passes) so the in-process
+    // healing loop's recursion cap can actually trip instead of looping forever.
+    ProfileInitStateManager.createHealingState.mockImplementation(
+      (state, phase, reason, extra) => ({
+        jwtToken: state?.jwtToken,
+        requestId: state?.requestId,
+        recursionCount: extra?.recursionCount ?? (state?.recursionCount || 0) + 1,
+        healPhase: phase,
+        healReason: reason,
+      })
+    );
 
     const { initializeLinkedInServices } = await import('../../../shared/utils/serviceFactory.js');
     initializeLinkedInServices.mockResolvedValue({
       linkedInService: {},
       linkedInContactService: {},
       dynamoDBService: { setAuthToken: vi.fn() },
-      puppeteerService: {},
+      puppeteerService: { getPage: vi.fn().mockReturnValue(null) },
     });
 
     ProfileInitService.mockImplementation(function () {
       return {
         initializeUserProfile: vi.fn().mockResolvedValue({ profileId: 'user-123' }),
-      };
-    });
-
-    HealingManager.mockImplementation(function () {
-      return {
-        healAndRestart: vi.fn().mockResolvedValue(undefined),
       };
     });
   });
@@ -149,8 +143,32 @@ describe('ProfileInitController', () => {
       expect(profileInitMonitor.recordSuccess).toHaveBeenCalled();
     });
 
-    it('should return 202 status when healing is triggered', async () => {
-      // Mock ProfileInitService to throw a recoverable error
+    it('resumes in-process and succeeds after a recoverable error heals', async () => {
+      // First attempt hits a recoverable error → healing resumes in-process;
+      // second attempt succeeds. No 202 / no spawned worker.
+      let attempt = 0;
+      ProfileInitService.mockImplementation(function () {
+        return {
+          initializeUserProfile: vi.fn().mockImplementation(() => {
+            attempt += 1;
+            return attempt === 1
+              ? Promise.reject(new Error('navigation failed'))
+              : Promise.resolve({ profileId: 'user-123' });
+          }),
+        };
+      });
+
+      await controller.performProfileInit(mockReq, mockRes);
+
+      expect(attempt).toBe(2); // healed once, then completed
+      expect(mockRes.status).not.toHaveBeenCalledWith(202);
+      expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
+      expect(profileInitMonitor.recordSuccess).toHaveBeenCalled();
+    });
+
+    it('aborts with 500 when healing exceeds the recursion cap', async () => {
+      // A persistently recoverable failure heals until the cap, then fails hard
+      // instead of the old silent no-op.
       ProfileInitService.mockImplementation(function () {
         return {
           initializeUserProfile: vi.fn().mockRejectedValue(new Error('navigation failed')),
@@ -159,12 +177,8 @@ describe('ProfileInitController', () => {
 
       await controller.performProfileInit(mockReq, mockRes);
 
-      expect(mockRes.status).toHaveBeenCalledWith(202);
-      expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: 'healing',
-        })
-      );
+      expect(mockRes.status).toHaveBeenCalledWith(500);
+      expect(profileInitMonitor.recordFailure).toHaveBeenCalled();
     });
 
     it('should handle errors with 500 status', async () => {

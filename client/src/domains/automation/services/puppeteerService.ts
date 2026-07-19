@@ -263,9 +263,15 @@ export class PuppeteerService {
 
         const location = msg.location();
 
+        // Drop browser-extension noise: extensions injected into the LinkedIn
+        // tab spam the page console with CSP violations ("chrome-extension://…
+        // violates the … Content Security Policy") that have nothing to do with
+        // our automation. Filter any message referencing a chrome extension,
+        // by text or origin.
         if (
           rawText.includes('net::ERR_BLOCKED_BY_CLIENT.Inspector') ||
-          (location && location.url && location.url.includes('chrome-extension://invalid'))
+          rawText.includes('chrome-extension://') ||
+          (location && location.url && location.url.includes('chrome-extension://'))
         ) {
           return;
         }

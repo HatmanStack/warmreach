@@ -41,6 +41,9 @@ const MAX_TEXT_LENGTH = {
   LOCATION: 100,
   HEADLINE: 500,
   SUMMARY: 2000,
+  ABOUT: 2600, // LinkedIn's About/summary max
+  SKILLS: 1000,
+  EDUCATION: 1000,
   MESSAGE_CONTENT: 1000,
   TAG: 50,
 } as const;
@@ -363,6 +366,27 @@ export function sanitizeConnectionData(data: unknown): Connection | null {
       connection.location = obj.location.substring(0, MAX_TEXT_LENGTH.LOCATION);
     if (obj.headline && typeof obj.headline === 'string')
       connection.headline = obj.headline.substring(0, MAX_TEXT_LENGTH.HEADLINE);
+    // About/Skills/Education are populated from the scraped profile metadata and
+    // shown in the expanded card. They must be copied here, or every connection
+    // that takes the sanitize path (e.g. any with a null conversion_likelihood)
+    // loses them before the card renders.
+    if (obj.about && typeof obj.about === 'string')
+      connection.about = obj.about.substring(0, MAX_TEXT_LENGTH.ABOUT);
+    if (obj.skills && typeof obj.skills === 'string')
+      connection.skills = obj.skills.substring(0, MAX_TEXT_LENGTH.SKILLS);
+    if (obj.education && typeof obj.education === 'string')
+      connection.education = obj.education.substring(0, MAX_TEXT_LENGTH.EDUCATION);
+    // Search provenance (which run surfaced this "possible" connection). It must
+    // be copied here too, or a connection that takes the sanitize path (e.g. any
+    // with a null conversion_likelihood) loses it and groupConnectionsByRun drops
+    // it into "Earlier connections" instead of grouping it by search — silently
+    // breaking the connection-grouping feature for exactly the contacts it targets.
+    if (obj.source_company && typeof obj.source_company === 'string')
+      connection.source_company = obj.source_company.substring(0, MAX_TEXT_LENGTH.COMPANY);
+    if (obj.source_role && typeof obj.source_role === 'string')
+      connection.source_role = obj.source_role.substring(0, MAX_TEXT_LENGTH.POSITION);
+    if (obj.source_location && typeof obj.source_location === 'string')
+      connection.source_location = obj.source_location.substring(0, MAX_TEXT_LENGTH.LOCATION);
     if (obj.recent_activity && typeof obj.recent_activity === 'string')
       connection.recent_activity = obj.recent_activity.substring(0, MAX_TEXT_LENGTH.SUMMARY);
     if (obj.last_action_summary && typeof obj.last_action_summary === 'string')

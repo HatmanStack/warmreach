@@ -98,6 +98,8 @@ function createMockDynamoDBService() {
 vi.mock('../selectors/index.js', () => ({
   linkedinResolver: {
     resolveWithWait: vi.fn(),
+    resolveVisibleWithWait: vi.fn(),
+    resolvePresentWithWait: vi.fn(),
     resolve: vi.fn(),
   },
   linkedinSelectors: {
@@ -155,6 +157,22 @@ describe('LinkedInService', () => {
       type: vi.fn(),
       click: vi.fn(),
     });
+    // Login resolves the username/password/submit controls via the
+    // visibility-aware resolver, and confirms the feed shell via the
+    // presence-aware one.
+    linkedinResolver.resolveVisibleWithWait.mockResolvedValue({
+      type: vi.fn(),
+      click: vi.fn(),
+    });
+    // login()'s first resolvePresentWithWait call is the existing-session probe
+    // (navigate to /feed/, look for the logged-in shell). Reject it so the tests
+    // exercise the credential flow; the later post-login homepage confirm — and
+    // any subsequent calls — resolve. mockReset drains the once-queue so it can't
+    // accumulate across tests (clearAllMocks does not).
+    linkedinResolver.resolvePresentWithWait.mockReset();
+    linkedinResolver.resolvePresentWithWait
+      .mockRejectedValueOnce(new Error('no existing session'))
+      .mockResolvedValue({});
     linkedinResolver.resolve.mockResolvedValue(null);
   });
 
@@ -182,9 +200,9 @@ describe('LinkedInService', () => {
 
     it('types username and password', async () => {
       const mockType = vi.fn();
-      linkedinResolver.resolveWithWait.mockResolvedValue({ type: mockType, click: vi.fn() });
+      linkedinResolver.resolveVisibleWithWait.mockResolvedValue({ type: mockType, click: vi.fn() });
       await service.login('user@test.com', 'pass123');
-      expect(linkedinResolver.resolveWithWait).toHaveBeenCalledWith(
+      expect(linkedinResolver.resolveVisibleWithWait).toHaveBeenCalledWith(
         expect.anything(),
         'nav:login-username',
         expect.anything()
@@ -195,7 +213,10 @@ describe('LinkedInService', () => {
 
     it('clicks login button', async () => {
       const mockClick = vi.fn();
-      linkedinResolver.resolveWithWait.mockResolvedValue({ type: vi.fn(), click: mockClick });
+      linkedinResolver.resolveVisibleWithWait.mockResolvedValue({
+        type: vi.fn(),
+        click: mockClick,
+      });
       await service.login('user@test.com', 'pass123');
       expect(mockClick).toHaveBeenCalled();
     });
@@ -208,9 +229,22 @@ describe('LinkedInService', () => {
       await expect(service.login('user@test.com', '')).rejects.toThrow('password is missing');
     });
 
-    it('throws when safeType fails for username', async () => {
-      linkedinResolver.resolveWithWait.mockRejectedValueOnce(new Error('timeout'));
+    it('throws when the username field cannot be resolved by either strategy', async () => {
+      // A failed visible-resolve now falls back to the DOM-present resolver, so
+      // login only aborts when BOTH strategies fail to find the field.
+      linkedinResolver.resolveVisibleWithWait.mockRejectedValue(new Error('not visible'));
+      linkedinResolver.resolveWithWait.mockRejectedValue(new Error('not present'));
       await expect(service.login('user@test.com', 'pass123')).rejects.toThrow();
+    });
+
+    it('falls back to the DOM-present field when the visible resolver times out', async () => {
+      // Slow/throttled render: the field is present but hasn't laid out yet. The
+      // visible resolver times out; login should still proceed via the fallback.
+      const mockType = vi.fn();
+      linkedinResolver.resolveVisibleWithWait.mockRejectedValue(new Error('not visible'));
+      linkedinResolver.resolveWithWait.mockResolvedValue({ type: mockType, click: vi.fn() });
+      await expect(service.login('user@test.com', 'pass123')).resolves.toBe(true);
+      expect(mockType).toHaveBeenCalledWith('user@test.com');
     });
 
     it('attempts decryption when credentials ciphertext provided', async () => {
@@ -220,7 +254,7 @@ describe('LinkedInService', () => {
       );
 
       const mockType = vi.fn();
-      linkedinResolver.resolveWithWait.mockResolvedValue({ type: mockType, click: vi.fn() });
+      linkedinResolver.resolveVisibleWithWait.mockResolvedValue({ type: mockType, click: vi.fn() });
 
       await service.login(null, null, false, 'sealbox_x25519:b64:encrypted');
       expect(decryptSealboxB64Tag).toHaveBeenCalledWith('sealbox_x25519:b64:encrypted');
@@ -375,10 +409,17 @@ describe('LinkedInService', () => {
     });
 
     it('returns extracted links from page', async () => {
-      mockPuppeteer.extractLinks.mockResolvedValue(['/in/user1', '/in/user2']);
+      // getLinksFromPeoplePage now scopes extraction to genuine result cards via
+      // page.evaluate (_extractSearchResultLinks) rather than a whole-page sweep.
+      const page = mockPuppeteer.getPage();
+      page.evaluate.mockResolvedValue({
+        links: ['user1', 'user2'],
+        skippedReco: 2,
+        resultCards: 4,
+      });
 
       const result = await service.getLinksFromPeoplePage(1, '12345');
-      expect(result.links).toEqual(['/in/user1', '/in/user2']);
+      expect(result.links).toEqual(['user1', 'user2']);
     });
 
     it('returns empty result on navigation error', async () => {
@@ -454,7 +495,31 @@ describe('LinkedInService', () => {
 
       expect(result).toEqual({ isGoodContact: true });
       expect(service.dynamoDBService.setAuthToken).toHaveBeenCalledWith(jwtToken);
-      expect(service.dynamoDBService.upsertEdgeStatus).toHaveBeenCalledWith(profileId, 'possible');
+      expect(service.dynamoDBService.upsertEdgeStatus).toHaveBeenCalledWith(profileId, 'possible', {
+        source: 'search',
+      });
+    });
+
+    it('records search provenance on the possible edge when a search context is given', async () => {
+      const page = mockPuppeteer.getPage();
+      page.url.mockReturnValue('https://www.linkedin.com/in/test-profile/recent-activity/');
+      page.evaluate.mockResolvedValue({
+        updatedCounts: { hour: 5, day: 3, week: 2 },
+        newCounted: ['item1', 'item2'],
+      });
+
+      await service.analyzeContactActivity(profileId, jwtToken, {
+        company: 'Acme',
+        role: 'Engineer',
+        location: 'NYC',
+      });
+
+      expect(service.dynamoDBService.upsertEdgeStatus).toHaveBeenCalledWith(profileId, 'possible', {
+        source: 'search',
+        sourceCompany: 'Acme',
+        sourceRole: 'Engineer',
+        sourceLocation: 'NYC',
+      });
     });
 
     it('returns isGoodContact false when activity score is below threshold', async () => {

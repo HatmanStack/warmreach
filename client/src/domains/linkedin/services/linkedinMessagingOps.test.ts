@@ -52,10 +52,12 @@ describe('linkedinMessagingOps', () => {
       navigateToMessaging: vi.fn().mockResolvedValue(undefined),
       composeAndSendMessage: vi.fn().mockResolvedValue({
         messageId: 'msg_123',
-        deliveryStatus: 'sent',
+        sentAt: '2026-07-16T00:00:00.000Z',
+        messageLength: 6,
+        deliveryConfirmed: true,
       }),
       waitForMessagingInterface: vi.fn().mockResolvedValue(undefined),
-      waitForMessageSent: vi.fn().mockResolvedValue(undefined),
+      waitForMessageSent: vi.fn().mockResolvedValue(true),
       _scrapeAndStoreConversation: vi.fn().mockResolvedValue(undefined),
       sessionManager: {
         lastActivity: null,
@@ -82,7 +84,7 @@ describe('linkedinMessagingOps', () => {
       expect(mockService.navigateToProfile).toHaveBeenCalledWith('profile-1');
       expect(mockService.navigateToMessaging).toHaveBeenCalledWith('profile-1');
       expect(mockService.composeAndSendMessage).toHaveBeenCalledWith('Hello!');
-      expect(result.deliveryStatus).toBe('sent');
+      expect(result.deliveryStatus).toBe('delivered');
       expect(result.recipientProfileId).toBe('profile-1');
     });
 

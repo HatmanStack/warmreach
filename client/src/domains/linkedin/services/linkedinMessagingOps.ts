@@ -40,7 +40,7 @@ export interface MessagingOpsContext {
   navigateToMessaging(profileId: string): Promise<void>;
   composeAndSendMessage(content: string): Promise<ComposeResult>;
   waitForMessagingInterface(): Promise<void>;
-  waitForMessageSent(): Promise<void>;
+  waitForMessageSent(): Promise<boolean>;
   clickElementHumanly(page: Page, element: ElementHandle): Promise<void>;
   clearAndTypeText(page: Page, element: ElementHandle, text: string): Promise<void>;
   checkSuspiciousActivity(): Promise<unknown>;
@@ -73,6 +73,8 @@ export interface ComposeResult {
   messageId: string;
   sentAt: string;
   messageLength: number;
+  /** True only when the sent-message bubble was actually detected in the thread. */
+  deliveryConfirmed: boolean;
 }
 
 /**
@@ -137,7 +139,7 @@ export async function sendMessage(
 
   return {
     messageId: messageResult.messageId || `msg_${Date.now()}_${recipientProfileId}`,
-    deliveryStatus: 'sent',
+    deliveryStatus: messageResult.deliveryConfirmed ? 'delivered' : 'unconfirmed',
     sentAt: new Date().toISOString(),
     recipientProfileId,
     userId,
@@ -296,7 +298,7 @@ export async function composeAndSendMessage(
       await service.clickElementHumanly(page, sendButton);
     }
 
-    await service.waitForMessageSent();
+    const deliveryConfirmed = await service.waitForMessageSent();
 
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -305,15 +307,21 @@ export async function composeAndSendMessage(
       inputSelector: foundSelector,
       sendSelector: sendSelector,
       messageId,
+      deliveryConfirmed,
       timestamp: new Date().toISOString(),
     });
 
-    logger.info('Successfully composed and sent LinkedIn message', { messageId });
+    if (deliveryConfirmed) {
+      logger.info('Composed and confirmed LinkedIn message delivery', { messageId });
+    } else {
+      logger.warn('Composed LinkedIn message but could not confirm delivery', { messageId });
+    }
 
     return {
       messageId,
       sentAt: new Date().toISOString(),
       messageLength: messageContent.length,
+      deliveryConfirmed,
     };
   } catch (error: unknown) {
     logger.error('Failed to compose and send message:', error);
@@ -329,11 +337,10 @@ export async function composeAndSendMessage(
  * @param {import('./linkedinInteractionService.js').LinkedInInteractionService} service
  * @returns {Promise<void>}
  */
-export async function waitForMessageSent(service: MessagingOpsContext): Promise<void> {
+export async function waitForMessageSent(service: MessagingOpsContext): Promise<boolean> {
   try {
     const session = await service.getBrowserSession();
 
-    let sentConfirmed = false;
     try {
       const indicator = await linkedinResolver.resolveWithWait(
         session.getPage(),
@@ -341,19 +348,19 @@ export async function waitForMessageSent(service: MessagingOpsContext): Promise<
         { timeout: 5000 }
       );
       if (indicator) {
-        logger.debug(`Message sent confirmation found`);
-        sentConfirmed = true;
+        logger.debug('Message sent confirmation found');
+        return true;
       }
     } catch {
-      // Continue checking other indicators
+      // fall through to unconfirmed
     }
 
-    if (!sentConfirmed) {
-      logger.debug('Message sent confirmation not found, assuming sent based on timing');
-    }
+    logger.warn('Message sent confirmation not found — delivery unconfirmed');
+    return false;
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    logger.debug('Message sent confirmation wait completed:', errMsg);
+    logger.warn('Message sent confirmation check failed — delivery unconfirmed', { error: errMsg });
+    return false;
   }
 }
 
@@ -448,8 +455,8 @@ async function _executeMessagingWorkflowInternal(
   const messageResult = await service.composeAndSendMessage(messageContent);
 
   logger.info('Step 4/4: Verifying message delivery');
-  // composeAndSendMessage returns on success, so delivery is confirmed by reaching here
-  const deliveryConfirmed = true;
+  // Real signal from the sent-message bubble, not an assumption of success.
+  const deliveryConfirmed = messageResult.deliveryConfirmed;
 
   service.sessionManager.lastActivity = new Date();
   service.humanBehavior.recordAction('messaging_workflow_completed', {
@@ -462,7 +469,7 @@ async function _executeMessagingWorkflowInternal(
   const result = {
     workflowId: `msg_workflow_${Date.now()}_${recipientProfileId}`,
     messageId: messageResult.messageId || `msg_${Date.now()}_${recipientProfileId}`,
-    deliveryStatus: deliveryConfirmed ? 'delivered' : 'sent',
+    deliveryStatus: deliveryConfirmed ? 'delivered' : 'unconfirmed',
     sentAt: new Date().toISOString(),
     recipientProfileId,
     messageLength: messageContent.length,

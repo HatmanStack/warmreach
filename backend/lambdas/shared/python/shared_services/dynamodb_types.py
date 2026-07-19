@@ -51,7 +51,9 @@ class ProfileMetadataItem(TypedDict, total=False):
     currentLocation: str
     headline: str
     summary: str
+    about: str
     skills: list[str]
+    education: str
     originalUrl: str
     profilePictureUrl: str
     source: str  # one of: linkedin, github, twitter, meetup, email, manual

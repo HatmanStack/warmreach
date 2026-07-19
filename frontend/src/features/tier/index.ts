@@ -67,6 +67,12 @@ export function UpgradePrompt() {
   return null;
 }
 
+export function ProUpgradeChip() {
+  // Community edition has all features enabled, so the pro-gate upsell chip is
+  // never rendered; stubbed to null for interface parity with the pro tier module.
+  return null;
+}
+
 export function QuotaUsage() {
   return null;
 }

@@ -7,6 +7,20 @@ vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
+// Pin the dev-only forceRescrape toggle off so an ambient
+// PROFILE_INIT_FORCE_RESCRAPE=true (a developer's .env) can't flip the
+// default-behavior assertions below.
+vi.mock('#shared-config/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#shared-config/index.js')>();
+  return {
+    ...actual,
+    config: {
+      ...actual.config,
+      linkedin: { ...actual.config.linkedin, forceRescrape: false },
+    },
+  };
+});
+
 vi.mock('#utils/randomHelpers.js', () => ({
   RandomHelpers: {
     randomDelay: vi.fn().mockResolvedValue(undefined),
@@ -75,6 +89,7 @@ describe('ProfileInitService', () => {
     mockDynamo = {
       setAuthToken: vi.fn(),
       checkEdgeExists: vi.fn().mockResolvedValue(false),
+      getEdgeState: vi.fn().mockResolvedValue({ exists: false, status: null }),
       upsertEdgeStatus: vi.fn().mockResolvedValue(true),
       updateMessages: vi.fn().mockResolvedValue(true),
       getProfileDetails: vi.fn().mockResolvedValue(true),

@@ -3,11 +3,12 @@ import { useToast } from '@/shared/hooks';
 import { useErrorHandler } from '@/shared/hooks';
 import { useProgressTracker } from '@/features/workflow';
 import { messageGenerationService } from '@/features/messages';
+import { commandService } from '@/shared/services/commandService';
 import { connectionDataContextService } from '@/features/connections';
 import { useWorkflowStateMachine } from './useWorkflowStateMachine';
 import { useMessageModal } from './useMessageModal';
 import { useMessageHistory } from './useMessageHistory';
-import type { Connection, Message, UserProfile } from '@/types';
+import type { Connection, UserProfile } from '@/types';
 import { createLogger } from '@/shared/utils/logger';
 
 const logger = createLogger('useMessageGeneration');
@@ -48,11 +49,20 @@ export function useMessageGeneration({
   // otherwise it fires after the component is gone and updates unmounted state.
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Same for the in-flight delivery-confirmation wait (see handleSendMessage):
+  // if the hook unmounts mid-wait, this 45s timer must not fire against a stale
+  // closure.
+  const deliveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     return () => {
       if (resetTimeoutRef.current) {
         clearTimeout(resetTimeoutRef.current);
         resetTimeoutRef.current = null;
+      }
+      if (deliveryTimeoutRef.current) {
+        clearTimeout(deliveryTimeoutRef.current);
+        deliveryTimeoutRef.current = null;
       }
     };
   }, []);
@@ -138,20 +148,99 @@ export function useMessageGeneration({
 
   const handleSendMessage = useCallback(
     async (message: string): Promise<void> => {
-      logger.info('Sending message', { message, connectionId: modal.selectedConnection?.id });
-      toast({
-        title: 'Message Sending Not Implemented',
-        description: 'Message sending functionality will be available in a future update.',
-        variant: 'default',
+      const connection = modal.selectedConnection;
+      if (!connection) return;
+
+      const recipientProfileId = connection.linkedin_url || connection.id;
+      const recipientName = `${connection.first_name} ${connection.last_name}`.trim();
+      logger.info('Sending message', { connectionId: connection.id });
+
+      let commandId: string;
+      try {
+        // Dispatch the real send to the desktop agent (field names must match
+        // the client's sendMessageDirect payload exactly).
+        ({ commandId } = await commandService.dispatch('linkedin:send-message', {
+          recipientProfileId,
+          messageContent: message,
+          recipientName,
+        }));
+      } catch (error) {
+        logger.error('Failed to dispatch message send', { error, connectionId: connection.id });
+        toast({
+          title: 'Message Not Sent',
+          description:
+            error instanceof Error
+              ? error.message
+              : 'Could not reach the desktop agent. Is it connected?',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Await the agent's real delivery result over WebSocket so we report
+      // confirmed vs unconfirmed instead of assuming success (see P0-3). Falls
+      // back to "pending" if the result never arrives within the window.
+      const delivery = await new Promise<string>((resolve) => {
+        const state: {
+          settled: boolean;
+          timer?: ReturnType<typeof setTimeout>;
+          unsubscribe: () => void;
+        } = { settled: false, unsubscribe: () => {} };
+        const finish = (status: string) => {
+          if (state.settled) return;
+          state.settled = true;
+          if (state.timer) clearTimeout(state.timer);
+          deliveryTimeoutRef.current = null;
+          state.unsubscribe();
+          resolve(status);
+        };
+        state.timer = setTimeout(() => finish('pending'), 45000);
+        // Mirror into a ref so the unmount cleanup can cancel this wait.
+        deliveryTimeoutRef.current = state.timer;
+        state.unsubscribe = commandService.onCommandMessage(commandId, (msg) => {
+          if (msg.action === 'result') {
+            const p = msg.data as
+              | { deliveryStatus?: string; data?: { deliveryStatus?: string } }
+              | undefined;
+            finish(p?.data?.deliveryStatus ?? p?.deliveryStatus ?? 'sent');
+          } else if (msg.action === 'error') {
+            finish('failed');
+          }
+        });
       });
-      if (modal.selectedConnection) {
-        const newMessage: Message = {
+
+      if (delivery === 'failed') {
+        toast({
+          title: 'Message Failed',
+          description: `We couldn't send your message to ${recipientName}.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (delivery === 'delivered' || delivery === 'sent') {
+        // Only reflect the message in the thread once delivery is confirmed
+        // (the agent also persists the real conversation server-side on send).
+        history.addMessage({
           id: `msg-${Date.now()}`,
           content: message,
           timestamp: new Date().toISOString(),
           sender: 'user',
-        };
-        history.addMessage(newMessage);
+        });
+        toast({
+          title: 'Message Sent',
+          description: `Your message to ${recipientName} was sent.`,
+          variant: 'default',
+        });
+      } else {
+        // 'unconfirmed' (agent couldn't detect the sent bubble) or 'pending'
+        // (timed out). Do NOT write it into the thread — we can't confirm it
+        // landed, and a false record would discourage the user from resending.
+        toast({
+          title: 'Message Sent — delivery unconfirmed',
+          description: `Sent to ${recipientName}, but we couldn't confirm it landed. Check LinkedIn before resending.`,
+          variant: 'default',
+        });
       }
     },
     [modal.selectedConnection, toast, history]

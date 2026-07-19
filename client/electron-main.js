@@ -10,6 +10,7 @@ import { app, Tray, Menu, BrowserWindow, ipcMain, nativeImage, shell, dialog } f
 import electronUpdater from 'electron-updater';
 import Store from 'electron-store';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 // Single-instance lock — without this, launching the AppImage a second
@@ -45,6 +46,19 @@ app.on('second-instance', () => {
 
 const { autoUpdater } = electronUpdater;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Ensure the logger's userData/logs directory exists. Winston creates
+// missing parents on write but only with versions ≥ 3.10; mkdir
+// guarantees first-write succeeds and tells the user where to tail.
+const LOG_DIR = path.join(app.getPath('userData'), 'logs');
+try {
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+  // eslint-disable-next-line no-console -- pre-logger main-process diagnostic; this line is the user's only hint to the on-disk log path
+  console.log(`[warmreach] logs: ${LOG_DIR}`);
+} catch (err) {
+  // eslint-disable-next-line no-console -- pre-logger main-process diagnostic
+  console.error('[warmreach] failed to create log dir', LOG_DIR, err);
+}
 
 const store = new Store({ encryptionKey: 'warmreach-local-v1' });
 const credentialStore = new CredentialStore(store);
@@ -287,7 +301,6 @@ function createTray() {
   }, 10000);
 }
 
-
 // --- WebSocket ---
 
 function restartWebSocket() {
@@ -422,6 +435,36 @@ function startWebSocket() {
     clientType: 'agent',
     onMessage: (msg) => {
       if (msg.action === 'execute') {
+        // The frontend's command payload doesn't carry auth material
+        // (and command-dispatch passes payloads through unchanged), so
+        // inject what controllers need from local state here:
+        //   - jwtToken     : Cognito ID token from the refresh loop
+        //   - searchName   : LinkedIn email from CredentialStore
+        //   - searchPassword : LinkedIn password from CredentialStore
+        // Don't overwrite an explicit value already in the payload.
+        if (msg.payload && typeof msg.payload === 'object') {
+          const currentToken = store.get('auth.accessToken');
+          if (currentToken && !msg.payload.jwtToken) {
+            msg.payload.jwtToken = currentToken;
+          }
+          // LinkedIn creds — only the `linkedin:*` command handlers consume
+          // these, so scope the injection to them rather than attaching
+          // plaintext email/password to every command payload (e.g. github:*),
+          // keeping the credential exposure surface as narrow as possible.
+          if (
+            typeof msg.type === 'string' &&
+            msg.type.startsWith('linkedin:') &&
+            !msg.payload.searchName &&
+            !msg.payload.linkedinCredentialsCiphertext &&
+            credentialStore.hasCredentials()
+          ) {
+            const creds = credentialStore.getCredentials();
+            if (creds) {
+              msg.payload.searchName = creds.email;
+              msg.payload.searchPassword = creds.password;
+            }
+          }
+        }
         handleExecuteCommand(msg, (data) => wsClient.send(data));
       }
     },

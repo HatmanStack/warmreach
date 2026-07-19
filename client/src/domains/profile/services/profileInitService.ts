@@ -176,6 +176,9 @@ interface ErrorDetails {
 interface DynamoDBService {
   setAuthToken(token: string): void;
   checkEdgeExists(profileId: string): Promise<boolean>;
+  getEdgeState(
+    profileId: string
+  ): Promise<{ exists: boolean; status: string | null; hasName: boolean | null }>;
   upsertEdgeStatus(
     profileId: string,
     status: string,
@@ -203,9 +206,10 @@ interface LocalProfileScraperInterface {
     headline: string | null;
     location: string | null;
     about: string | null;
+    profilePictureUrl: string | null;
     currentPosition: { title: string; company: string } | null;
-    experience: unknown[];
-    education: unknown[];
+    experience: Array<{ title?: string; company?: string; dateRange?: string }>;
+    education: Array<{ school?: string; degree?: string; dateRange?: string }>;
     skills: string[];
     recentActivity: unknown[];
   }>;

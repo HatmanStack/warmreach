@@ -4,6 +4,7 @@ import { SearchController } from './searchController.js';
 import { SearchRequestValidator } from '../utils/searchRequestValidator.js';
 import { SearchStateManager } from '../utils/searchStateManager.js';
 import { FileHelpers } from '#utils/fileHelpers.js';
+import { HealingRequiredError } from '../../automation/utils/healingError.js';
 
 // Mock dependencies
 vi.mock('#shared-config/index.js', () => ({
@@ -22,8 +23,8 @@ vi.mock('../../../shared/utils/serviceFactory.js', () => ({
   initializeLinkedInServices: vi.fn().mockResolvedValue({
     linkedInService: { login: vi.fn(), searchCompany: vi.fn(), applyLocationFilter: vi.fn() },
     linkedInContactService: {},
-    dynamoDBService: {},
-    puppeteerService: {},
+    dynamoDBService: { setAuthToken: vi.fn() },
+    puppeteerService: { getPage: vi.fn().mockReturnValue({}) },
   }),
   cleanupLinkedInServices: vi.fn().mockResolvedValue(undefined),
 }));
@@ -176,6 +177,47 @@ describe('SearchController', () => {
 
       expect(result).toEqual([]);
       spy.mockRestore();
+    });
+  });
+
+  describe('runSearchWithHealing (in-process recovery)', () => {
+    it('resumes in-process and returns once a heal succeeds', async () => {
+      let attempt = 0;
+      vi.spyOn(controller, 'performSearchFromState').mockImplementation(() => {
+        attempt += 1;
+        if (attempt === 1) {
+          return Promise.reject(
+            new HealingRequiredError({
+              recursionCount: 1,
+              healPhase: 'link-collection',
+              healReason: '3 blank pages',
+            })
+          );
+        }
+        return Promise.resolve({ goodContacts: ['c1'], uniqueLinks: ['l1'] });
+      });
+
+      const result = await controller.runSearchWithHealing({ recursionCount: 0 });
+
+      expect(attempt).toBe(2); // healed once, then completed in-process
+      expect(result).toEqual({ goodContacts: ['c1'], uniqueLinks: ['l1'] });
+    });
+
+    it('aborts with a real error when healing exceeds the recursion cap', async () => {
+      vi.spyOn(controller, 'performSearchFromState').mockImplementation((state) => {
+        const recursionCount = (state.recursionCount || 0) + 1;
+        return Promise.reject(
+          new HealingRequiredError({
+            recursionCount,
+            healPhase: 'link-collection',
+            healReason: 'persistent',
+          })
+        );
+      });
+
+      await expect(controller.runSearchWithHealing({ recursionCount: 0 })).rejects.toThrow(
+        /healing exceeded/i
+      );
     });
   });
 

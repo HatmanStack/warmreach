@@ -9,6 +9,12 @@
  * Comment Concierge route relies on. The AbortController timeout that bounds that
  * pro-only LLM fetch therefore has no counterpart here — there is no un-timed
  * external fetch in this router to bound.
+ *
+ * Likewise, the community router does not construct the pro edition's GitHub
+ * controller (portfolio metrics). The pro edition namespaces that controller's
+ * encrypted electron-store as `github-store` so it can't collide with the main
+ * `config.json` store; the community router has no such store, so there is
+ * nothing to namespace here.
  */
 
 import { logger } from '#utils/logger.js';

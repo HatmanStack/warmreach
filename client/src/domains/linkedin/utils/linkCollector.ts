@@ -55,6 +55,17 @@ export class LinkCollector {
     let emptyPageCount = 0;
     let pageNumber = this._calculateStartPage(state.resumeIndex, pageNumberStart);
 
+    logger.info('[search] starting link collection', {
+      phase: 'search',
+      pageNumberStart,
+      pageNumberEnd,
+      startingAt: pageNumber,
+      companyNumber: extractedCompanyNumber,
+      geoNumber: extractedGeoNumber,
+      hasRoleKeyword: !!encodedRole,
+      existingLinks: allLinks.length,
+    });
+
     while (pageNumber <= pageNumberEnd) {
       try {
         const pageResult = await this.linkedInService.getLinksFromPeoplePage(
@@ -68,7 +79,18 @@ export class LinkCollector {
 
         if (pageLinks.length === 0) {
           emptyPageCount++;
+          logger.warn('[search] empty page', {
+            phase: 'search',
+            pageNumber,
+            emptyPageCount,
+            cumulativeLinks: allLinks.length,
+          });
           if (emptyPageCount >= 3 && pageNumber < pageNumberEnd) {
+            logger.warn('[search] 3 consecutive empty pages — triggering heal & restart', {
+              phase: 'search',
+              pageNumber,
+              cumulativeLinks: allLinks.length,
+            });
             await onHealingNeeded(pageNumber);
             return { links: allLinks, pictureUrls: allPictureUrls };
           }
@@ -80,15 +102,26 @@ export class LinkCollector {
 
         allLinks.push(...pageLinks);
         Object.assign(allPictureUrls, pictureUrls);
+        logger.info('[search] page collected', {
+          phase: 'search',
+          pageNumber,
+          pageLinks: pageLinks.length,
+          cumulativeLinks: allLinks.length,
+        });
         await FileHelpers.writeJSON(this.config.paths.linksFile, allLinks);
         pageNumber++;
       } catch (error) {
-        logger.warn(`Error on page ${pageNumber}`, error);
+        logger.warn(`[search] error on page ${pageNumber}`, error);
         pageNumber++;
         continue;
       }
     }
 
+    logger.info('[search] link collection complete', {
+      phase: 'search',
+      totalLinks: allLinks.length,
+      pagesScanned: pageNumberEnd - pageNumberStart + 1,
+    });
     return { links: allLinks, pictureUrls: allPictureUrls };
   }
 

@@ -87,16 +87,27 @@ class WebSocketService {
     this._setState('connecting');
     try {
       const separator = this.url.includes('?') ? '&' : '?';
-      this.ws = new WebSocket(`${this.url}${separator}token=${this.token}&clientType=browser`);
+      // Capture the socket in this closure scope so late callbacks from a
+      // previous socket (StrictMode mount→cleanup→remount, or a
+      // disconnect race) can't trample state that now belongs to a
+      // newer socket. Every handler below checks `socket === this.ws`
+      // before mutating shared state.
+      const socket = new WebSocket(`${this.url}${separator}token=${this.token}&clientType=browser`);
+      this.ws = socket;
 
-      this.ws.onopen = () => {
+      socket.onopen = () => {
+        if (socket !== this.ws) return;
         logger.info('WebSocket connected');
-        this._setState('connected');
         this.reconnectDelay = 1000;
         this._startHeartbeat();
+        // Set state LAST so any synchronous send() inside state handlers
+        // (e.g. get_agent_status from WebSocketContext) sees the timers
+        // running and ws in place.
+        this._setState('connected');
       };
 
-      this.ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
+        if (socket !== this.ws) return;
         try {
           const message = JSON.parse(event.data) as WebSocketMessage;
           this.messageHandlers.forEach((handler) => handler(message));
@@ -105,8 +116,12 @@ class WebSocketService {
         }
       };
 
-      this.ws.onclose = (event) => {
+      socket.onclose = (event) => {
         logger.info('WebSocket closed', { code: event.code, reason: event.reason });
+        // Only react to the close of the CURRENT socket. A stale close
+        // from a previous socket must not null out `this.ws` (which now
+        // points at the newer socket) or flip state to disconnected.
+        if (socket !== this.ws) return;
         this.ws = null;
         this._clearTimers();
         this._setState('disconnected');
@@ -115,7 +130,8 @@ class WebSocketService {
         }
       };
 
-      this.ws.onerror = () => {
+      socket.onerror = () => {
+        if (socket !== this.ws) return;
         logger.warn('WebSocket error');
       };
     } catch (err) {

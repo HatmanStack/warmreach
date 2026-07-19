@@ -70,7 +70,7 @@ export class RagstackProxyService {
 
       return response.data as { documentId?: string } | null;
     } catch (error) {
-      logger.debug('Failed to ingest profile', {
+      logger.warn('Failed to ingest profile into RAGStack (non-blocking)', {
         profileId,
         error: (error as Error).message,
       });
@@ -94,7 +94,7 @@ export class RagstackProxyService {
 
       return response.data as { profile?: Record<string, unknown> } | null;
     } catch (error) {
-      logger.debug('Failed to fetch profile', {
+      logger.warn('Failed to fetch profile from RAGStack (non-blocking)', {
         profileId,
         error: (error as Error).message,
       });
