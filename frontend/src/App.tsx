@@ -7,7 +7,6 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider, ProtectedRoute } from '@/features/auth';
 import { TierProvider } from '@/features/tier';
 import { UserProfileProvider } from '@/features/profile';
-import { HealAndRestoreProvider } from '@/features/workflow';
 import { PostComposerProvider } from '@/features/posts';
 import { WebSocketProvider } from '@/shared/contexts/WebSocketContext';
 import { ClientRequiredDialogProvider } from '@/shared/contexts/ClientRequiredDialogContext';
@@ -34,34 +33,32 @@ const App = () => (
               <TierProvider>
                 <UserProfileProvider>
                   <PostComposerProvider>
-                    <HealAndRestoreProvider>
-                      <BrowserRouter>
-                        <Suspense fallback={<SuspenseFallback />}>
-                          <ClientRequiredDialog />
-                          <Routes>
-                            <Route path="/" element={<Index />} />
-                            <Route path="/auth" element={<Auth />} />
-                            <Route
-                              path="/dashboard"
-                              element={
-                                <ProtectedRoute>
-                                  <Dashboard />
-                                </ProtectedRoute>
-                              }
-                            />
-                            <Route
-                              path="/profile"
-                              element={
-                                <ProtectedRoute>
-                                  <Profile />
-                                </ProtectedRoute>
-                              }
-                            />
-                            <Route path="*" element={<NotFound />} />
-                          </Routes>
-                        </Suspense>
-                      </BrowserRouter>
-                    </HealAndRestoreProvider>
+                    <BrowserRouter>
+                      <Suspense fallback={<SuspenseFallback />}>
+                        <ClientRequiredDialog />
+                        <Routes>
+                          <Route path="/" element={<Index />} />
+                          <Route path="/auth" element={<Auth />} />
+                          <Route
+                            path="/dashboard"
+                            element={
+                              <ProtectedRoute>
+                                <Dashboard />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/profile"
+                            element={
+                              <ProtectedRoute>
+                                <Profile />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route path="*" element={<NotFound />} />
+                        </Routes>
+                      </Suspense>
+                    </BrowserRouter>
                   </PostComposerProvider>
                 </UserProfileProvider>
               </TierProvider>

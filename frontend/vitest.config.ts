@@ -16,12 +16,15 @@ export default defineConfig({
       // Community-edition floors. Pro has more tests and runs higher floors;
       // do not copy pro numbers here without re-measuring community coverage.
       // Set at (current - ~2) to catch regressions without false-failing on drift.
-      // Pro realigned its statements floor to 74 after remediation; community
-      // already sits at 74 here, so re-measure community coverage before raising.
+      // lines 74 -> 73 and functions 68 -> 67: the P2 cleanup deletes fully-tested
+      // dead code that also syncs to community (useConnections,
+      // workflowProgressService, the Heal-and-Restore stack), mechanically
+      // lowering the average; buffered down since community coverage isn't
+      // measured from the pro repo. Re-measure community coverage before raising.
       thresholds: {
-        lines: 74,
+        lines: 73,
         branches: 65,
-        functions: 68,
+        functions: 67,
         statements: 74,
       },
     },

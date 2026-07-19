@@ -6,9 +6,6 @@ export const profileSelectors: SelectorRegistry = {
     { strategy: 'attr', selector: 'span[aria-hidden="true"]' },
     { strategy: 'component', selector: 'p[componentkey]' },
   ],
-  'profile:profile-link': [{ strategy: 'href', selector: 'a[href*="/in/"]' }],
-  'profile:all-links': [{ strategy: 'href', selector: 'a[href]' }],
-  'profile:body': [{ strategy: 'element', selector: 'body' }],
 
   // Profile page scraping selectors
   'profile:scrape-name': [

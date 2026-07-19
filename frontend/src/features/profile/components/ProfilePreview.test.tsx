@@ -18,7 +18,7 @@ describe('ProfilePreview', () => {
     render(
       <ProfilePreview
         profile={defaultProfile}
-        hasStoredCredentials={false}
+        clientConnected={false}
         linkedinCredentials={{ email: '', password: '' }}
       />
     );
@@ -30,7 +30,7 @@ describe('ProfilePreview', () => {
     render(
       <ProfilePreview
         profile={defaultProfile}
-        hasStoredCredentials={false}
+        clientConnected={false}
         linkedinCredentials={{ email: '', password: '' }}
       />
     );
@@ -41,7 +41,7 @@ describe('ProfilePreview', () => {
     render(
       <ProfilePreview
         profile={defaultProfile}
-        hasStoredCredentials={false}
+        clientConnected={false}
         linkedinCredentials={{ email: '', password: '' }}
       />
     );
@@ -49,11 +49,11 @@ describe('ProfilePreview', () => {
     expect(screen.getByText('Go')).toBeInTheDocument();
   });
 
-  it('shows Connected when hasStoredCredentials is true', () => {
+  it('shows Connected when clientConnected is true', () => {
     render(
       <ProfilePreview
         profile={defaultProfile}
-        hasStoredCredentials={true}
+        clientConnected={true}
         linkedinCredentials={{ email: '', password: '' }}
       />
     );
@@ -64,7 +64,7 @@ describe('ProfilePreview', () => {
     render(
       <ProfilePreview
         profile={defaultProfile}
-        hasStoredCredentials={false}
+        clientConnected={false}
         linkedinCredentials={{ email: '', password: '' }}
       />
     );
@@ -75,7 +75,7 @@ describe('ProfilePreview', () => {
     render(
       <ProfilePreview
         profile={defaultProfile}
-        hasStoredCredentials={false}
+        clientConnected={false}
         linkedinCredentials={{ email: '', password: '' }}
       />
     );
@@ -86,7 +86,7 @@ describe('ProfilePreview', () => {
     render(
       <ProfilePreview
         profile={defaultProfile}
-        hasStoredCredentials={false}
+        clientConnected={false}
         linkedinCredentials={{ email: '', password: '' }}
       />
     );

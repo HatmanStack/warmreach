@@ -6,10 +6,10 @@ import type { ProfileData } from '../hooks/useProfileForm';
 
 interface ProfilePreviewProps {
   profile: ProfileData;
-  hasStoredCredentials: boolean;
+  clientConnected: boolean;
 }
 
-export function ProfilePreview({ profile, hasStoredCredentials }: ProfilePreviewProps) {
+export function ProfilePreview({ profile, clientConnected }: ProfilePreviewProps) {
   return (
     <div className="space-y-6">
       <Card className="bg-white/5 backdrop-blur-md border-white/10">
@@ -70,10 +70,10 @@ export function ProfilePreview({ profile, hasStoredCredentials }: ProfilePreview
             <h4 className="text-white font-medium mb-2">LinkedIn Status</h4>
             <div className="flex items-center space-x-2">
               <div
-                className={`w-2 h-2 rounded-full ${hasStoredCredentials ? 'bg-green-500' : 'bg-red-500'}`}
+                className={`w-2 h-2 rounded-full ${clientConnected ? 'bg-green-500' : 'bg-red-500'}`}
               />
               <span className="text-slate-300 text-sm">
-                {hasStoredCredentials ? 'Connected' : 'Not Connected'}
+                {clientConnected ? 'Connected' : 'Not Connected'}
               </span>
             </div>
           </div>

@@ -4,7 +4,6 @@ import ConfigManager from '#shared-config/configManager.js';
 import DynamoDBService from '../../storage/services/dynamoDBService.js';
 import { BrowserSessionManager } from '../../session/services/browserSessionManager.js';
 import { LinkedInNavigationService } from '../../navigation/services/linkedinNavigationService.js';
-import { LinkedInMessagingService } from '../../messaging/services/linkedinMessagingService.js';
 import { LinkedInConnectionService } from '../../connections/services/linkedinConnectionService.js';
 import { LinkedInMessageScraperService } from '../../messaging/services/linkedinMessageScraperService.js';
 import { LinkedInError } from '../utils/LinkedInError.js';
@@ -41,7 +40,6 @@ interface ServiceOptions {
   controlPlaneService?: ControlPlaneServiceContract | null;
   humanBehavior?: HumanBehaviorContract;
   navigationService?: LinkedInNavigationService;
-  messagingService?: LinkedInMessagingService;
   connectionService?: LinkedInConnectionService;
   messageScraperService?: LinkedInMessageScraperService;
 }
@@ -99,7 +97,6 @@ export class LinkedInInteractionService {
   controlPlaneService: ControlPlaneServiceContract | null;
   humanBehavior: HumanBehaviorContract;
   navigationService: LinkedInNavigationService;
-  messagingService: LinkedInMessagingService;
   connectionService: LinkedInConnectionService;
   messageScraperService: LinkedInMessageScraperService;
   maxRetries: number;
@@ -124,7 +121,6 @@ export class LinkedInInteractionService {
     // these required structural casts because the upstream types were wider;
     // now we pass the contract values that ServiceContracts produced.
     type NavCtorArg = ConstructorParameters<typeof LinkedInNavigationService>[0];
-    type MsgCtorArg = ConstructorParameters<typeof LinkedInMessagingService>[0];
     type ConnCtorArg = ConstructorParameters<typeof LinkedInConnectionService>[0];
     type ScrapeCtorArg = ConstructorParameters<typeof LinkedInMessageScraperService>[0];
 
@@ -135,23 +131,6 @@ export class LinkedInInteractionService {
     this.navigationService =
       options.navigationService ||
       new LinkedInNavigationService({ sessionManager: sm, configManager: cm } as NavCtorArg);
-
-    this.messagingService =
-      options.messagingService ||
-      new LinkedInMessagingService(
-        unsafeAsOpsContext<
-          {
-            sessionManager: BrowserSessionManagerContract;
-            navigationService: LinkedInNavigationService;
-            dynamoDBService: DynamoDBService;
-          },
-          MsgCtorArg
-        >({
-          sessionManager: sm,
-          navigationService: this.navigationService,
-          dynamoDBService: db,
-        })
-      );
 
     this.connectionService =
       options.connectionService ||

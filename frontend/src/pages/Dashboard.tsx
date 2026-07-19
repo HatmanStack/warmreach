@@ -16,7 +16,6 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/features/auth';
 import { useTier } from '@/features/tier';
-import { useHealAndRestore } from '@/features/workflow';
 import {
   useConnectionsManager,
   NewConnectionsTab,
@@ -35,12 +34,13 @@ import { useProfileInit } from '@/features/profile';
 import { useUserProfile } from '@/features/profile';
 import { NoConnectionsState } from '@/shared/components/ui/empty-state';
 import { AgentStatusBadge } from '@/shared/components/AgentStatusBadge';
+import { ConnectionSearchBar } from '@/features/connections/components/ConnectionSearchBar';
+import { useProfileSearch } from '@/features/connections/hooks/useProfileSearch';
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { isFeatureEnabled } = useTier();
-  const { startListening } = useHealAndRestore();
   const { userProfile, refreshUserProfile } = useUserProfile();
   const [conversationTopic, setConversationTopic] = useState('');
 
@@ -63,6 +63,24 @@ const Dashboard = () => {
     handleConnectionCheckboxChange,
     updateConnectionStatus,
   } = useConnectionsManager();
+
+  // Semantic (RAGStack) search over the accepted-connections list — the search
+  // path ADR-007 reserves for ingested connections (the "possible" tab uses
+  // client-side filtering). When a query is active it replaces the status/tag-
+  // filtered list with the hydrated semantic matches.
+  const { searchQuery, setSearchQuery, searchResults, isSearching, clearSearch, isSearchActive } =
+    useProfileSearch(connections);
+  // Pronged search: intersect the semantic matches with the active status/tag
+  // filter. RAGStack is a shared, profile-level index that can't filter by
+  // per-user tags/status, so the qualifiers are applied client-side over the
+  // hydrated results — the status/tag filters and the search query compose.
+  const semanticMatchIds = useMemo(
+    () => new Set(searchResults.map((connection) => connection.id)),
+    [searchResults]
+  );
+  const displayedConnections = isSearchActive
+    ? filteredConnections.filter((connection) => semanticMatchIds.has(connection.id))
+    : filteredConnections;
 
   const {
     isGeneratingMessages,
@@ -96,11 +114,6 @@ const Dashboard = () => {
 
   const { isInitializing, initializationMessage, initializationError, initializeProfile } =
     useProfileInit();
-
-  // Start listening for heal and restore notifications
-  useEffect(() => {
-    startListening();
-  }, [startListening]);
 
   // Fetch user profile once on mount
   useEffect(() => {
@@ -270,7 +283,9 @@ const Dashboard = () => {
                       <h2 className="text-xl font-semibold text-white">Your Connections</h2>
                       <div className="flex items-center gap-4">
                         <div className="text-sm text-slate-400">
-                          {filteredConnections.length} of {connectionCounts.total} connections
+                          {isSearchActive
+                            ? `${displayedConnections.length} ${displayedConnections.length === 1 ? 'result' : 'results'}`
+                            : `${filteredConnections.length} of ${connectionCounts.total} connections`}
                         </div>
                         <Button
                           onClick={handleInitializeProfile}
@@ -287,16 +302,33 @@ const Dashboard = () => {
                       </div>
                     </div>
 
-                    {filteredConnections.length === 0 ? (
-                      <NoConnectionsState
-                        type="filtered"
-                        onRefresh={fetchConnections}
-                        onClearFilters={() => setSelectedStatus('all')}
-                        className="py-16"
+                    <div className="mb-4">
+                      <ConnectionSearchBar
+                        value={searchQuery}
+                        onChange={setSearchQuery}
+                        onClear={clearSearch}
+                        isLoading={isSearching}
                       />
+                    </div>
+
+                    {displayedConnections.length === 0 ? (
+                      isSearchActive && isSearching ? (
+                        <div className="py-16 text-center text-sm text-slate-400">
+                          Searching your connections…
+                        </div>
+                      ) : (
+                        <NoConnectionsState
+                          type="filtered"
+                          onRefresh={fetchConnections}
+                          onClearFilters={
+                            isSearchActive ? clearSearch : () => setSelectedStatus('all')
+                          }
+                          className="py-16"
+                        />
+                      )
                     ) : (
                       <VirtualConnectionList
-                        connections={filteredConnections}
+                        connections={displayedConnections}
                         onSelect={toggleConnectionSelection}
                         onMessageClick={handleMessageClick}
                         onTagClick={handleTagClick}

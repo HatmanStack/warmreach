@@ -54,8 +54,6 @@ export interface TierQuotas {
   daily_linkedin_interactions?: number;
   hourly_linkedin_interactions?: number;
   monthly_linkedin_interactions?: number;
-  daily_messages?: number;
-  monthly_messages?: number;
   [key: string]: number | undefined;
 }
 

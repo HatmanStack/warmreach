@@ -37,14 +37,6 @@ vi.mock('../../navigation/services/linkedinNavigationService.js', () => ({
   }),
 }));
 
-vi.mock('../../messaging/services/linkedinMessagingService.js', () => ({
-  LinkedInMessagingService: vi.fn().mockImplementation(function () {
-    return {
-      sendMessage: vi.fn(),
-    };
-  }),
-}));
-
 vi.mock('../../connections/services/linkedinConnectionService.js', () => ({
   LinkedInConnectionService: vi.fn().mockImplementation(function () {
     return {

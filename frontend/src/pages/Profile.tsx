@@ -41,9 +41,9 @@ const Profile = () => {
   // Credentials live in the desktop client, not the web app. There's no
   // ciphertext in the web tab to inspect — the previous "Connected" pill
   // derived from React state would have always been wrong post-architecture
-  // change. ProfilePreview accordingly no longer receives a connectivity
-  // signal from this page; an explicit client-health handshake can be
-  // wired in later if we want to display real desktop-client status.
+  // change. The pro edition surfaces live desktop-client connectivity here via
+  // agentConnected; the community edition has no such signal, so ProfilePreview
+  // receives a constant false until an explicit client-health handshake exists.
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -154,7 +154,7 @@ const Profile = () => {
           </div>
 
           {/* Profile Preview */}
-          <ProfilePreview profile={profile} hasStoredCredentials={false} />
+          <ProfilePreview profile={profile} clientConnected={false} />
         </div>
 
         <Separator className="bg-white/10 my-8" />

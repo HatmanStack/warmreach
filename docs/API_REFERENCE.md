@@ -35,13 +35,10 @@ Runs locally in the Electron tray app or as a standalone Express server on port 
 
 ### System & Recovery
 
-| Endpoint                  | Method | Description                                    |
-| ------------------------- | ------ | ---------------------------------------------- |
-| `/heal-restore/status`    | `GET`  | Check recovery system status                   |
-| `/heal-restore/authorize` | `POST` | Authorize session recovery                     |
-| `/heal-restore/cancel`    | `POST` | Cancel pending recovery                        |
-| `/health`                 | `GET`  | System health, queue status, and configuration |
-| `/config/status`          | `GET`  | Environment and feature configuration          |
+| Endpoint         | Method | Description                                    |
+| ---------------- | ------ | ---------------------------------------------- |
+| `/health`        | `GET`  | System health, queue status, and configuration |
+| `/config/status` | `GET`  | Environment and feature configuration          |
 
 ### Rate Limits
 
@@ -77,11 +74,11 @@ All endpoints require a Cognito JWT in the `Authorization: Bearer <token>` heade
 
 ### AI & Processing
 
-| Endpoint    | Method | Description                                                                                                               |
-| ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Endpoint    | Method | Description                                                                                                                                           |
+| ----------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/llm`      | `POST` | Operations: `generate_ideas`, `research_selected_ideas`, `get_research_result`, `synthesize_research`, `generate_message`, `analyze_message_patterns` |
 | `/edges`    | `POST` | Operations: `get_connections_by_status`, `upsert_status`, `add_message`, `update_messages`, `get_messages`, `check_exists`                            |
-| `/ragstack` | `POST` | Operations: `search`, `ingest`, `status`                                                                                   |
+| `/ragstack` | `POST` | Operations: `search`, `ingest`, `status`                                                                                                              |
 
 ## Authentication
 

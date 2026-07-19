@@ -5,7 +5,6 @@ import config from '../config/index.js';
 import { logger } from '#utils/logger.js';
 import { FileHelpers } from '#utils/fileHelpers.js';
 import searchRoutes from '../routes/searchRoutes.js';
-import healAndRestoreRoutes from '../routes/healAndRestore.js';
 import profileInitRoutes from '../routes/profileInitRoutes.js';
 import linkedinInteractionRoutes from '../routes/linkedinInteractionRoutes.js';
 import { ConfigInitializer } from './shared/config/configInitializer.js';
@@ -175,7 +174,6 @@ app.post(
 // Routes
 // Mount search routes under /search to match frontend expectations
 app.use('/search', createRateLimiter({ windowMs: 60000, max: 10, name: 'search' }), searchRoutes);
-app.use('/heal-restore', healAndRestoreRoutes);
 app.use(
   '/profile-init',
   createRateLimiter({ windowMs: 60000, max: 5, name: 'profile-init' }),
@@ -373,12 +371,6 @@ async function startServer(): Promise<void> {
       logger.info(`  GET  http://localhost:${config.port}/search/results   - Get stored results`);
       logger.info(
         `  GET  http://localhost:${config.port}/search/health    - Search route health check`
-      );
-      logger.info(
-        `  GET  http://localhost:${config.port}/heal-restore/status - Check heal & restore status`
-      );
-      logger.info(
-        `  POST http://localhost:${config.port}/heal-restore/authorize - Authorize heal & restore`
       );
       logger.info(
         `  POST http://localhost:${config.port}/profile-init - Initialize LinkedIn profile database`
