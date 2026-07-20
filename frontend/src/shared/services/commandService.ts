@@ -24,6 +24,15 @@ class CommandService {
   private commandCallbacks = new Map<string, CommandCallback>();
   private unsubscribe: (() => void) | null = null;
 
+  // Outbound LinkedIn actions that consume the daily li-actions quota. These are
+  // routed through the metered /linkedin-actions gate; every other command goes
+  // straight to /commands. The gate is a no-op passthrough in the community edition.
+  private static readonly LI_ACTION_TYPES = new Set<string>([
+    'linkedin:add-connection',
+    'linkedin:send-message',
+    'linkedin:follow-profile',
+  ]);
+
   constructor() {
     this._setupMessageHandler();
   }
@@ -36,7 +45,10 @@ class CommandService {
     // Attach ciphertext credentials for LinkedIn operations
     const augmentedPayload = this._attachCredentials(type, payload);
 
-    const result = await httpClient.post<{ commandId: string }>('commands', {
+    // Outbound LinkedIn actions go through the metered gate (daily li-actions
+    // cap); everything else dispatches straight to command-dispatch.
+    const endpoint = CommandService.LI_ACTION_TYPES.has(type) ? 'linkedin-actions' : 'commands';
+    const result = await httpClient.post<{ commandId: string }>(endpoint, {
       type,
       payload: augmentedPayload,
     });

@@ -466,6 +466,42 @@ Resources:
             Auth:
               Authorizer: NONE
 
+  # LinkedIn Action Gate — reserves the shared li-actions quota bucket before
+  # forwarding to command-dispatch. In the community edition the QuotaService is a
+  # no-op stub, so this is a thin passthrough; the frontend uses one path in both
+  # editions.
+  LinkedinActionGateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'warmreach-linkedin-action-gate-${Environment}'
+      CodeUri: lambdas/linkedin-action-gate/
+      Handler: lambda_function.lambda_handler
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          COMMAND_DISPATCH_FUNCTION_NAME: !Ref CommandDispatchFunction
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProfilesTable
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CommandDispatchFunction
+      Events:
+        LinkedinActionsApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /linkedin-actions
+            Method: POST
+        LinkedinActionsOptions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /linkedin-actions
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
   # (Pro-only, intentionally excluded from the community edition: WarmReach Pro
   # also grants this function states:SendTaskSuccess + a LambdaInvokePolicy and an
   # AGENT_STATE_MACHINE_ARN env so it can release agent connect-action

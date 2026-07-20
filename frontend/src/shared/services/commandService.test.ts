@@ -76,6 +76,39 @@ describe('CommandService', () => {
 
       await expect(commandService.dispatch('op', {})).rejects.toThrow('Specific error');
     });
+
+    it('routes outbound LinkedIn actions through the metered /linkedin-actions gate', async () => {
+      mockPost.mockResolvedValue({ success: true, data: { commandId: 'cmd-gate' } });
+
+      for (const type of [
+        'linkedin:add-connection',
+        'linkedin:send-message',
+        'linkedin:follow-profile',
+      ]) {
+        mockPost.mockClear();
+        await commandService.dispatch(type, { recipientProfileId: 'p1' });
+        expect(mockPost).toHaveBeenCalledWith('linkedin-actions', {
+          type,
+          payload: { recipientProfileId: 'p1' },
+        });
+      }
+    });
+
+    it('keeps non-action commands (including linkedin:search) on /commands', async () => {
+      mockPost.mockResolvedValue({ success: true, data: { commandId: 'c' } });
+
+      await commandService.dispatch('linkedin:search', { query: 'x' });
+      expect(mockPost).toHaveBeenLastCalledWith(
+        'commands',
+        expect.objectContaining({ type: 'linkedin:search' })
+      );
+
+      await commandService.dispatch('linkedin:profile-init', {});
+      expect(mockPost).toHaveBeenLastCalledWith(
+        'commands',
+        expect.objectContaining({ type: 'linkedin:profile-init' })
+      );
+    });
   });
 
   describe('WebSocket handling', () => {
