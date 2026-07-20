@@ -26,6 +26,14 @@ class QuotaService:
         """No-op compensating release — community edition never reserves."""
         pass
 
+    def reserve_li_action_usage(self, user_sub, operation, count=1, *, daily_limit_override=None):
+        """No-op li-actions quota reservation — community edition has no cap."""
+        pass
+
+    def release_li_action_usage(self, user_sub, operation, count=1):
+        """No-op li-actions compensating release — community edition never reserves."""
+        pass
+
     def get_rate_limits(self, user_sub):
         return {
             'linkedin_interactions': {
@@ -76,6 +84,7 @@ class FeatureFlagService:
                 'opportunity_tracker': False,
                 'weekly_digest': False,
                 'goal_intelligence': False,
+                'opportunity_agent': False,
                 'portfolio_metrics': False,
                 'comment_concierge': False,
                 'proactive_followup': False,

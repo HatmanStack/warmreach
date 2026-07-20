@@ -461,6 +461,12 @@ Resources:
             Auth:
               Authorizer: NONE
 
+  # (Pro-only, intentionally excluded from the community edition: WarmReach Pro
+  # also grants this function states:SendTaskSuccess + a LambdaInvokePolicy and an
+  # AGENT_STATE_MACHINE_ARN env so it can release agent connect-action
+  # confirmations against the per-action Step Functions state machine. The
+  # community edition ships no autonomous agent, its state machine, or the
+  # agent-action / opportunity-reconciler Lambdas.)
   EdgeCrudFunction:
     Type: AWS::Serverless::Function
     Properties:

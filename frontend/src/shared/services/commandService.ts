@@ -95,6 +95,7 @@ class CommandService {
       'linkedin:search',
       'linkedin:send-message',
       'linkedin:add-connection',
+      'linkedin:follow-profile',
       'linkedin:profile-init',
     ];
 

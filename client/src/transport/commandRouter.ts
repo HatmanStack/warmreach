@@ -26,6 +26,7 @@ import {
   type AnyCommandPayload,
   type SendMessageCommandPayload,
   type AddConnectionCommandPayload,
+  type FollowProfileCommandPayload,
 } from './commandRouter.schemas.js';
 
 type ProgressCallback = (...args: unknown[]) => void;
@@ -72,6 +73,10 @@ const ROUTES: Record<string, CommandRoute> = {
   'linkedin:add-connection': {
     handler: (payload, onProgress) =>
       interactionController.addConnectionDirect(payload as AddConnectionCommandPayload, onProgress),
+  },
+  'linkedin:follow-profile': {
+    handler: (payload, onProgress) =>
+      interactionController.followProfileDirect(payload as FollowProfileCommandPayload, onProgress),
   },
   'linkedin:profile-init': {
     handler: (payload, onProgress) => profileInitController.initializeDirect(payload, onProgress),

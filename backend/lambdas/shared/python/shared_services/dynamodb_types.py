@@ -437,6 +437,7 @@ class GoalAssessment(TypedDict, total=False):
     cadenceAlerts: list[CadenceAlert]
     nextSteps: list[str]
     checklistUpdates: list['ChecklistUpdate']
+    actions: list[dict[str, Any]]  # raw planner actions; validated in apply_actions
     updatedAt: str  # ISO 8601
     modelVersion: str
 
@@ -480,3 +481,54 @@ class ChecklistUpdate(TypedDict, total=False):
     target: int  # For add/modify
     current: int  # For modify
     linkedEvidence: list[str]  # Evidence IDs
+
+
+class OpportunityActionItem(TypedDict, total=False):
+    """USER#{sub} | ACTION#{uuid} — a durable proposed/executing agent action (ADR-1).
+
+    GSI1 keys (ADR-2): GSI1PK=USER#{sub}#ACTIONS, GSI1SK={status}#{notBefore}#{uuid}.
+    """
+
+    PK: str
+    SK: str
+    GSI1PK: str
+    GSI1SK: str
+    opportunityId: str
+    type: str  # connect | message | follow_up | follow | comment | wait
+    targetProfileId: str
+    payload: dict[str, Any]
+    rationale: str
+    notBefore: str  # ISO 8601; empty string means act immediately
+    dependsOn: str | None  # prerequisite action's idempotency key, nullable
+    status: str  # pending_approval | approved | dispatched-unconfirmed | confirmed | failed | expired | cancelled
+    idempotencyKey: str
+    planVersion: str
+    statusHistory: list[dict[str, Any]]
+    executionArn: str | None
+    commandId: str | None
+    createdAt: str
+    ttl: int
+
+
+class AgentConfigItem(TypedDict, total=False):
+    """USER#{sub} | AGENTCFG#{opportunityId} or AGENTCFG#global (ADR-9).
+
+    Per-opportunity autonomy config and the global agent controls. Distinct SK
+    prefix keeps these siblings out of the begins_with(SK, 'OPPORTUNITY#') list.
+    """
+
+    PK: str
+    SK: str
+    # Per-opportunity fields
+    autonomyMode: str  # "approve" | "auto"
+    enabledAutoActionTypes: list[str]
+    capOverride: int | None
+    researchBudget: int
+    quietHours: dict[str, Any]
+    paused: bool
+    killed: bool
+    # Global fields (AGENTCFG#global)
+    globalPaused: bool
+    dailyCapOverride: int
+    plannerModel: str
+    updatedAt: str

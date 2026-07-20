@@ -196,6 +196,59 @@ describe('LinkedInInteractionController', () => {
     });
   });
 
+  describe('followProfileDirect', () => {
+    it('propagates the genuine follow-status result (not a hardcoded success)', async () => {
+      // The follow op self-confirms via checkFollowStatus, so the Direct method
+      // must surface the real status the service returns — here 'already_following'.
+      const mockFollowProfile = vi
+        .fn()
+        .mockResolvedValue({ status: 'already_following', profileId: 'profile-123' });
+      const mockEnsureAuthenticated = vi.fn().mockResolvedValue(undefined);
+      LinkedInInteractionService.mockImplementation(function () {
+        return {
+          ensureAuthenticated: mockEnsureAuthenticated,
+          followProfile: mockFollowProfile,
+        };
+      });
+
+      const result = await controller.followProfileDirect({
+        jwtToken: 'valid-token',
+        profileId: 'profile-123',
+        linkedinCredentialsCiphertext: 'sealbox-sentinel-ciphertext',
+      });
+
+      expect(mockEnsureAuthenticated).toHaveBeenCalledWith(
+        'sealbox-sentinel-ciphertext',
+        'followProfileDirect'
+      );
+      expect(mockFollowProfile).toHaveBeenCalledWith('profile-123', { jwtToken: 'valid-token' });
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          data: expect.objectContaining({
+            status: 'already_following',
+            profileId: 'profile-123',
+          }),
+          userId: 'user-123',
+        })
+      );
+    });
+
+    it('throws FOLLOW_PROFILE_ERROR when profileId is missing', async () => {
+      await expect(
+        controller.followProfileDirect({ jwtToken: 'valid-token' })
+      ).rejects.toMatchObject({ code: 'FOLLOW_PROFILE_ERROR' });
+    });
+
+    it('throws FOLLOW_PROFILE_ERROR when the JWT is invalid', async () => {
+      validateJwt.mockReturnValue({ valid: false, reason: 'expired' });
+
+      await expect(
+        controller.followProfileDirect({ jwtToken: 'bad', profileId: 'profile-123' })
+      ).rejects.toMatchObject({ code: 'FOLLOW_PROFILE_ERROR' });
+    });
+  });
+
   describe('getSessionStatus', () => {
     it('should return session status', async () => {
       await controller.getSessionStatus(mockReq, mockRes);

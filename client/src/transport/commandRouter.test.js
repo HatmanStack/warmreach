@@ -5,11 +5,13 @@ const {
   mockPerformSearchDirect,
   mockSendMessageDirect,
   mockAddConnectionDirect,
+  mockFollowProfileDirect,
   mockInitializeDirect,
 } = vi.hoisted(() => ({
   mockPerformSearchDirect: vi.fn(),
   mockSendMessageDirect: vi.fn(),
   mockAddConnectionDirect: vi.fn(),
+  mockFollowProfileDirect: vi.fn(),
   mockInitializeDirect: vi.fn(),
 }));
 
@@ -24,6 +26,7 @@ vi.mock('../domains/linkedin/controllers/linkedinInteractionController.js', () =
   LinkedInInteractionController: class {
     sendMessageDirect = mockSendMessageDirect;
     addConnectionDirect = mockAddConnectionDirect;
+    followProfileDirect = mockFollowProfileDirect;
   },
 }));
 
@@ -130,6 +133,51 @@ describe('commandRouter', () => {
         commandId: 'cmd-4',
         data: { initialized: true },
       });
+    });
+  });
+
+  describe('linkedin:follow-profile', () => {
+    it('routes to interactionController.followProfileDirect and propagates the genuine status', async () => {
+      // follow self-confirms; the router must surface the real follow status
+      // the controller returns rather than a hardcoded success.
+      const followResult = { success: true, data: { status: 'followed', profileId: 'p-1' } };
+      mockFollowProfileDirect.mockResolvedValueOnce(followResult);
+
+      await handleExecuteCommand(
+        {
+          commandId: 'cmd-follow-1',
+          type: 'linkedin:follow-profile',
+          payload: { profileId: 'p-1', jwtToken: 'jwt' },
+        },
+        sendFn
+      );
+
+      expect(mockFollowProfileDirect).toHaveBeenCalledWith(
+        { profileId: 'p-1', jwtToken: 'jwt' },
+        expect.any(Function)
+      );
+      expect(sendFn).toHaveBeenCalledWith({
+        action: 'result',
+        commandId: 'cmd-follow-1',
+        data: followResult,
+      });
+    });
+
+    it('rejects a malformed follow-profile payload (wrong field type)', async () => {
+      await handleExecuteCommand(
+        { commandId: 'cmd-follow-2', type: 'linkedin:follow-profile', payload: { profileId: 42 } },
+        sendFn
+      );
+
+      expect(mockFollowProfileDirect).not.toHaveBeenCalled();
+      expect(sendFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'error',
+          commandId: 'cmd-follow-2',
+          code: 'INVALID_PAYLOAD',
+          message: expect.stringMatching(/profileId/),
+        })
+      );
     });
   });
 

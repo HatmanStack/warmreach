@@ -3,6 +3,7 @@ import {
   sendMessage,
   executeMessagingWorkflow,
   typeWithHumanPattern,
+  waitForMessageSent,
 } from './linkedinMessagingOps.js';
 
 vi.mock('#utils/logger.js', () => ({
@@ -103,6 +104,41 @@ describe('linkedinMessagingOps', () => {
       expect(result.recipientProfileId).toBe('profile-1');
       expect(result.workflowSteps).toHaveLength(4);
       expect(mockService._reportInteraction).toHaveBeenCalledWith('executeMessagingWorkflow');
+    });
+  });
+
+  describe('waitForMessageSent', () => {
+    it('returns true only when the sent-message confirmation is observed', async () => {
+      mockResolver.resolveWithWait.mockImplementation((_page, key) =>
+        key === 'messaging:sent-confirmation'
+          ? Promise.resolve({ found: true })
+          : Promise.resolve(null)
+      );
+
+      const result = await waitForMessageSent(mockService);
+
+      expect(result).toBe(true);
+      expect(mockResolver.resolveWithWait).toHaveBeenCalledWith(
+        expect.anything(),
+        'messaging:sent-confirmation',
+        expect.objectContaining({ timeout: expect.any(Number) })
+      );
+    });
+
+    it('returns false when no confirmation appears (honest, never assumed sent)', async () => {
+      mockResolver.resolveWithWait.mockResolvedValue(null);
+
+      const result = await waitForMessageSent(mockService);
+
+      expect(result).toBe(false);
+    });
+
+    it('returns false when the confirmation check throws', async () => {
+      mockResolver.resolveWithWait.mockRejectedValue(new Error('selector timeout'));
+
+      const result = await waitForMessageSent(mockService);
+
+      expect(result).toBe(false);
     });
   });
 

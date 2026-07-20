@@ -46,6 +46,13 @@ export interface AddConnectionCommandPayload {
   [key: string]: unknown;
 }
 
+export interface FollowProfileCommandPayload {
+  jwtToken?: string;
+  profileId?: string;
+  linkedinCredentialsCiphertext?: string;
+  [key: string]: unknown;
+}
+
 export interface ProfileInitCommandPayload {
   jwtToken?: string;
   linkedinCredentialsCiphertext?: string;
@@ -56,6 +63,7 @@ export type AnyCommandPayload =
   | SearchCommandPayload
   | SendMessageCommandPayload
   | AddConnectionCommandPayload
+  | FollowProfileCommandPayload
   | ProfileInitCommandPayload;
 
 // --- Small runtime predicates ---
@@ -99,6 +107,13 @@ const VALIDATORS: Record<string, (payload: Record<string, unknown>) => string | 
     if (!isOptionalString(p.profileId)) return 'profileId must be a string';
     if (!isOptionalString(p.profileUrl)) return 'profileUrl must be a string';
     if (!isOptionalString(p.message)) return 'message must be a string';
+    if (!isOptionalString(p.linkedinCredentialsCiphertext))
+      return 'linkedinCredentialsCiphertext must be a string';
+    return null;
+  },
+  'linkedin:follow-profile': (p) => {
+    if (!isOptionalString(p.jwtToken)) return 'jwtToken must be a string';
+    if (!isOptionalString(p.profileId)) return 'profileId must be a string';
     if (!isOptionalString(p.linkedinCredentialsCiphertext))
       return 'linkedinCredentialsCiphertext must be a string';
     return null;

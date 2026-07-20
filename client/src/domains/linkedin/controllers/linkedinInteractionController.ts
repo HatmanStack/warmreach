@@ -24,6 +24,12 @@ interface DirectConnectionPayload {
   linkedinCredentialsCiphertext?: string;
 }
 
+interface DirectFollowPayload {
+  jwtToken?: string;
+  profileId?: string;
+  linkedinCredentialsCiphertext?: string;
+}
+
 interface JwtResult {
   valid: boolean;
   reason?: string;
@@ -194,8 +200,10 @@ export class LinkedInInteractionController {
       res.json({
         success: true,
         data: {
+          // Honest default: an absent delivery signal is 'unconfirmed', never a
+          // false 'sent' (the service reports 'delivered' only on a real signal).
           messageId: result.messageId,
-          deliveryStatus: result.deliveryStatus || 'sent',
+          deliveryStatus: result.deliveryStatus || 'unconfirmed',
           recipientProfileId,
           sentAt: new Date().toISOString(),
         },
@@ -732,8 +740,12 @@ export class LinkedInInteractionController {
       statusCode: 200,
       success: true,
       data: {
+        // Honest default: an absent delivery signal is 'unconfirmed', never a
+        // false 'sent'. The service reports 'delivered' only when the sent-message
+        // bubble was observed (waitForMessageSent); anything else stays unconfirmed
+        // so the agent confirmation path never treats a non-delivery as success.
         messageId: result.messageId,
-        deliveryStatus: result.deliveryStatus || 'sent',
+        deliveryStatus: result.deliveryStatus || 'unconfirmed',
         recipientProfileId,
         sentAt: new Date().toISOString(),
       },
@@ -802,5 +814,65 @@ export class LinkedInInteractionController {
       requestId,
     };
   }
-}
 
+  /**
+   * Transport-agnostic: follow a LinkedIn profile via WebSocket command.
+   * Calls the service layer directly instead of simulating an HTTP request.
+   *
+   * `follow` self-confirms: the service chain performs the genuine
+   * `checkFollowStatus` DOM re-check, so the returned `status` is the real
+   * follow state ('followed' | 'already_following' | ...), never a hardcoded
+   * success.
+   */
+  async followProfileDirect(
+    payload: DirectFollowPayload,
+    _onProgress?: (...args: unknown[]) => void
+  ) {
+    const requestId = uuidv4();
+    const userId = this._extractUserIdFromToken(payload.jwtToken);
+    if (!userId) {
+      const err: Error & { code?: string } = new Error(
+        'JWT token invalid: unable to extract user ID from token'
+      );
+      err.code = 'FOLLOW_PROFILE_ERROR';
+      throw err;
+    }
+
+    const profileId = payload.profileId;
+    if (!profileId) {
+      const err: Error & { code?: string } = new Error(
+        'Missing required parameters: profileId is required'
+      );
+      err.code = 'FOLLOW_PROFILE_ERROR';
+      throw err;
+    }
+
+    const meta = { type: 'follow-profile', requestId, userId, profileId };
+    const result = await linkedInInteractionQueue.enqueue(async () => {
+      const linkedinService = new LinkedInInteractionService({
+        controlPlaneService: _controlPlaneService,
+      });
+
+      await this._ensureLinkedInAuth(
+        linkedinService,
+        payload.linkedinCredentialsCiphertext,
+        'followProfileDirect'
+      );
+
+      return await linkedinService.followProfile(profileId, { jwtToken: payload.jwtToken });
+    }, meta);
+
+    return {
+      statusCode: 200,
+      success: true,
+      data: {
+        status: result.status,
+        profileId,
+        followedAt: result.followedAt,
+      },
+      timestamp: new Date().toISOString(),
+      userId,
+      requestId,
+    };
+  }
+}

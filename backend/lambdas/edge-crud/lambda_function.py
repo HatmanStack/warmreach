@@ -115,6 +115,9 @@ def _handle_upsert_status(body, user_id, event, edge_cache):
         'connection_status_change',
         metadata={'profileId': pid, 'status': updates.get('status', 'pending')},
     )
+    # (Pro-only, intentionally excluded from the community edition: WarmReach Pro
+    # releases a parked agent `connect`-action confirmation out-of-band here when a
+    # connection becomes mutual. The community edition has no autonomous agent.)
     return api_response(200, {'result': result}, event)
 
 
