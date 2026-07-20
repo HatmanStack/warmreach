@@ -50,6 +50,43 @@ def test_ragstack_search_success(lambda_context, ragstack_ops_module, mock_ragst
     assert response['statusCode'] == 200
 
 
+def test_ragstack_search_over_quota_returns_429(lambda_context, ragstack_ops_module, mock_ragstack_services):
+    """A metered op that is over quota returns 429 and never runs the work."""
+    from errors.exceptions import QuotaExceededError
+
+    mock_ragstack_services['quota'].reserve_usage.side_effect = QuotaExceededError(
+        'Daily quota exceeded', operation='ragstack_search'
+    )
+    event = _make_event({'operation': 'search', 'query': 'test'})
+    mock_proxy = MagicMock()
+    mock_proxy.is_configured.return_value = True
+    orig = ragstack_ops_module._ragstack_proxy_service
+    ragstack_ops_module._ragstack_proxy_service = mock_proxy
+    try:
+        response = ragstack_ops_module.lambda_handler(event, lambda_context)
+    finally:
+        ragstack_ops_module._ragstack_proxy_service = orig
+    assert response['statusCode'] == 429
+    # The metered search must not have executed.
+    mock_proxy.ragstack_search.assert_not_called()
+
+
+def test_ragstack_search_releases_quota_on_failure(lambda_context, ragstack_ops_module, mock_ragstack_services):
+    """A reserved op that raises refunds the reservation (no charge for failures)."""
+    event = _make_event({'operation': 'search', 'query': 'test'})
+    mock_proxy = MagicMock()
+    mock_proxy.is_configured.return_value = True
+    mock_proxy.ragstack_search.side_effect = RuntimeError('boom')
+    orig = ragstack_ops_module._ragstack_proxy_service
+    ragstack_ops_module._ragstack_proxy_service = mock_proxy
+    try:
+        response = ragstack_ops_module.lambda_handler(event, lambda_context)
+    finally:
+        ragstack_ops_module._ragstack_proxy_service = orig
+    assert response['statusCode'] == 500
+    mock_ragstack_services['quota'].release_usage.assert_called_once()
+
+
 def test_ragstack_ingest_requires_profile_id(lambda_context, ragstack_ops_module, mock_ragstack_services):
     """ingest without profileId returns 400."""
     event = _make_event({'operation': 'ingest', 'markdownContent': 'test'})

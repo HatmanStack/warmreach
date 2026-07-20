@@ -16,6 +16,10 @@ class QuotaServiceProto(Protocol):
 
     def report_usage(self, user_sub: str, operation: str, count: int = 1) -> None: ...
 
+    def reserve_usage(self, user_sub: str, operation: str, count: int = 1) -> None: ...
+
+    def release_usage(self, user_sub: str, operation: str, count: int = 1) -> None: ...
+
 
 class FeatureFlagServiceProto(Protocol):
     """Subset of FeatureFlagService used by handler utilities."""

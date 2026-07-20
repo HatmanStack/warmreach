@@ -26,6 +26,15 @@ const validateCognitoConfig = () => {
 
 export const isCognitoConfigured = validateCognitoConfig();
 
+// Mock (localStorage) authentication is a dev/community affordance, not a
+// production auth path. It is opt-in so a Pro production build with missing or
+// misconfigured Cognito env fails CLOSED (no token, no access) instead of
+// silently minting a full-access mock session. The community edition — which
+// ships without Cognito and relies on mock auth — sets VITE_ALLOW_MOCK_AUTH=true;
+// import.meta.env.DEV keeps every local `npm run dev` working without extra env.
+export const isMockAuthAllowed =
+  import.meta.env.VITE_ALLOW_MOCK_AUTH === 'true' || Boolean(import.meta.env.DEV);
+
 const DEFAULT_API_TIMEOUT_MS = 30000;
 const MIN_API_TIMEOUT_MS = 5000;
 const MAX_API_TIMEOUT_MS = 120000;

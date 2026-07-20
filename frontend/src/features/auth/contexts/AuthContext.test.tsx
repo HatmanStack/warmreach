@@ -40,9 +40,10 @@ vi.mock('../services/cognitoService', () => ({
   },
 }));
 
-// Mock appConfig — default to mock mode (not configured)
-const { mockIsCognitoConfigured } = vi.hoisted(() => ({
+// Mock appConfig — default to mock mode (not configured), mock auth allowed.
+const { mockIsCognitoConfigured, mockIsMockAuthAllowed } = vi.hoisted(() => ({
   mockIsCognitoConfigured: { value: false },
+  mockIsMockAuthAllowed: { value: true },
 }));
 
 vi.mock('@/config/appConfig', async (importOriginal) => {
@@ -51,6 +52,9 @@ vi.mock('@/config/appConfig', async (importOriginal) => {
     ...original,
     get isCognitoConfigured() {
       return mockIsCognitoConfigured.value;
+    },
+    get isMockAuthAllowed() {
+      return mockIsMockAuthAllowed.value;
     },
   };
 });
@@ -79,6 +83,7 @@ describe('AuthContext', () => {
   describe('mock mode (Cognito not configured)', () => {
     beforeEach(() => {
       mockIsCognitoConfigured.value = false;
+      mockIsMockAuthAllowed.value = true;
       vi.mocked(mockGetCurrentUser).mockResolvedValue(null);
     });
 
@@ -188,6 +193,56 @@ describe('AuthContext', () => {
       });
       const token = await result.current.getToken();
       expect(token).toBe('mock-jwt-token');
+    });
+  });
+
+  describe('auth disabled (fail closed)', () => {
+    // Neither Cognito configured NOR mock auth allowed — the guardrail for a
+    // production build with missing/misconfigured Cognito env.
+    beforeEach(() => {
+      mockIsCognitoConfigured.value = false;
+      mockIsMockAuthAllowed.value = false;
+      vi.mocked(mockGetCurrentUser).mockResolvedValue(null);
+    });
+
+    it('does not restore a stored mock user', async () => {
+      window.localStorage.setItem(
+        'warmreach_user',
+        JSON.stringify({
+          id: 'x',
+          email: 'x@e.com',
+          firstName: 'X',
+          lastName: 'Y',
+          emailVerified: true,
+        })
+      );
+
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.user).toBeNull();
+    });
+
+    it('getToken returns null instead of minting mock-jwt-token', async () => {
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const token = await result.current.getToken();
+      expect(token).toBeNull();
+    });
+
+    it('signIn fails closed instead of creating a mock session', async () => {
+      const { result } = renderHook(() => useAuth(), { wrapper: Wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      let signInResult: { error: unknown };
+      await act(async () => {
+        signInResult = await result.current.signIn('test@example.com', 'pass');
+      });
+
+      expect(signInResult!.error).not.toBeNull();
+      expect(result.current.user).toBeNull();
+      expect(window.localStorage.getItem('warmreach_user')).toBeNull();
     });
   });
 

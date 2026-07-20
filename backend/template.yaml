@@ -108,6 +108,11 @@ Resources:
   # Shared Python Layer for common code (errors, utils, services)
   SharedPythonLayer:
     Type: AWS::Serverless::LayerVersion
+    # BuildMethod makes `sam build` explicitly (re)build this layer. Without it,
+    # a cached build silently reuses a stale layer version, so shared_services
+    # changes never reach the Lambdas that reference the layer.
+    Metadata:
+      BuildMethod: python3.13
     Properties:
       LayerName: !Sub 'warmreach-shared-python-${Environment}'
       Description: Shared Python utilities for WarmReach Lambdas

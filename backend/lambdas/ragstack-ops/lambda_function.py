@@ -5,10 +5,11 @@ import logging
 import os
 
 import boto3
+from botocore.exceptions import ClientError
 from errors.exceptions import AuthorizationError, ExternalServiceError, NotFoundError, ServiceError, ValidationError
 from shared_services.edge_data_service import EdgeDataService
-from shared_services.handler_utils import get_user_id, report_telemetry, sanitize_request_context
-from shared_services.monetization import FeatureFlagService, QuotaService
+from shared_services.handler_utils import get_user_id, release_quota, reserve_quota, sanitize_request_context
+from shared_services.monetization import FeatureFlagService, QuotaExceededError, QuotaService
 from shared_services.observability import setup_correlation_context
 from shared_services.ragstack_proxy_service import RAGStackProxyService
 from shared_services.request_utils import api_response
@@ -52,6 +53,32 @@ _ragstack_proxy_service = RAGStackProxyService(
 )
 
 
+def _metered_call(user_id, event, quota_op, work):
+    """Reserve quota, run ``work``, and refund the reservation on failure.
+
+    Called AFTER validation and any feature gate (a user without the feature or
+    with a bad request is never charged) but BEFORE the work, so two concurrent
+    requests at the cap can't both run. Returns ``(result, None)`` on success or
+    ``(None, api_response)`` when the reservation itself denies the request
+    (429 over quota / 503 metering-infra failure). Exceptions raised by ``work``
+    propagate after the reservation is refunded. No-op metering in the community
+    edition (stub QuotaService).
+    """
+    try:
+        reserved = reserve_quota(_quota_service, table, user_id, quota_op)
+    except QuotaExceededError:
+        return None, api_response(429, {'error': 'Quota exceeded', 'code': 'QUOTA_EXCEEDED'}, event)
+    except (ClientError, NotFoundError):
+        logger.exception('reserve_usage failed for %s, denying request (fail closed)', quota_op)
+        return None, api_response(503, {'error': 'Quota service unavailable, please retry'}, event)
+    try:
+        return work(), None
+    except Exception:
+        if reserved:
+            release_quota(_quota_service, user_id, quota_op)
+        raise
+
+
 def _handle_ragstack(body, user_id, event=None):
     """Handle RAGStack operations: search, ingest, status."""
     if not _ragstack_proxy_service.is_configured():
@@ -67,8 +94,11 @@ def _handle_ragstack(body, user_id, event=None):
             max_results = min(int(body.get('maxResults', 100)), 200)
         except (TypeError, ValueError):
             return api_response(400, {'error': 'maxResults must be a number'}, event)
-        result = _ragstack_proxy_service.ragstack_search(query, max_results)
-        report_telemetry(_quota_service, table, user_id, 'ragstack_search')
+        result, err = _metered_call(
+            user_id, event, 'ragstack_search', lambda: _ragstack_proxy_service.ragstack_search(query, max_results)
+        )
+        if err:
+            return err
         return api_response(200, result, event)
 
     elif operation == 'ingest':
@@ -81,8 +111,14 @@ def _handle_ragstack(body, user_id, event=None):
             return api_response(400, {'error': 'profileId is required'}, event)
         if not markdown_content:
             return api_response(400, {'error': 'markdownContent is required'}, event)
-        result = _ragstack_proxy_service.ragstack_ingest(profile_id, markdown_content, metadata, user_id)
-        report_telemetry(_quota_service, table, user_id, 'ragstack_ingest')
+        result, err = _metered_call(
+            user_id,
+            event,
+            'ragstack_ingest',
+            lambda: _ragstack_proxy_service.ragstack_ingest(profile_id, markdown_content, metadata, user_id),
+        )
+        if err:
+            return err
         return api_response(200, result, event)
 
     elif operation == 'ingest_content':
@@ -113,8 +149,14 @@ def _handle_ragstack(body, user_id, event=None):
             return api_response(400, {'error': 'contentId is required'}, event)
         if not content:
             return api_response(400, {'error': 'content is required'}, event)
-        result = _ragstack_proxy_service.ragstack_ingest_content(content_id, content, metadata, user_id)
-        report_telemetry(_quota_service, table, user_id, 'ragstack_ingest_content')
+        result, err = _metered_call(
+            user_id,
+            event,
+            'ragstack_ingest_content',
+            lambda: _ragstack_proxy_service.ragstack_ingest_content(content_id, content, metadata, user_id),
+        )
+        if err:
+            return err
         return api_response(200, result, event)
 
     elif operation == 'status':

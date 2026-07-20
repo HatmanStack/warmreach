@@ -15,6 +15,7 @@ import {
   type ProfileInitState,
 } from '../services/profileInitService.js';
 import { LocalProfileScraper } from '../../linkedin/services/localProfileScraper.js';
+import { MutualConnectionsCollector } from '../../linkedin/services/mutualConnectionsCollector.js';
 import { BurstThrottleManager } from '../../automation/utils/burstThrottleManager.js';
 import { HealingRequiredError } from '../../automation/utils/healingError.js';
 import { config } from '#shared-config/index.js';
@@ -279,6 +280,18 @@ export class ProfileInitController {
         ? new BurstThrottleManager()
         : undefined;
 
+      // Consented mutual-connections collector (B-1 / ADR-6/7/8). Built only
+      // when the user opted in (payload.collectMutuals -> state.collectMutuals)
+      // AND a live browser page exists; it drives the same persistent page as
+      // the scraper. Left undefined otherwise, so collectMutualConnections()
+      // stays a strict no-op. NOTE: the `connectionOf` URL form is not yet
+      // verified against a live LinkedIn session (see the collector's feasibility
+      // gate); until that check confirms the identifier form, collection degrades
+      // to [] even when enabled — activation is gated behind the opt-in, which is
+      // off by default.
+      const mutualConnectionsCollector =
+        state.collectMutuals && page ? new MutualConnectionsCollector(page) : undefined;
+
       // Initialize ProfileInitService with all required services
       const profileInitService = new ProfileInitService(
         services.puppeteerService,
@@ -286,11 +299,15 @@ export class ProfileInitController {
         services.linkedInContactService,
         services.dynamoDBService,
         localProfileScraper,
-        burstThrottleManager
+        burstThrottleManager,
+        undefined, // interactionQueue — not wired in this path
+        undefined, // backoffController — not wired in this path
+        mutualConnectionsCollector
       );
       logger.info('ProfileInitService constructed', {
         hasLocalProfileScraper: !!localProfileScraper,
         hasBurstThrottle: !!burstThrottleManager,
+        hasMutualCollector: !!mutualConnectionsCollector,
       });
 
       // Set auth token for DynamoDB operations. jwtToken is validated upstream

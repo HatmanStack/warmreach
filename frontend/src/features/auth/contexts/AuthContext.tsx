@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { CognitoAuthService, type CognitoUserData } from '../services/cognitoService';
-import { isCognitoConfigured } from '@/config/appConfig';
+import { isCognitoConfigured, isMockAuthAllowed } from '@/config/appConfig';
 import {
   generateUniqueUserId,
   validateUserForDatabase,
@@ -125,8 +125,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (error) {
         logger.error('Error initializing Cognito auth', { error });
       }
-    } else {
-      // Fallback to localStorage mock authentication
+    } else if (isMockAuthAllowed) {
+      // Fallback to localStorage mock authentication (dev / community edition)
       const storedUser = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (storedUser) {
         try {
@@ -143,6 +143,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.removeItem(LOCAL_STORAGE_KEY);
         }
       }
+    } else {
+      // Fail closed: no Cognito configured AND mock auth disabled. This is the
+      // guardrail for a production build with missing/misconfigured Cognito env
+      // — never silently restore a full-access mock session.
+      logger.error(
+        'Authentication is not configured (Cognito env missing and mock auth disabled). ' +
+          'Set VITE_ALLOW_MOCK_AUTH=true only for development or the community edition.'
+      );
     }
     setLoading(false);
   };
@@ -159,10 +167,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logger.error('Error getting token', { error });
         return null;
       }
-    } else {
+    }
+    if (isMockAuthAllowed) {
       // For mock auth, return a fake token or null
       return user ? 'mock-jwt-token' : null;
     }
+    // Fail closed: no Cognito, no mock auth -> no token, no access.
+    return null;
   }, [user]);
 
   const signIn = async (email: string, password: string) => {
@@ -200,8 +211,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {
         return { error: { message: 'Authentication failed' } };
       }
-    } else {
-      // Fallback to mock authentication
+    } else if (isMockAuthAllowed) {
+      // Fallback to mock authentication (dev / community edition)
       if (email && password) {
         const mockUser: User = {
           id: generateUniqueUserId(email, false),
@@ -219,6 +230,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
       return { error: { message: 'Invalid credentials' } };
+    } else {
+      // Fail closed: no Cognito, no mock auth.
+      return { error: { message: 'Authentication is not configured' } };
     }
   };
 
@@ -247,8 +261,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {
         return { error: { message: 'Registration failed' } };
       }
-    } else {
-      // Fallback to mock authentication
+    } else if (isMockAuthAllowed) {
+      // Fallback to mock authentication (dev / community edition)
       if (email && password) {
         const mockUser: User = {
           id: generateUniqueUserId(email, false),
@@ -266,6 +280,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
       return { error: { message: 'Registration failed' } };
+    } else {
+      // Fail closed: no Cognito, no mock auth.
+      return { error: { message: 'Authentication is not configured' } };
     }
   };
 

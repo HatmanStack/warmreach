@@ -99,6 +99,54 @@ def report_telemetry(
         logger.exception('Telemetry report failed for %s', operation)
 
 
+def reserve_quota(
+    quota_service: QuotaServiceProto | None, table: Any, user_id: str, operation: str, count: int = 1
+) -> bool:
+    """Pre-call quota reservation (enforcing idiom — see llm/lambda_function.py).
+
+    Reserve quota BEFORE running metered work so two concurrent requests at the
+    limit can't both succeed. Returns ``True`` when a reservation was made (the
+    caller must compensate with :func:`release_quota` if the work then fails),
+    or ``False`` when there is nothing to reserve (no quota service / no user).
+
+    Unlike :func:`report_telemetry`, this does NOT swallow exceptions — enforcement
+    depends on them propagating:
+
+    * ``QuotaExceededError`` — the user is over quota; the caller maps it to 429.
+    * ``ClientError`` / ``NotFoundError`` — metering-infrastructure failure; the
+      caller should fail closed (503) rather than run the work unmetered.
+
+    In the community edition the injected QuotaService is a no-op stub, so this
+    reserves nothing and never raises.
+    """
+    if not quota_service or not user_id:
+        return False
+    # Best-effort tier auto-provision (mirrors the llm idiom): a tier row that
+    # fails to materialize here is recoverable on a later call, so it must never
+    # block the reservation. reserve_usage() below still fails closed if the tier
+    # genuinely cannot be resolved (it raises NotFoundError/ClientError).
+    try:
+        ensure_tier_exists(table, user_id)
+    except Exception:
+        logger.exception('Tier auto-provision failed for %s (non-blocking)', operation)
+    quota_service.reserve_usage(user_id, operation, count=count)
+    return True
+
+
+def release_quota(quota_service: QuotaServiceProto | None, user_id: str, operation: str, count: int = 1) -> None:
+    """Best-effort compensating release for a prior :func:`reserve_quota`.
+
+    Refunds a reservation when the metered work subsequently failed, so users
+    aren't charged for failed operations. Never raises.
+    """
+    if not quota_service or not user_id:
+        return
+    try:
+        quota_service.release_usage(user_id, operation, count=count)
+    except Exception:
+        logger.exception('release_usage failed for %s', operation)
+
+
 def check_feature_gate(
     feature_flag_service: FeatureFlagServiceProto | None, user_id: str, feature_key: str, event: dict
 ) -> dict | None:
