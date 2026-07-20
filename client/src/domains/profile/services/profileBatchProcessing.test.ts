@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createBatchFiles, processBatch } from './profileBatchProcessing';
+import { processConnection } from './profileScraping.js';
 import type { ProfileInitService } from './profileInitService';
 
 vi.mock('#utils/logger.js', () => ({
@@ -165,6 +166,20 @@ describe('profileBatchProcessing', () => {
       await processBatch(mockService, 'data/batch.json', state);
 
       expect(mockService.dynamoDBService.saveImportCheckpoint).toHaveBeenCalledTimes(2);
+    });
+
+    it('halts per-connection processing (and thus collection) after a mid-loop abort', async () => {
+      // A serious (non-connection-level) error from the backoff/abort path on the
+      // first connection must stop the loop, so the second connection is never
+      // processed — and therefore never has its mutuals collected.
+      vi.mocked(processConnection).mockRejectedValueOnce(new Error('429 backoff abort'));
+
+      const state = { requestId: 'req1', collectMutuals: true };
+
+      await expect(processBatch(mockService, 'data/batch.json', state)).rejects.toThrow(
+        '429 backoff abort'
+      );
+      expect(processConnection).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -712,3 +712,35 @@ class TestTimezoneAndDigestSettings:
         })
         assert result == {'success': True}
         mock_table.update_item.assert_called_once()
+
+
+class TestMutualScrapeOptInSetting:
+    """mutual_scrape_opt_in consent flag persistence (Phase 1 Task 3)."""
+
+    def test_accepts_true_and_persists_under_settings_sk(self, dynamodb_table):
+        service = DynamoDBApiService(table=dynamodb_table)
+
+        result = service.update_user_settings('user-abc', {'mutual_scrape_opt_in': True})
+
+        assert result == {'success': True}
+        item = dynamodb_table.get_item(Key={'PK': 'USER#user-abc', 'SK': '#SETTINGS'})['Item']
+        assert item['mutual_scrape_opt_in'] is True
+
+    def test_accepts_false(self, dynamodb_table):
+        service = DynamoDBApiService(table=dynamodb_table)
+
+        result = service.update_user_settings('user-abc', {'mutual_scrape_opt_in': False})
+
+        assert result == {'success': True}
+        item = dynamodb_table.get_item(Key={'PK': 'USER#user-abc', 'SK': '#SETTINGS'})['Item']
+        assert item['mutual_scrape_opt_in'] is False
+
+    def test_rejects_non_bool_value(self, dynamodb_table):
+        service = DynamoDBApiService(table=dynamodb_table)
+
+        result = service.update_user_settings('user-abc', {'mutual_scrape_opt_in': 'yes'})
+
+        assert 'error' in result
+        assert 'mutual_scrape_opt_in' in result['error']
+        # Rejected before any write: nothing persisted under the settings SK.
+        assert 'Item' not in dynamodb_table.get_item(Key={'PK': 'USER#user-abc', 'SK': '#SETTINGS'})

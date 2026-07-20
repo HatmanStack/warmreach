@@ -48,6 +48,12 @@ export interface ProfileInitState {
     expansionAttempt: number;
     currentFileIndex: number;
   };
+  /**
+   * Consent flag from the profile-init payload. When true (and a collector is
+   * injected), each scraped contact's mutual connections are collected and
+   * persisted as private adjacency edges. Absent/false => no collection.
+   */
+  collectMutuals?: boolean;
   [key: string]: unknown;
 }
 
@@ -195,6 +201,11 @@ interface DynamoDBService {
   saveImportCheckpoint?(checkpoint: Record<string, unknown>): Promise<unknown>;
   getImportCheckpoint?(): Promise<Record<string, unknown> | null>;
   clearImportCheckpoint?(): Promise<unknown>;
+  upsertAdjacency(
+    nodeA: string,
+    nodeB: string,
+    options?: { source?: string; mutualCount?: number }
+  ): Promise<unknown>;
 }
 
 /**
@@ -213,6 +224,14 @@ interface LocalProfileScraperInterface {
     skills: string[];
     recentActivity: unknown[];
   }>;
+}
+
+/**
+ * Mutual-connections collector interface (see MutualConnectionsCollector).
+ * Optional injected dependency, mirroring LocalProfileScraperInterface.
+ */
+interface MutualConnectionsCollectorInterface {
+  collectSharedConnections(contactProfileId: string): Promise<Array<{ profileId: string }>>;
 }
 
 /**
@@ -250,6 +269,7 @@ export class ProfileInitService {
   readonly dynamoDBService: DynamoDBService;
   readonly messageScraperService: InstanceType<typeof LinkedInMessageScraperService>;
   readonly localProfileScraper: LocalProfileScraperInterface | null;
+  readonly mutualConnectionsCollector: MutualConnectionsCollectorInterface | null;
   readonly burstThrottleManager: BurstThrottleManagerInterface | null;
   readonly interactionQueue: ImportModeToggle | null;
   readonly backoffController: ImportModeToggle | null;
@@ -264,12 +284,14 @@ export class ProfileInitService {
     localProfileScraper?: LocalProfileScraperInterface,
     burstThrottleManager?: BurstThrottleManagerInterface,
     interactionQueue?: ImportModeToggle,
-    backoffController?: ImportModeToggle
+    backoffController?: ImportModeToggle,
+    mutualConnectionsCollector?: MutualConnectionsCollectorInterface
   ) {
     this.puppeteer = puppeteerService;
     this.linkedInService = linkedInService;
     this.dynamoDBService = dynamoDBService;
     this.localProfileScraper = localProfileScraper || null;
+    this.mutualConnectionsCollector = mutualConnectionsCollector || null;
     this.burstThrottleManager = burstThrottleManager || null;
     this.interactionQueue = interactionQueue || null;
     this.backoffController = backoffController || null;

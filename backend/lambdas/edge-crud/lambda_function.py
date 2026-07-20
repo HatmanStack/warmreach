@@ -212,6 +212,10 @@ def _handle_get_activity_timeline(body, user_id, event, edge_cache):
 
 # ---------------------------------------------------------------------------
 # Routing table: 10 operations
+#
+# Contact-to-contact adjacency persistence is a Pro-only capability and is
+# intentionally absent from this routing table; any unregistered operation
+# falls through to the "Unsupported operation" 400 response below.
 # ---------------------------------------------------------------------------
 
 HANDLERS = {

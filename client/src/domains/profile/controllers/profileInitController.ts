@@ -697,6 +697,9 @@ export class ProfileInitController {
       jwtToken,
       requestId,
       progressCallback: onProgress,
+      // Consent flag (ADR-6): only an explicit true from the payload enables
+      // mutual-connections collection; carried through into ingestion state.
+      collectMutuals: payload.collectMutuals === true,
     });
 
     profileInitMonitor.startRequest(requestId, {

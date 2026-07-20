@@ -35,6 +35,8 @@ interface ProfileInitState {
   currentBatch?: number;
   currentIndex?: number;
   currentProcessingList?: string;
+  /** Consent flag (from the profile-init payload) enabling mutual collection. */
+  collectMutuals?: boolean;
   [key: string]: unknown;
 }
 
@@ -133,6 +135,11 @@ export async function processConnection(
               phase: 'connection',
               profileId: connectionProfileId,
             });
+
+            // Consented mutual-connections collection, piggybacked on this
+            // scrape (ADR-7). A strict no-op unless collectMutuals is set and a
+            // collector is injected; never throws into the ingestion loop.
+            await collectMutualConnections(service, connectionProfileId, state);
           } else if (!needsScrape) {
             logger.info(`[connection] profile is fresh, skipping scrape: ${connectionProfileId}`, {
               phase: 'connection',
@@ -255,6 +262,45 @@ export async function processConnection(
     });
 
     throw error;
+  }
+}
+
+/**
+ * Collect the mutual connections shared with a contact and persist each as a
+ * private, per-user adjacency edge (contact <-> shared connection).
+ *
+ * Consent-gated (ADR-6) and piggybacked on the contact's profile scrape
+ * (ADR-7): a strict no-op unless `state.collectMutuals` is true AND a collector
+ * is injected on the service. Tie strength is a neutral constant on the backend,
+ * so only the discovered edge is sent. Never throws into the ingestion loop —
+ * collection and per-edge persistence failures are logged and swallowed.
+ */
+export async function collectMutualConnections(
+  service: ProfileInitService,
+  connectionProfileId: string,
+  state: ProfileInitState
+): Promise<void> {
+  if (!state.collectMutuals || !service.mutualConnectionsCollector) {
+    return;
+  }
+
+  try {
+    const shared =
+      await service.mutualConnectionsCollector.collectSharedConnections(connectionProfileId);
+    for (const conn of shared) {
+      try {
+        await service.dynamoDBService.upsertAdjacency(connectionProfileId, conn.profileId);
+      } catch (persistErr) {
+        logger.warn(
+          `Failed to persist adjacency ${connectionProfileId} <-> ${conn.profileId} (non-fatal)`,
+          { error: (persistErr as Error).message }
+        );
+      }
+    }
+  } catch (collectErr) {
+    logger.warn(`Mutual-connections collection failed for ${connectionProfileId} (non-fatal)`, {
+      error: (collectErr as Error).message,
+    });
   }
 }
 

@@ -166,6 +166,10 @@ const Profile = () => {
 
         <Separator className="bg-white/10 my-8" />
 
+        {/* Pro-only settings cards (Comment Concierge, weekly digest, and the
+            warm-introduction mutual-connections consent toggle) are intentionally
+            omitted from the community profile page. */}
+
         {/* Activity Timeline */}
         <Card
           className="bg-white/5 backdrop-blur-md border-white/10"

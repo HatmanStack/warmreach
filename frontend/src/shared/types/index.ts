@@ -352,6 +352,13 @@ export interface UserProfile {
   /** Comment Concierge mode: automated, manual, or off */
   comment_concierge_mode?: 'automated' | 'manual' | 'off';
 
+  /**
+   * Opt-in consent (default off) to collect contact-to-contact mutual
+   * connections during profile-init ingestion. Only an explicit `true` enables
+   * collection; absent/`false` means no collection.
+   */
+  mutual_scrape_opt_in?: boolean;
+
   /** User's preferred timezone (IANA, e.g. 'America/New_York') */
   timezone?: string;
 

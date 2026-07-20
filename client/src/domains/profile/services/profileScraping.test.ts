@@ -124,6 +124,71 @@ describe('profileScraping', () => {
     });
   });
 
+  describe('mutual-connections collection', () => {
+    beforeEach(() => {
+      mockService.dynamoDBService.upsertAdjacency = vi.fn().mockResolvedValue({});
+      mockService.mutualConnectionsCollector = {
+        collectSharedConnections: vi
+          .fn()
+          .mockResolvedValue([{ profileId: 'shared-1' }, { profileId: 'shared-2' }]),
+      };
+    });
+
+    it('does not collect when collectMutuals is absent/false', async () => {
+      await processConnection(mockService, 'p1', { ...state, collectMutuals: false }, 'ally');
+
+      expect(
+        mockService.mutualConnectionsCollector.collectSharedConnections
+      ).not.toHaveBeenCalled();
+      expect(mockService.dynamoDBService.upsertAdjacency).not.toHaveBeenCalled();
+    });
+
+    it('collects once per scraped contact and persists each discovered edge', async () => {
+      await processConnection(mockService, 'p1', { ...state, collectMutuals: true }, 'ally');
+
+      expect(mockService.mutualConnectionsCollector.collectSharedConnections).toHaveBeenCalledTimes(
+        1
+      );
+      expect(mockService.mutualConnectionsCollector.collectSharedConnections).toHaveBeenCalledWith(
+        'p1'
+      );
+      expect(mockService.dynamoDBService.upsertAdjacency).toHaveBeenCalledWith('p1', 'shared-1');
+      expect(mockService.dynamoDBService.upsertAdjacency).toHaveBeenCalledWith('p1', 'shared-2');
+    });
+
+    it('does not collect when the daily scrape cap is reached (pacing gate closed)', async () => {
+      mockService.dynamoDBService.canScrapeToday.mockResolvedValue(false);
+
+      await processConnection(mockService, 'p1', { ...state, collectMutuals: true }, 'ally');
+
+      expect(
+        mockService.mutualConnectionsCollector.collectSharedConnections
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not collect when the profile is fresh (staleness gate)', async () => {
+      mockService.dynamoDBService.getProfileDetails.mockResolvedValue(false);
+
+      await processConnection(mockService, 'p1', { ...state, collectMutuals: true }, 'ally');
+
+      expect(
+        mockService.mutualConnectionsCollector.collectSharedConnections
+      ).not.toHaveBeenCalled();
+    });
+
+    it('never throws into the ingestion loop when collection fails', async () => {
+      mockService.mutualConnectionsCollector.collectSharedConnections.mockRejectedValue(
+        new Error('surface gone')
+      );
+
+      await expect(
+        processConnection(mockService, 'p1', { ...state, collectMutuals: true }, 'ally')
+      ).resolves.toBeUndefined();
+      // Ingestion still completes the edge write despite the collection failure.
+      expect(mockService.dynamoDBService.upsertEdgeStatus).toHaveBeenCalled();
+    });
+  });
+
   describe('isConnectionLevelError', () => {
     it('should classify profile not found as connection-level', () => {
       expect(isConnectionLevelError(new Error('Profile not found'))).toBe(true);

@@ -3,6 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCommand } from '@/shared/hooks';
 import { useToast } from '@/shared/hooks';
 import { queryKeys } from '@/shared/lib/queryKeys';
+// Imported from the context directly (not the feature barrel) to avoid a cycle.
+import { useUserProfile } from '@/features/profile/contexts/UserProfileContext';
 
 interface ProfileInitResult {
   success?: boolean;
@@ -25,6 +27,7 @@ export const useProfileInit = (): UseProfileInitReturn => {
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { userProfile } = useUserProfile();
 
   const {
     execute,
@@ -81,10 +84,13 @@ export const useProfileInit = (): UseProfileInitReturn => {
         setOnSuccessCallback(() => onSuccess);
       }
 
-      // Payload can be empty; commandService attaches ciphertext credentials
-      await execute({});
+      // Payload can be empty; commandService attaches ciphertext credentials.
+      // Include collectMutuals only when the user has opted in (ADR-6); the
+      // client collects nothing when the flag is absent/false.
+      const collectMutuals = userProfile?.mutual_scrape_opt_in === true;
+      await execute(collectMutuals ? { collectMutuals: true } : {});
     },
-    [execute, reset]
+    [execute, reset, userProfile?.mutual_scrape_opt_in]
   );
 
   const clearMessages = useCallback(() => {

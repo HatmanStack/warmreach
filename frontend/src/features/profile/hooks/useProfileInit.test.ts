@@ -8,6 +8,7 @@ const mockToast = vi.fn();
 let mockStatus = 'idle';
 let mockResult: unknown = null;
 let mockError: string | null = null;
+let mockUserProfile: Record<string, unknown> | null = null;
 
 vi.mock('@/shared/hooks', () => ({
   useCommand: () => ({
@@ -21,6 +22,10 @@ vi.mock('@/shared/hooks', () => ({
   useErrorHandler: vi.fn(),
 }));
 
+vi.mock('@/features/profile/contexts/UserProfileContext', () => ({
+  useUserProfile: () => ({ userProfile: mockUserProfile }),
+}));
+
 import { useProfileInit } from './useProfileInit';
 
 describe('useProfileInit', () => {
@@ -29,6 +34,7 @@ describe('useProfileInit', () => {
     mockStatus = 'idle';
     mockResult = null;
     mockError = null;
+    mockUserProfile = null;
   });
 
   it('should initialize with default state', () => {
@@ -48,6 +54,28 @@ describe('useProfileInit', () => {
       });
 
       expect(mockReset).toHaveBeenCalled();
+      expect(mockExecute).toHaveBeenCalledWith({});
+    });
+
+    it('includes collectMutuals in the payload when mutual_scrape_opt_in is true', async () => {
+      mockUserProfile = { mutual_scrape_opt_in: true };
+      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
+
+      await act(async () => {
+        await result.current.initializeProfile();
+      });
+
+      expect(mockExecute).toHaveBeenCalledWith({ collectMutuals: true });
+    });
+
+    it('omits collectMutuals when mutual_scrape_opt_in is false/absent', async () => {
+      mockUserProfile = { mutual_scrape_opt_in: false };
+      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
+
+      await act(async () => {
+        await result.current.initializeProfile();
+      });
+
       expect(mockExecute).toHaveBeenCalledWith({});
     });
 

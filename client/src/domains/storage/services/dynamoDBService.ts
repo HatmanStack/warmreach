@@ -294,6 +294,27 @@ class DynamoDBService {
   }
 
   /**
+   * Upsert one contact-to-contact adjacency edge (both endpoints are the caller's
+   * own contacts). Persisted under the caller's own USER#{sub} partition via the
+   * edge-crud `upsert_adjacency` operation; the backend base64-encodes each node
+   * id to match the forward PROFILE# edges. Tie strength is a neutral constant on
+   * the backend, so only the observed `mutualCount` (when known) is sent.
+   */
+  async upsertAdjacency(
+    nodeA: string,
+    nodeB: string,
+    options: { source?: string; mutualCount?: number } = {}
+  ): Promise<unknown> {
+    return await this._post('edges', {
+      operation: 'upsert_adjacency',
+      nodeA,
+      nodeB,
+      source: options.source ?? 'mutual',
+      ...(typeof options.mutualCount === 'number' ? { mutualCount: options.mutualCount } : {}),
+    });
+  }
+
+  /**
    * Replace the full messages list on an edge (used after scraping a conversation).
    */
   async updateMessages(profileId: string, messages: MessageObject[]): Promise<unknown> {

@@ -119,6 +119,7 @@ class DynamoDBApiService(BaseService):
             'onboarding_completed',
             'onboarding_step',
             'comment_concierge_mode',
+            'mutual_scrape_opt_in',
         ]
         for field in allowed_profile_fields:
             if field in body and body[field] is not None:
@@ -318,6 +319,7 @@ class DynamoDBApiService(BaseService):
             'timezone': lambda v: isinstance(v, str) and len(v) <= 50,
             'digest_opted_out': lambda v: isinstance(v, bool),
             'comment_concierge_mode': lambda v: isinstance(v, str) and v in {'automated', 'manual', 'off'},
+            'mutual_scrape_opt_in': lambda v: isinstance(v, bool),
         }
         validator = validators.get(field)
         if not validator:

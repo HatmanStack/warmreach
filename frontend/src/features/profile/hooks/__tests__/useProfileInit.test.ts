@@ -9,6 +9,10 @@ vi.mock('@/shared/hooks', () => ({
   useToast: vi.fn(),
 }));
 
+vi.mock('@/features/profile/contexts/UserProfileContext', () => ({
+  useUserProfile: () => ({ userProfile: null }),
+}));
+
 describe('useProfileInit', () => {
   const mockExecute = vi.fn();
   const mockReset = vi.fn();
