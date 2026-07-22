@@ -23,6 +23,7 @@ The `shared_services/monetization.py` module contains no-op stubs. All Lambda co
 ## Project Overview
 
 WarmReach is a monorepo with three main components:
+
 - **frontend/**: React 19 + TypeScript + Vite application
 - **client/**: Electron tray app + Node.js Express backend with Puppeteer for LinkedIn automation
 - **backend/**: AWS SAM serverless stack (Python 3.13 Lambdas + DynamoDB + Cognito + WebSocket API)
@@ -79,7 +80,9 @@ npm run electron:build
 ## Architecture
 
 ### Frontend (`frontend/src/`)
+
 Feature-based organization with barrel exports:
+
 - `features/auth/` - Cognito authentication
 - `features/connections/` - LinkedIn connection management
 - `features/messages/` - Messaging system
@@ -93,6 +96,7 @@ Feature-based organization with barrel exports:
 - `shared/services/commandService.ts` - Command dispatch to Electron agent
 
 Path aliases (configured in `tsconfig.json` and `vite.config.ts`):
+
 - `@/components` -> `src/shared/components`
 - `@/hooks` -> `src/shared/hooks`
 - `@/services` -> `src/shared/services`
@@ -100,7 +104,9 @@ Path aliases (configured in `tsconfig.json` and `vite.config.ts`):
 - `@` -> `src`
 
 ### Client (`client/`)
+
 Electron tray app + Express backend with domain-driven architecture:
+
 - `electron-main.js` - Electron main process (tray-only, auto-updater)
 - `src/transport/` - WebSocket client + command router
 - `src/auth/` - Electron Cognito authentication (libsodium Sealbox encryption)
@@ -112,7 +118,9 @@ Electron tray app + Express backend with domain-driven architecture:
 Queue-based LinkedIn interaction processing with session preservation and heal/restore capabilities.
 
 ### AWS Backend (`backend/`)
+
 SAM template (`template.yaml`) defines:
+
 - **ProfilesTable**: DynamoDB single-table design (PK/SK + GSI1, TTL enabled)
 - **WebSocket API**: API Gateway V2 for real-time command dispatch
 - **HttpApi**: API Gateway V2 with Cognito JWT authorizer
@@ -120,14 +128,19 @@ SAM template (`template.yaml`) defines:
 - **Lambda Functions** (Python 3.13):
   - `websocket-connect/disconnect/default/` - WebSocket lifecycle + message routing
   - `command-dispatch/` - Command creation and dispatch to agent
-  - `edge-processing/` - Edge data processing + RAGStack search/ingest
+  - `linkedin-action-gate/` - Quota-gated LinkedIn action dispatch (claim-before-send)
+  - `edge-crud/` - Edge data processing (CRUD, notes, activity)
+  - `ragstack-ops/` - RAGStack search, ingest, status proxy
+  - `analytics-insights/` - Insights, analytics, and scoring operations
   - `dynamodb-api/` - User settings/profile CRUD
-  - `llm/` - OpenAI/Bedrock LLM operations
+  - `llm/` - OpenAI LLM operations (quota-metered)
   - `client-downloads/` - Per-platform desktop client download URLs (public, no JWT auth)
 
 Lambdas share code via `lambdas/shared/python/`:
+
 - `shared_services/base_service.py` - Base class for all service layers
 - `shared_services/circuit_breaker.py` - Circuit breaker pattern (public API: `on_success()`/`on_failure()`)
+- `shared_services/command_dispatch_core.py` - Community-clean command-creation core (record, rate-limit, dispatch)
 - `shared_services/dynamodb_types.py` - TypedDict definitions for DynamoDB item schemas
 - `shared_services/edge_constants.py` - Edge-related constants
 - `shared_services/edge_data_service.py` - Edge CRUD operations
@@ -150,12 +163,15 @@ Lambdas share code via `lambdas/shared/python/`:
 - `errors/` - Shared exception classes (`ServiceError`, `ValidationError`, etc.)
 
 ### RAGStack-Lambda (separate nested stack)
+
 Optional nested stack from [RAGStack-Lambda](https://github.com/HatmanStack/RAGStack-Lambda):
+
 - Vector embeddings + semantic search via Bedrock Knowledge Base
 - Connected via `RAGSTACK_GRAPHQL_ENDPOINT` and `RAGSTACK_API_KEY` env vars
 - Conditional deployment via `DeployRAGStack` parameter
 
 ### Test Structure
+
 - **Frontend**: `frontend/src/**/*.test.{ts,tsx}` - Vitest + Testing Library
 - **Client**: `client/src/**/*.test.js` - Vitest
 - **Backend**: `tests/backend/unit/` - pytest with moto (AWS mocking)
@@ -170,12 +186,13 @@ Optional nested stack from [RAGStack-Lambda](https://github.com/HatmanStack/RAGS
 - **State Management**: React Query (`@tanstack/react-query`)
 - **UI Components**: Radix UI primitives with Tailwind CSS
 - **Logging**: Winston (client), Python logging (lambdas)
-- **AI Integration**: OpenAI API + AWS Bedrock (configurable model ID). No Google Gemini.
+- **AI Integration**: OpenAI API for all LLM operations; AWS Bedrock only for RAGStack vector embeddings. No Google Gemini.
 - **Auto-update**: electron-updater publishing to GitHub Releases
 
 ## Environment Setup
 
 Required `.env` variables (see `.env.example`):
+
 - `VITE_API_URL`, `VITE_COGNITO_*`, `VITE_WEBSOCKET_URL` - Frontend config
 - `OPENAI_API_KEY_ARN` (SSM SecureString ARN), `BEDROCK_MODEL_ID` - AI config
 - AWS credentials for SAM deployment

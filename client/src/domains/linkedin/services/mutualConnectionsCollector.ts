@@ -7,7 +7,7 @@
  * following the container-walk pattern in puppeteerService.extractProfilePictures
  * rather than a flat link set).
  *
- * Verbatim/public per ADR-8, but inert until wired behind the consent gate
+ * Verbatim/public per B-2 ADR-8, but inert until wired behind the consent gate
  * (Task 6). Degrades gracefully: if the surface is absent for a contact, or a
  * navigation fails, it returns an empty list and never throws into the
  * ingestion loop.

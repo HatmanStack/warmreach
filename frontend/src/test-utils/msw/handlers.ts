@@ -24,8 +24,40 @@ export const handlers = [
     });
   }),
 
-  // POST /analytics — analytics, insights, scoring, opportunities
+  // POST /analytics — analytics, insights, scoring
   http.post('*/analytics', () => {
+    return HttpResponse.json({
+      statusCode: 200,
+      body: JSON.stringify({ results: [] }),
+    });
+  }),
+
+  // POST /opportunities — opportunity-tracker CRUD (pro)
+  http.post('*/opportunities', () => {
+    return HttpResponse.json({
+      statusCode: 200,
+      body: JSON.stringify({ results: [] }),
+    });
+  }),
+
+  // POST /opportunity-agent — Open Claw agent control plane (pro)
+  http.post('*/opportunity-agent', () => {
+    return HttpResponse.json({
+      statusCode: 200,
+      body: JSON.stringify({ results: [] }),
+    });
+  }),
+
+  // POST /goal-intelligence — goal evidence/assessment/checklist (pro)
+  http.post('*/goal-intelligence', () => {
+    return HttpResponse.json({
+      statusCode: 200,
+      body: JSON.stringify({ results: [] }),
+    });
+  }),
+
+  // POST /network-intelligence — warm intro / graph / influence / gaps (pro)
+  http.post('*/network-intelligence', () => {
     return HttpResponse.json({
       statusCode: 200,
       body: JSON.stringify({ results: [] }),

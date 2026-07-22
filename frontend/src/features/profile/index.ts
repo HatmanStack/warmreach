@@ -9,11 +9,6 @@ export { UserProfileProvider, useUserProfile } from './contexts/UserProfileConte
 
 // Components
 export { ActivityTimeline } from './components/ActivityTimeline';
-export { ProfileForm } from './components/ProfileForm';
-export { InterestsEditor } from './components/InterestsEditor';
-export { DesktopClientDownloadPrompt } from './components/DesktopClientDownloadPrompt';
-export { ProfilePreview } from './components/ProfilePreview';
-export { ExportData } from './components/ExportData';
 
 // Types
 export type { ProfileData } from './hooks/useProfileForm';

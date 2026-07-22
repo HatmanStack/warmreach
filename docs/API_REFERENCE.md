@@ -52,7 +52,7 @@ Runs locally in the Electron tray app or as a standalone Express server on port 
 
 ## AWS Cloud API
 
-All endpoints require a Cognito JWT in the `Authorization: Bearer <token>` header.
+All endpoints require a Cognito JWT in the `Authorization: Bearer <token>` header, except the public `/client-downloads` route and OPTIONS preflight requests.
 
 ### Commands (WebSocket Dispatch)
 
@@ -62,6 +62,14 @@ All endpoints require a Cognito JWT in the `Authorization: Bearer <token>` heade
 | `/commands`             | `GET`  | List commands                                   |
 | `/commands/{commandId}` | `GET`  | Get command status                              |
 | `/commands/{commandId}` | `PUT`  | Update command state                            |
+
+### LinkedIn Actions (`/linkedin-actions`)
+
+| Endpoint            | Method | Description                                                   |
+| ------------------- | ------ | ------------------------------------------------------------- |
+| `/linkedin-actions` | `POST` | User-initiated LinkedIn action dispatch to the Electron agent |
+
+Served by the `linkedin-action-gate` Lambda, which dispatches the action to the Electron agent in-process via the community-clean command core (ADR-009).
 
 ### Profile & Settings (DynamoDB API)
 
@@ -79,6 +87,14 @@ All endpoints require a Cognito JWT in the `Authorization: Bearer <token>` heade
 | `/llm`      | `POST` | Operations: `generate_ideas`, `research_selected_ideas`, `get_research_result`, `synthesize_research`, `generate_message`, `analyze_message_patterns` |
 | `/edges`    | `POST` | Operations: `get_connections_by_status`, `upsert_status`, `add_message`, `update_messages`, `get_messages`, `check_exists`                            |
 | `/ragstack` | `POST` | Operations: `search`, `ingest`, `status`                                                                                                              |
+
+### Client Downloads (`/client-downloads`)
+
+| Endpoint            | Method | Description                                                     |
+| ------------------- | ------ | --------------------------------------------------------------- |
+| `/client-downloads` | `GET`  | Per-platform desktop client download URLs (public, no JWT auth) |
+
+Served by the `client-downloads` Lambda. Returns the per-platform download URLs from the `CLIENT_DOWNLOAD_{MAC,WIN,LINUX}` template parameters; `s3://` values are returned as short-lived presigned URLs.
 
 ## Authentication
 

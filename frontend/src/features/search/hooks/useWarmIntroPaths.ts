@@ -1,4 +1,6 @@
-// Reviewed against pro 2026-04-28: source-side TS-correctness fixes do not affect community stub semantics.
+// Reviewed against pro 2026-07-20: the get_warm_intro_paths route move
+// (analytics -> network-intelligence, analytics-insights split) does not affect
+// this community stub, which returns a no-op result and never calls the API.
 export interface IntroPathNode {
   profileId: string;
   firstName: string;

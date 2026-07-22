@@ -33,28 +33,32 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 
 #### Lambda Functions
 
-| Function           | Route                                     | Purpose                                                       |
-| ------------------ | ----------------------------------------- | ------------------------------------------------------------- |
-| `command-dispatch` | `POST/GET /commands`                      | Command creation and dispatch to Electron agent via WebSocket |
-| `dynamodb-api`     | `GET/POST /dynamodb`, `/profiles`         | User settings, profile CRUD                                   |
-| `edge-processing`  | `POST /edges`, `/ragstack`                | Connection edge management, RAGStack search/ingest            |
-| `llm`              | `POST /llm`                               | OpenAI/Bedrock AI operations (quota-metered)                  |
-| `client-downloads` | `GET /client-downloads`                   | Per-platform desktop client download URLs (public, no JWT auth) |
-| `websocket-*`      | WebSocket `$connect/$disconnect/$default` | WebSocket lifecycle and message routing                       |
+| Function               | Route                                     | Purpose                                                         |
+| ---------------------- | ----------------------------------------- | --------------------------------------------------------------- |
+| `command-dispatch`     | `POST/GET /commands`                      | Command creation and dispatch to Electron agent via WebSocket   |
+| `linkedin-action-gate` | `POST /linkedin-actions`                  | Quota-gated LinkedIn action dispatch (claim-before-send)        |
+| `dynamodb-api`         | `GET/POST /dynamodb`, `/profiles`         | User settings, profile CRUD                                     |
+| `edge-crud`            | `POST /edges`                             | Connection edge CRUD, notes, activity, lifecycle                |
+| `ragstack-ops`         | `POST /ragstack`                          | RAGStack search, ingest, status proxy                           |
+| `analytics-insights`   | `POST /analytics`                         | Insights, analytics, and scoring operations                     |
+| `llm`                  | `POST /llm`                               | OpenAI AI operations (quota-metered)                            |
+| `client-downloads`     | `GET /client-downloads`                   | Per-platform desktop client download URLs (public, no JWT auth) |
+| `websocket-*`          | WebSocket `$connect/$disconnect/$default` | WebSocket lifecycle and message routing                         |
 
 #### Shared Services (`lambdas/shared/python/shared_services/`)
 
-| Module                 | Purpose                                              |
-| ---------------------- | ---------------------------------------------------- |
-| `base_service.py`      | Base class for service layers                        |
-| `websocket_service.py` | WebSocket @connections API helper                    |
-| `ragstack_client.py`   | RAGStack GraphQL client with circuit breaker + retry |
-| `circuit_breaker.py`   | Circuit breaker pattern                              |
-| `ingestion_service.py` | Profile data ingestion                               |
-| `observability.py`     | Correlation context and structured JSON logging      |
-| `message_utils.py`    | Shared message analysis utilities                    |
-| `dynamodb_types.py`   | TypedDict definitions for DynamoDB item schemas      |
-| `protocols.py`        | Typing-only Protocol DI contracts for handler utilities |
+| Module                     | Purpose                                                              |
+| -------------------------- | -------------------------------------------------------------------- |
+| `base_service.py`          | Base class for service layers                                        |
+| `websocket_service.py`     | WebSocket @connections API helper                                    |
+| `ragstack_client.py`       | RAGStack GraphQL client with circuit breaker + retry                 |
+| `circuit_breaker.py`       | Circuit breaker pattern                                              |
+| `command_dispatch_core.py` | Community-clean command-creation core (record, rate-limit, dispatch) |
+| `ingestion_service.py`     | Profile data ingestion                                               |
+| `observability.py`         | Correlation context and structured JSON logging                      |
+| `message_utils.py`         | Shared message analysis utilities                                    |
+| `dynamodb_types.py`        | TypedDict definitions for DynamoDB item schemas                      |
+| `protocols.py`             | Typing-only Protocol DI contracts for handler utilities              |
 
 ### RAGStack (optional nested stack)
 
@@ -66,8 +70,11 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 Frontend (React)
   +-- HTTP API -> Lambda (Cognito JWT)
   |     +-- /commands -> command-dispatch -> WebSocket -> Electron agent
+  |     +-- /linkedin-actions -> linkedin-action-gate -> command-dispatch (in-process) -> WebSocket -> agent
   |     +-- /dynamodb, /profiles -> dynamodb-api -> DynamoDB
-  |     +-- /edges, /ragstack -> edge-processing -> DynamoDB + RAGStack
+  |     +-- /edges -> edge-crud -> DynamoDB
+  |     +-- /ragstack -> ragstack-ops -> DynamoDB + RAGStack
+  |     +-- /analytics -> analytics-insights -> DynamoDB
   |     +-- /llm -> llm -> OpenAI API
   +-- WebSocket API -> Lambda
         +-- $connect -> JWT validation, connection tracking
@@ -77,20 +84,20 @@ Frontend (React)
 Electron Client (user's machine)
   +-- WebSocket <- receives commands from backend
   +-- Puppeteer -> LinkedIn browser automation
-  +-- HTTP -> edge-processing Lambda (profile ingestion)
+  +-- HTTP -> edge-crud Lambda (profile ingestion)
   +-- Credentials stored locally only (Sealbox encrypted)
 ```
 
 ## DynamoDB Schema (single table)
 
-| Entity          | PK                 | SK                              | Purpose                      |
-| --------------- | ------------------ | ------------------------------- | ---------------------------- |
-| User settings   | `USER#{sub}`       | `SETTINGS`                      | Preferences, LinkedIn config |
-| Usage counters  | `USER#{sub}`       | `USAGE#daily` / `USAGE#monthly` | Quota metering               |
-| Connection edge | `USER#{sub}`       | `PROFILE#{id_b64}`              | User-to-profile relationship |
-| Profile edge    | `PROFILE#{id_b64}` | `USER#{sub}`                    | Reverse lookup               |
-| WebSocket conn  | `WSCONN#{connId}`  | `CONN`                          | Active connection tracking   |
-| Command         | `COMMAND#{cmdId}`  | `CMD`                           | Command state machine        |
+| Entity          | PK                 | SK                              | Purpose                               |
+| --------------- | ------------------ | ------------------------------- | ------------------------------------- |
+| User settings   | `USER#{sub}`       | `SETTINGS`                      | Preferences, LinkedIn config          |
+| Usage counters  | `USER#{sub}`       | `USAGE#daily` / `USAGE#monthly` | Quota metering                        |
+| Connection edge | `USER#{sub}`       | `PROFILE#{id_b64}`              | User-to-profile relationship          |
+| Profile edge    | `PROFILE#{id_b64}` | `USER#{sub}`                    | Reverse lookup                        |
+| WebSocket conn  | `WSCONN#{connId}`  | `CONN`                          | Active connection tracking            |
+| Command         | `COMMAND#{cmdId}`  | `CMD`                           | Command item lifecycle (status field) |
 
 ## Authentication
 

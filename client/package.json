@@ -29,6 +29,7 @@
   "dependencies": {
     "cheerio": "^1.2.0",
     "cors": "^2.8.6",
+    "domhandler": "^5.0.3",
     "dotenv": "^17.4.2",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.8.9",

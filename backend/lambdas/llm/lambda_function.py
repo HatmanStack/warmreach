@@ -277,9 +277,10 @@ def lambda_handler(event, _context):
                     logger.error('Feature flag check failed for %s, denying request', feature_to_check)
                     return api_response(503, {'error': 'Feature availability check failed'}, event)
 
-        # Pre-call quota reservation (ADR-B). In the community edition the
-        # reservation and release are no-ops, but we keep the plumbing so the
-        # handler contract stays identical between editions.
+        # Pre-call quota reservation (ADR-B). We reserve quota before the paid
+        # OpenAI call, mirroring pro; in the community edition the reservation
+        # and release are no-ops, but the plumbing keeps the handler contract
+        # identical between editions.
         reserved = False
         if op in METERED_OPS and _quota_service:
             try:

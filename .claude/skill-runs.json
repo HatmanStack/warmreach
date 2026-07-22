@@ -3,7 +3,9 @@
     "skill": "audit",
     "date": "2026-03-13",
     "plan": "2026-03-13-audit-9-of-10",
-    "audits": ["eval"]
+    "audits": [
+      "eval"
+    ]
   },
   {
     "skill": "brainstorm",
@@ -19,7 +21,11 @@
     "skill": "audit",
     "date": "2026-03-19",
     "plan": "2026-03-19-audit-warmreach-pro",
-    "audits": ["health", "eval", "docs"]
+    "audits": [
+      "health",
+      "eval",
+      "docs"
+    ]
   },
   {
     "skill": "brainstorm",
@@ -35,7 +41,11 @@
     "skill": "audit",
     "date": "2026-03-22",
     "plan": "2026-03-22-audit-warmreach-pro",
-    "audits": ["health", "eval", "docs"]
+    "audits": [
+      "health",
+      "eval",
+      "docs"
+    ]
   },
   {
     "skill": "brainstorm",
@@ -97,7 +107,11 @@
     "skill": "audit",
     "date": "2026-03-27",
     "plan": "2026-03-27-audit-warmreach-pro",
-    "audits": ["health", "eval", "docs"]
+    "audits": [
+      "health",
+      "eval",
+      "docs"
+    ]
   },
   {
     "skill": "pipeline",
@@ -153,13 +167,21 @@
     "skill": "audit",
     "date": "2026-04-15",
     "plan": "2026-04-15-audit-warmreach-pro",
-    "audits": ["health", "eval", "docs"]
+    "audits": [
+      "health",
+      "eval",
+      "docs"
+    ]
   },
   {
     "skill": "audit",
     "date": "2026-06-19",
     "plan": "2026-06-19-audit-warmreach",
-    "audits": ["health", "eval", "docs"]
+    "audits": [
+      "health",
+      "eval",
+      "docs"
+    ]
   },
   {
     "skill": "pipeline",
@@ -172,5 +194,21 @@
     "date": "2026-07-20",
     "plan": "2026-07-19-b2-open-claw",
     "verdict": "NO-GO"
+  },
+  {
+    "skill": "audit",
+    "date": "2026-07-20",
+    "plan": "2026-07-20-audit-warmreach",
+    "audits": [
+      "health",
+      "eval",
+      "docs"
+    ]
+  },
+  {
+    "skill": "pipeline",
+    "date": "2026-07-21",
+    "plan": "2026-07-20-audit-warmreach",
+    "verdict": "VERIFIED"
   }
 ]

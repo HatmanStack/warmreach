@@ -153,6 +153,10 @@ Resources:
           AttributeType: S
         - AttributeName: GSI1SK
           AttributeType: S
+        - AttributeName: GSI3PK
+          AttributeType: S
+        - AttributeName: GSI3SK
+          AttributeType: S
       KeySchema:
         - AttributeName: PK
           KeyType: HASH
@@ -167,6 +171,18 @@ Resources:
             - AttributeName: GSI1PK
               KeyType: HASH
             - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        # GSI3 — kept for single-table schema parity with the pro edition. The
+        # Opportunities agent that populates GSI3PK/GSI3SK is pro-only, so this
+        # sparse index is always empty in the community edition (no writer sets
+        # its keys) and is harmless. Projection ALL mirrors the pro definition.
+        - IndexName: GSI3
+          KeySchema:
+            - AttributeName: GSI3PK
+              KeyType: HASH
+            - AttributeName: GSI3SK
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
@@ -467,9 +483,9 @@ Resources:
               Authorizer: NONE
 
   # LinkedIn Action Gate — reserves the shared li-actions quota bucket before
-  # forwarding to command-dispatch. In the community edition the QuotaService is a
-  # no-op stub, so this is a thin passthrough; the frontend uses one path in both
-  # editions.
+  # creating the command in-process via command_dispatch_core (no Lambda hop). In
+  # the community edition the QuotaService is a no-op stub, so this is a thin
+  # passthrough; the frontend uses one path in both editions.
   LinkedinActionGateFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -480,12 +496,20 @@ Resources:
       MemorySize: 256
       Environment:
         Variables:
-          COMMAND_DISPATCH_FUNCTION_NAME: !Ref CommandDispatchFunction
+          WEBSOCKET_ENDPOINT: !Sub 'https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ProfilesTable
-        - LambdaInvokePolicy:
-            FunctionName: !Ref CommandDispatchFunction
+        # In-process command dispatch performs the WebSocket send that used to
+        # live in command-dispatch, so the gate needs execute-api:ManageConnections
+        # scoped to this stack's WebSocket API stage (mirrors
+        # WebSocketManageConnectionsRole / command-dispatch). DynamoDBCrudPolicy
+        # already authorizes the TransactWriteItems used by the atomic reserve.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/${Environment}/*'
       Events:
         LinkedinActionsApi:
           Type: HttpApi
@@ -562,6 +586,10 @@ Resources:
             - DeployRAGStackCondition
             - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiKey
             - !Ref RagstackApiKey
+      # Community analytics-insights is DynamoDB-CRUD only. The opportunity-agent,
+      # goal-intelligence, opportunities, and network-intelligence ops (and their
+      # SSM / states:* IAM) are pro-only and live in separate pro Lambdas that are
+      # excluded from the community sync — so they never appear in this template.
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ProfilesTable
@@ -580,6 +608,13 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+
+  # Pro-only Lambdas peeled out of analytics-insights (Architecture 8->9) are
+  # excluded from the community sync, so they intentionally do NOT appear here:
+  #   - OpportunitiesFunction (POST /opportunities)
+  #   - OpportunityAgentFunction (POST /opportunity-agent; carries states:*)
+  #   - GoalIntelligenceFunction (POST /goal-intelligence; SSM for the OpenAI key)
+  #   - NetworkIntelligenceFunction (POST /network-intelligence)
 
   RagstackOpsFunction:
     Type: AWS::Serverless::Function

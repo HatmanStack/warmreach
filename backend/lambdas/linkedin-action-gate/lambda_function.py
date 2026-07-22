@@ -2,11 +2,12 @@
 
 The manual counterpart to the agent's ``agent-action-task/gate_dispatch``: it
 reserves the shared ``li-actions`` quota bucket before a user-initiated
-connect / message / follow, then forwards the request to the community-clean
-``command-dispatch`` Lambda (ADR-8 — no pro/agent/quota logic is ever added to
-command-dispatch itself). Because the agent and the UI both funnel into
-command-dispatch but each reserves exactly once (the agent in gate_dispatch,
-the UI here), a real LinkedIn action is never double-metered.
+connect / message / follow, then creates the command by calling the
+community-clean ``command_dispatch_core`` **in-process** (ADR-009 — no
+pro/agent/quota logic is ever added to that core; quota reservation stays here in
+the gate). Because the agent and the UI both funnel into the same core but each
+reserves exactly once (the agent in gate_dispatch, the UI here), a real LinkedIn
+action is never double-metered.
 
 Over the daily/monthly li-actions cap → 429; a metering-infra failure → 503
 (fail closed). Metering is a no-op in the community edition, where the injected
@@ -20,6 +21,7 @@ import os
 import boto3
 from botocore.exceptions import ClientError
 from errors.exceptions import NotFoundError, QuotaExceededError
+from shared_services.command_dispatch_core import create_command
 from shared_services.monetization import QuotaService, ensure_tier_exists
 from shared_services.observability import setup_correlation_context
 from shared_services.request_utils import api_response, extract_user_id
@@ -28,10 +30,8 @@ logger = logging.getLogger()
 logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
 
 TABLE_NAME = os.environ['DYNAMODB_TABLE_NAME']
-COMMAND_DISPATCH_FUNCTION_NAME = os.environ['COMMAND_DISPATCH_FUNCTION_NAME']
 
 table = boto3.resource('dynamodb').Table(TABLE_NAME)
-lambda_client = boto3.client('lambda')
 _quota_service = QuotaService(table)
 
 _ALLOWED_METHODS = 'POST,OPTIONS'
@@ -54,22 +54,6 @@ def _release(user_id: str, command_type: str) -> None:
         _quota_service.release_li_action_usage(user_id, command_type)
     except Exception:
         logger.exception('release_li_action_usage failed for %s', command_type)
-
-
-def _synthesize_command_event(user_id: str, command_type: str, payload: dict) -> dict:
-    """Build an authenticated command-dispatch event. This gate is a trusted
-    server component that has already verified the caller's JWT, so it injects
-    that identity as the sub — the same pattern the agent's gate_dispatch uses."""
-    return {
-        'httpMethod': 'POST',
-        'rawPath': '/commands',
-        'requestContext': {
-            'http': {'method': 'POST'},
-            'authorizer': {'jwt': {'claims': {'sub': user_id}}},
-        },
-        'headers': {},
-        'body': json.dumps({'type': command_type, 'payload': payload}),
-    }
 
 
 def lambda_handler(event, context):
@@ -136,33 +120,27 @@ def lambda_handler(event, context):
             allowed_methods=_ALLOWED_METHODS,
         )
 
-    # Forward to the community-clean command-dispatch Lambda (ADR-8).
+    # Create the command by calling the community-clean core in-process (ADR-009).
+    # Every clean, definitely-not-sent outcome is RETURNED as a status code (409 no
+    # agent / 429 rate-limited / 503 agent-lookup-or-disconnect) and refunds via the
+    # status_code != 200 branch below. A RAISED create_command is therefore now
+    # exclusively an at/after-WebSocket-dispatch (maybe-sent) failure.
     try:
-        resp = lambda_client.invoke(
-            FunctionName=COMMAND_DISPATCH_FUNCTION_NAME,
-            InvocationType='RequestResponse',
-            Payload=json.dumps(_synthesize_command_event(user_id, command_type, body.get('payload', {}))).encode(
-                'utf-8'
-            ),
-        )
-        result = json.loads(resp['Payload'].read())
+        status_code, body_obj = create_command(user_id, command_type, body.get('payload', {}))
     except Exception:
-        logger.exception('command-dispatch invoke failed for %s', command_type)
-        _release(user_id, command_type)
+        # A real LinkedIn send may already have dispatched over WebSocket before this
+        # exception, so we must NOT refund — keeping the reservation stops a dispatched
+        # action from escaping the daily cap. Fail closed with 503; the clean,
+        # definitely-not-sent cases still refund via the status_code != 200 branch.
+        logger.exception('command creation failed post-dispatch for %s; keeping reservation', command_type)
         return api_response(
             503, {'error': 'Dispatch unavailable, please retry'}, event, allowed_methods=_ALLOWED_METHODS
         )
 
-    status_code = result.get('statusCode', 502)
-    try:
-        body_obj = json.loads(result.get('body') or '{}')
-    except (TypeError, json.JSONDecodeError):
-        body_obj = {}
-
-    # command-dispatch did not accept the send (rate-limited, agent offline, etc.)
-    # — refund so an un-dispatched action doesn't burn the daily cap. (A 200 means
-    # dispatched to the agent; an action that later fails on-device still counts,
-    # mirroring the agent gate's dispatch-time metering.)
+    # The core did not accept the send (rate-limited, agent offline, etc.) — refund
+    # so an un-dispatched action doesn't burn the daily cap. (A 200 means dispatched
+    # to the agent; an action that later fails on-device still counts, mirroring the
+    # agent gate's dispatch-time metering.)
     if status_code != 200:
         _release(user_id, command_type)
 

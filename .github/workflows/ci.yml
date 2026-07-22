@@ -25,6 +25,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # NOTE: the community smoke test intentionally omits `npm audit`. The pro
+      # CI runs it scoped to production deps (`npm audit --omit=dev`); the
+      # community gate stays lean and deterministic.
+
       # Frontend
       - uses: actions/setup-node@v6
         with:

@@ -20,6 +20,7 @@ node scripts/deploy/deploy-sam.js
 ```
 
 The script will prompt for:
+
 - Stack name (e.g., `warmreach-prod`)
 - Region (us-east-1 recommended for Bedrock access)
 - Environment (`dev` or `prod`)
@@ -38,16 +39,16 @@ sam deploy --guided
 
 Key parameter prompts:
 
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| `Environment` | `prod` | `dev` includes localhost CORS origins |
-| `IncludeDevOrigins` | `false` | Set `true` for dev stacks |
-| `ProductionOrigins` | `https://app.warmreach.com` | Comma-separated allowed origins |
-| `ProductionOrigin` | `https://app.warmreach.com` | Primary origin for S3 CORS |
-| `OpenAIApiKey` | your key | For LLM Lambda |
-| `BedrockModelId` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Inert — set as an env var but read by no code (the `llm` Lambda is OpenAI-only); accept the default |
-| `DeployRAGStack` | `true` or `false` | Nested RAGStack or use external |
-| `AdminEmail` | your email | Required if nested RAGStack |
+| Parameter           | Value                                          | Notes                                                                                               |
+| ------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `Environment`       | `prod`                                         | `dev` includes localhost CORS origins                                                               |
+| `IncludeDevOrigins` | `false`                                        | Set `true` for dev stacks                                                                           |
+| `ProductionOrigins` | `https://app.warmreach.com`                    | Comma-separated allowed origins                                                                     |
+| `ProductionOrigin`  | `https://app.warmreach.com`                    | Primary origin for S3 CORS                                                                          |
+| `OpenAIApiKey`      | your key                                       | For LLM Lambda                                                                                      |
+| `BedrockModelId`    | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Inert — set as an env var but read by no code (the `llm` Lambda is OpenAI-only); accept the default |
+| `DeployRAGStack`    | `true` or `false`                              | Nested RAGStack or use external                                                                     |
+| `AdminEmail`        | your email                                     | Required if nested RAGStack                                                                         |
 
 Deployment takes 5-20 minutes depending on whether RAGStack is nested.
 
@@ -78,14 +79,14 @@ aws cloudformation describe-stacks --stack-name <stack-name> \
 
 Key outputs you need:
 
-| Output | Used By |
-|--------|---------|
-| `ApiUrl` | Frontend `VITE_API_GATEWAY_URL`, Client `API_GATEWAY_BASE_URL` |
-| `UserPoolId` | Frontend `VITE_COGNITO_USER_POOL_ID` |
-| `UserPoolClientId` | Frontend `VITE_COGNITO_USER_POOL_WEB_CLIENT_ID` |
-| `DynamoDBTableName` | Client `DYNAMODB_TABLE` |
-| `WebSocketApiUrl` | Frontend `VITE_WEBSOCKET_URL` |
-| `RAGStackGraphQLEndpoint` | Client `RAGSTACK_GRAPHQL_ENDPOINT` (if nested) |
+| Output                    | Used By                                                        |
+| ------------------------- | -------------------------------------------------------------- |
+| `ApiUrl`                  | Frontend `VITE_API_GATEWAY_URL`, Client `API_GATEWAY_BASE_URL` |
+| `UserPoolId`              | Frontend `VITE_COGNITO_USER_POOL_ID`                           |
+| `UserPoolClientId`        | Frontend `VITE_COGNITO_USER_POOL_WEB_CLIENT_ID`                |
+| `DynamoDBTableName`       | Client `DYNAMODB_TABLE`                                        |
+| `WebSocketApiUrl`         | Frontend `VITE_WEBSOCKET_URL`                                  |
+| `RAGStackGraphQLEndpoint` | Client `RAGSTACK_GRAPHQL_ENDPOINT` (if nested)                 |
 
 ## 3. Create First Cognito User
 
@@ -153,11 +154,13 @@ node scripts/dev-tools/generate-device-keypair.js
 ```
 
 Set the public key in frontend config:
+
 ```env
 VITE_CRED_SEALBOX_PUBLIC_KEY_B64=<base64 public key>
 ```
 
 Set the private key path in client config:
+
 ```env
 CRED_SEALBOX_PRIVATE_KEY_PATH=<path to private key>
 ```
@@ -172,15 +175,18 @@ npm install
 ```
 
 Configure the WebSocket URL either via:
+
 - Environment variable: `WARMREACH_WS_URL=wss://...`
 - Or through the Settings window in the tray menu after first launch
 
 Start in dev mode:
+
 ```bash
 npm run electron:dev
 ```
 
 Package for distribution:
+
 ```bash
 npm run electron:build
 ```
@@ -205,14 +211,18 @@ Users
   |
   +-- HTTP API Gateway
   |     +-- POST/GET /commands -> command-dispatch (create + dispatch commands)
-  |     +-- POST /edges, /ragstack -> edge-processing
+  |     +-- POST /linkedin-actions -> linkedin-action-gate (action dispatch)
+  |     +-- POST /edges -> edge-crud
+  |     +-- POST /ragstack -> ragstack-ops
+  |     +-- POST /analytics -> analytics-insights
   |     +-- GET/POST /dynamodb, /profiles -> dynamodb-api
   |     +-- POST /llm -> llm
+  |     +-- GET /client-downloads -> client-downloads (public, no auth)
   |
   +-- DynamoDB (single table)
   |     +-- USER#{sub} -> settings, quotas, usage counters
   |     +-- WSCONN#{connId} -> WebSocket connection tracking
-  |     +-- COMMAND#{cmdId} -> command state machine
+  |     +-- COMMAND#{cmdId} -> command item lifecycle (DynamoDB status field)
   |     +-- profiles, edges, etc.
   |
   +-- Electron Client (user's machine)
@@ -229,6 +239,7 @@ sam delete --stack-name <stack-name>
 ```
 
 If RAGStack was deployed as a nested stack, it is deleted automatically with the parent. If deployed separately, delete it independently:
+
 ```bash
 sam delete --stack-name <ragstack-stack-name>
 ```

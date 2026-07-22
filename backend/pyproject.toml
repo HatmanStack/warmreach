@@ -54,13 +54,21 @@ ignore_missing_imports = true
 # Meaningful checks that are GREEN on the current tree at introduction. These
 # run mypy's default analysis over typed call sites and signatures (catching the
 # TypedDict / Protocol / `str | None` boundary regressions this guardrail exists
-# to prevent) plus no-implicit-optional and redundant-cast detection.
+# to prevent) plus no-implicit-optional, redundant-cast, non-overlapping-equality
+# (`strict_equality`), and TypedDict/`**`-unpacking consistency (`extra_checks`).
+# Each was verified clean via `mypy -p shared_services` before being enabled;
+# `extra_checks` in particular keeps the Phase-0 §7.5 SFN task-event TypedDicts
+# (`shared_services/agent_task_events.py`) under stricter consistency checking.
 warn_redundant_casts = true
 no_implicit_optional = true
-# NOTE: the following stricter checks are intentionally OFF — each surfaces a
-# wall of pre-existing errors today and is a future ratchet:
+strict_equality = true
+extra_checks = true
+# NOTE: the following stricter checks are intentionally OFF — each surfaces
+# pre-existing errors today and is a future ratchet (violation counts as of this
+# change):
 #   check_untyped_defs      (var-annotated on untyped-def locals)
-#   warn_unused_ignores     (existing `# type: ignore` comments)
+#   warn_unused_ignores     (2 stale `# type: ignore` comments)
+#   warn_unreachable        (4 pre-existing unreachable branches)
 #   disallow_untyped_defs / strict mode
 
 # Future ratchet: these modules carry pre-existing type errors (TypedDict

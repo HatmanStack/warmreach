@@ -20,5 +20,3 @@ export function SuspenseFallback() {
     </div>
   );
 }
-
-export default SuspenseFallback;

@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Backend:** B-2 "Open Claw" autonomous opportunity agent — `opportunity-agent`
+  control plane (`POST /opportunity-agent`), the `agent-action-task` Step Functions
+  workers (gate-dispatch → confirm → dependency → await-confirmation), and the
+  `AgentActionStateMachine`. Actions claim-before-send and meter against a shared
+  `li-actions` quota bucket, so a real LinkedIn action is dispatched and metered
+  exactly once.
+- **Backend:** `linkedin-action-gate` (`POST /linkedin-actions`) — quota-gated
+  dispatch for user-initiated LinkedIn actions, metered against the same
+  `li-actions` bucket as the agent (free tier 20/day, 200/month).
+- **Backend:** `opportunity-reconciler` — scheduled EventBridge sweep of stuck
+  agent actions and research, backed by a sparse reconciliation GSI (query, not
+  table scan).
+- **Backend:** `digest-unsubscribe` (`GET /unsubscribe`) — one-click,
+  HMAC-validated weekly-digest unsubscribe.
+- **Backend / Frontend:** Warm-intro pathways — a per-user contact-to-contact
+  adjacency mesh and BFS pathfinding that surface warm introduction paths.
+- **Docs:** ADR-009 — the command-dispatch community-clean boundary
+  (agent/quota-agnostic core, quota reserved in the gates).
+- **CI:** `scripts/check-doc-tables.py` — a doc-table parity gate that fails when
+  the Lambda or shared-service tables in `CLAUDE.md` / `docs/ARCHITECTURE.md`
+  drift from `template.yaml` and `shared_services/`.
+
+### Changed
+
+- **Backend:** Split the 954-line `analytics-insights` Lambda into five
+  bounded-context deploy units (`analytics-insights`, `opportunities`,
+  `opportunity-agent`, `goal-intelligence`, `network-intelligence`) with scoped
+  IAM — only `opportunity-agent` carries `states:*`.
+- **Backend:** Collapsed the gate → `command-dispatch` Lambda hop into an
+  in-process shared `command_dispatch_core` call (ADR-009), removing a
+  Lambda-to-Lambda network hop from the LinkedIn send path while preserving the
+  claim-before-send and fail-closed metering invariants.
+- **Backend:** Reconciler now queries a sparse GSI for stuck rows instead of
+  scanning the table; agent confirmation polling backs off (30s → 5min).
+- **Backend:** Added an explicit `VALID_TRANSITIONS` FSM matrix to the agent
+  action lifecycle, typed + guarded SFN task-event boundaries, and explicit
+  timeouts on the remaining cross-Lambda invoke clients.
+
+### Fixed
+
+- **Backend:** `PAID_TIER_FEATURES` was missing `opportunity_agent`, so paid
+  users defaulted to `False` on the flag and were gated out of the agent. Added
+  the flag with a parity guard that every free-tier flag key is present on the
+  paid tier.
+- **Hygiene:** Declared the `domhandler` dependency, removed the orphaned
+  `backend/uv.lock` stub, pruned dead barrel re-exports and duplicate default
+  exports, and silenced knip false positives.
+
+### Docs
+
+- **Docs:** Described the `llm` Lambda as OpenAI-only (Bedrock scoped to RAGStack
+  embeddings); documented `POST /linkedin-actions`, `GET /unsubscribe`,
+  `GET /client-downloads`, and the four split routes; documented the B-2 agent
+  env vars, the `opportunity_agent` feature flag, and the `li-actions` metered
+  bucket; relabeled the `COMMAND#` item lifecycle (not a state machine) and
+  documented the real `AgentActionStateMachine`; and dropped the stale
+  `edge-processing` name from the community overlays.
+
 ## [1.20.0] - 2026-06-23
 
 Audit remediation: a unified pass over three audits (technical-debt health, 12-pillar
@@ -249,7 +309,7 @@ Initial cloud deployment of the platform: SAM backend hardening, frontend build 
 - **Security:** Replace `socket.getaddrinfo` DNS resolution in URL validation with parse-only SSRF check — eliminates Lambda thread blocking on DNS failures
 - **Security:** Fix Redis rate limiter middleware bypass — `next()` was called after 429 response, allowing rate-limited requests through
 - **Security:** Add optimistic concurrency (ConditionExpression) to EdgeOpportunityService tag/untag/stage operations — prevents duplicate entries from concurrent requests
-- **Security:** Strengthen profile_id validation with proper base64url regex (`^[A-Za-z0-9_\-]+=*$`)
+- **Security:** Strengthen profile*id validation with proper base64url regex (`^[A-Za-z0-9*\-]+=\*$`)
 - **Security:** Derive electron-store encryption key from machine-specific hash instead of static string
 - **Backend:** Fix PAID_TIER_FEATURES missing 17 feature flags — new paid subscribers now receive all 27 flags (goal_intelligence, comment_concierge, portfolio_metrics, etc.)
 - **Backend:** Cap notification `mark_all_read` at 500 items with per-item error handling to prevent Lambda timeout

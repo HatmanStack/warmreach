@@ -197,6 +197,8 @@ def dynamodb_table(aws_credentials):
                 {'AttributeName': 'SK', 'AttributeType': 'S'},
                 {'AttributeName': 'GSI1PK', 'AttributeType': 'S'},
                 {'AttributeName': 'GSI1SK', 'AttributeType': 'S'},
+                {'AttributeName': 'GSI3PK', 'AttributeType': 'S'},
+                {'AttributeName': 'GSI3SK', 'AttributeType': 'S'},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -204,6 +206,20 @@ def dynamodb_table(aws_credentials):
                     'KeySchema': [
                         {'AttributeName': 'GSI1PK', 'KeyType': 'HASH'},
                         {'AttributeName': 'GSI1SK', 'KeyType': 'RANGE'},
+                    ],
+                    'Projection': {'ProjectionType': 'ALL'},
+                    'ProvisionedThroughput': {
+                        'ReadCapacityUnits': 5,
+                        'WriteCapacityUnits': 5
+                    }
+                },
+                # GSI3 — sparse reconciliation index (matches template.yaml). moto
+                # requires every GSI key attribute to be declared above.
+                {
+                    'IndexName': 'GSI3',
+                    'KeySchema': [
+                        {'AttributeName': 'GSI3PK', 'KeyType': 'HASH'},
+                        {'AttributeName': 'GSI3SK', 'KeyType': 'RANGE'},
                     ],
                     'Projection': {'ProjectionType': 'ALL'},
                     'ProvisionedThroughput': {
@@ -321,6 +337,8 @@ def mock_dynamodb_resource(aws_credentials):
                 {'AttributeName': 'SK', 'AttributeType': 'S'},
                 {'AttributeName': 'GSI1PK', 'AttributeType': 'S'},
                 {'AttributeName': 'GSI1SK', 'AttributeType': 'S'},
+                {'AttributeName': 'GSI3PK', 'AttributeType': 'S'},
+                {'AttributeName': 'GSI3SK', 'AttributeType': 'S'},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -328,6 +346,20 @@ def mock_dynamodb_resource(aws_credentials):
                     'KeySchema': [
                         {'AttributeName': 'GSI1PK', 'KeyType': 'HASH'},
                         {'AttributeName': 'GSI1SK', 'KeyType': 'RANGE'},
+                    ],
+                    'Projection': {'ProjectionType': 'ALL'},
+                    'ProvisionedThroughput': {
+                        'ReadCapacityUnits': 5,
+                        'WriteCapacityUnits': 5
+                    }
+                },
+                # GSI3 — sparse reconciliation index (matches template.yaml). moto
+                # requires every GSI key attribute to be declared above.
+                {
+                    'IndexName': 'GSI3',
+                    'KeySchema': [
+                        {'AttributeName': 'GSI3PK', 'KeyType': 'HASH'},
+                        {'AttributeName': 'GSI3SK', 'KeyType': 'RANGE'},
                     ],
                     'Projection': {'ProjectionType': 'ALL'},
                     'ProvisionedThroughput': {
