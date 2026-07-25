@@ -146,6 +146,9 @@ function defaults() {
     clientDownloadWinUrl: '',
     clientDownloadLinuxUrl: '',
     clientDownloadVersion: '',
+    // Comma-separated Stripe price id allowlist for POST /billing checkout.
+    // Not a secret; blank rejects every checkout (fail closed).
+    stripeAllowedPriceIds: '',
     // Secret ARNs (populated from SSM PutParameter output; safe to persist)
     openaiApiKeyArn: '',
     stripeSecretKeyArn: '',
@@ -434,6 +437,14 @@ async function collectConfig(existing, account) {
     stackName: config.stackName,
   });
 
+  // Not a secret — a plain allowlist. POST /billing rejects any priceId that is
+  // not listed, and rejects every checkout when the list is blank (fail closed),
+  // so this must be set for checkout to work at all.
+  config.stripeAllowedPriceIds = await prompt(
+    'Stripe price ids allowed for checkout, comma-separated (e.g. price_1AbC...)',
+    existing.stripeAllowedPriceIds
+  );
+
   banner('Operational settings');
 
   config.sesVerifiedEmail = await prompt('SES verified sender email (blank to skip)', existing.sesVerifiedEmail);
@@ -517,6 +528,7 @@ function buildParamOverrides(config) {
   push('OpenAIApiKeyArn', config.openaiApiKeyArn);
   push('StripeSecretKeyArn', config.stripeSecretKeyArn);
   push('StripeWebhookSecretArn', config.stripeWebhookSecretArn);
+  push('StripeAllowedPriceIds', config.stripeAllowedPriceIds);
   // External RAGStack — only when deployRAGStack=false. Plaintext NoEcho param
   // until we migrate to SSM ARN pattern.
   push('RagstackGraphqlEndpoint', config.ragstackEndpoint);
@@ -663,7 +675,10 @@ function writeThreeEnvFiles(outputs) {
 
 function printHandoff(outputs, config) {
   const apiUrl = outputs.ApiUrl || '(unknown)';
-  const webhookUrl = `${apiUrl.replace(/\/$/, '')}/webhooks/stripe`;
+  // Must match the StripeWebhook event path in backend/template.yaml. A stale
+  // value here is silent: Stripe accepts the registration, payments succeed, and
+  // no entitlement is ever granted because the events 404.
+  const webhookUrl = `${apiUrl.replace(/\/$/, '')}/stripe-webhook`;
 
   banner('Next steps (manual)');
   console.log(`

@@ -132,7 +132,9 @@ SAM template (`template.yaml`) defines:
   - `edge-crud/` - Edge data processing (CRUD, notes, activity)
   - `ragstack-ops/` - RAGStack search, ingest, status proxy
   - `analytics-insights/` - Insights, analytics, and scoring operations
-  - `dynamodb-api/` - User settings/profile CRUD
+  - `dynamodb-api/` - User settings/profile CRUD (Pro additionally ships a
+    separate `billing-api` Lambda on `POST /billing`; this edition has no
+    billing surface)
   - `llm/` - OpenAI LLM operations (quota-metered)
   - `client-downloads/` - Per-platform desktop client download URLs (public, no JWT auth)
 

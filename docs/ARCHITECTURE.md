@@ -2,7 +2,7 @@
 
 WarmReach is a monorepo with three components: a React frontend, an Electron/Puppeteer client, and an AWS serverless backend.
 
-> **Note:** Billing, relationship scoring, message intelligence, tone analysis, send time recommendations, reply probability, priority inference, cluster detection, and advanced analytics are available in WarmReach Pro.
+> **Note:** Billing (a separate pro-only `billing-api` Lambda on `POST /billing`), relationship scoring, message intelligence, tone analysis, send time recommendations, reply probability, priority inference, cluster detection, and advanced analytics are available in WarmReach Pro.
 
 ## Components
 

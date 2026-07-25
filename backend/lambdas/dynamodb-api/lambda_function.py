@@ -25,9 +25,11 @@ TABLE_NAME = os.environ['DYNAMODB_TABLE_NAME']
 table = dynamodb.Table(TABLE_NAME)
 service = DynamoDBApiService(table)
 
-# CORS configuration — retained for _is_allowed_redirect_url validation
-ALLOWED_ORIGINS_ENV = os.environ.get('ALLOWED_ORIGINS', 'http://localhost:5173')
-ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_ENV.split(',') if o.strip()]
+# Billing (Stripe checkout + subscription management) is a WarmReach Pro
+# feature. In pro it lives in a separate billing-api Lambda on POST /billing;
+# the community edition ships no billing surface, so there is nothing to stub
+# here. The ALLOWED_ORIGINS list that used to sit at this spot only fed the
+# checkout redirect-URL validator and was already unused in this edition.
 
 _ALLOWED_METHODS = 'GET,POST,PUT,DELETE,OPTIONS'
 
