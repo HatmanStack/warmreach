@@ -656,6 +656,8 @@ Resources:
   # appear here:
   #   - BillingApiFunction (POST /billing; Stripe checkout + subscription
   #     management, carries the Stripe secret and its ssm:GetParameter grant)
+  # Its StripePriceTierMap parameter (the Stripe price -> tier allowlist that
+  # drives Starter/Pro entitlements) is likewise pro-only and absent here.
   # WarmReach Pro peeled these ops out of dynamodb-api so that every Stripe
   # dependency and credential is scoped to one function. The community
   # dynamodb-api below therefore needs no Stripe dependency, secret, or IAM.

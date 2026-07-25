@@ -57,6 +57,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 | `ingestion_service.py`     | Profile data ingestion                                               |
 | `observability.py`         | Correlation context and structured JSON logging                      |
 | `message_utils.py`         | Shared message analysis utilities                                    |
+| `model_config.py`          | Central registry of OpenAI model ids (env-overridable)               |
 | `dynamodb_types.py`        | TypedDict definitions for DynamoDB item schemas                      |
 | `protocols.py`             | Typing-only Protocol DI contracts for handler utilities              |
 
@@ -107,5 +108,5 @@ Electron Client (user's machine)
 
 ## AI Services
 
-- **OpenAI API**: Post idea generation (`gpt-5.2`), deep research (`o4-mini-deep-research`), synthesis (`gpt-5.2`), message generation (`gpt-5.2`), message pattern analysis (`gpt-4.1`)
+- **OpenAI API**: Post idea generation, deep research, synthesis, message generation, and analysis. Model ids are not hardcoded — every call site routes to a role in `shared_services/model_config.py` (`MODEL_GENERAL`, `MODEL_ANALYSIS`, `MODEL_DEEP_RESEARCH`), each env-overridable so an OpenAI retirement is answered by config rather than a deploy. Announced shutdown dates live in `MODEL_SHUTDOWNS` and are logged as a countdown on use. (The `DEFAULT_PLANNER_MODEL` role exists in the registry but its consumers — goal intelligence and the autonomous agent — are WarmReach Pro features absent from this edition.)
 - **AWS Bedrock**: RAGStack vector embeddings (Nova multimodal)

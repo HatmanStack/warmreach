@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -10,6 +11,7 @@ from typing import Any
 # Shared layer imports (from /opt/python via Lambda Layer)
 import openai
 from shared_services.base_service import BaseService
+from shared_services.model_config import MODEL_ANALYSIS, MODEL_DEEP_RESEARCH, MODEL_GENERAL, warn_if_deprecated
 
 # Retry configuration + wrapper for transient OpenAI errors. The canonical
 # implementation lives in the shared layer so it is reused everywhere; re-exported
@@ -67,6 +69,7 @@ OPERATION_TIMEOUTS: dict[str, int] = {
 # get_active_research won't auto-resume it (so it can't inject stale content into
 # the composer on the user's next visit) and the reconciler retires it.
 STALE_RESEARCH_HOURS = 6
+
 
 
 def parse_iso_datetime(value):
@@ -233,7 +236,7 @@ class LLMService(BaseService):
             )
 
             response = self.openai_client.responses.create(
-                model='gpt-5.2',
+                model=MODEL_GENERAL,
                 input=llm_prompt,
                 timeout=OPERATION_TIMEOUTS.get('generate_ideas', 60),
             )
@@ -333,8 +336,12 @@ class LLMService(BaseService):
         research_prompt = LINKEDIN_RESEARCH_PROMPT.format(topics=formatted_topics, user_data=formatted_user_data)
 
         try:
+            # o4-mini-deep-research retires 2026-10-23. Warn on every kickoff so
+            # the deadline is visible in CloudWatch rather than only in a code
+            # comment nobody re-reads.
+            warn_if_deprecated(MODEL_DEEP_RESEARCH, context='deep research kickoff')
             response = self.openai_client.responses.create(
-                model='o4-mini-deep-research',
+                model=MODEL_DEEP_RESEARCH,
                 input=research_prompt,
                 timeout=OPERATION_TIMEOUTS.get('research_selected_ideas', 60),
                 background=True,
@@ -683,7 +690,7 @@ class LLMService(BaseService):
             )
 
             response = self.openai_client.responses.create(
-                model='gpt-5.2',
+                model=MODEL_GENERAL,
                 input=llm_prompt,
                 timeout=OPERATION_TIMEOUTS.get('synthesize_research', 60),
             )
@@ -801,7 +808,7 @@ class LLMService(BaseService):
             )
 
             response = self.openai_client.responses.create(
-                model='gpt-5.2',
+                model=MODEL_GENERAL,
                 input=llm_prompt,
                 timeout=OPERATION_TIMEOUTS.get('generate_message', 60),
             )
@@ -858,7 +865,7 @@ class LLMService(BaseService):
             )
 
             response = self.openai_client.responses.create(
-                model='gpt-5.2',
+                model=MODEL_GENERAL,
                 input=llm_prompt,
                 timeout=OPERATION_TIMEOUTS.get('generate_message', 60),
             )
@@ -926,7 +933,7 @@ class LLMService(BaseService):
             )
 
             response = self.openai_client.responses.create(
-                model='gpt-4.1',
+                model=MODEL_ANALYSIS,
                 input=prompt,
                 timeout=OPERATION_TIMEOUTS.get('analyze_message_patterns', 60),
             )
@@ -977,7 +984,7 @@ class LLMService(BaseService):
             )
 
             response = self.openai_client.responses.create(
-                model='gpt-4.1',
+                model=MODEL_ANALYSIS,
                 input=prompt,
                 timeout=OPERATION_TIMEOUTS.get('analyze_tone', 60),
             )

@@ -146,9 +146,10 @@ function defaults() {
     clientDownloadWinUrl: '',
     clientDownloadLinuxUrl: '',
     clientDownloadVersion: '',
-    // Comma-separated Stripe price id allowlist for POST /billing checkout.
-    // Not a secret; blank rejects every checkout (fail closed).
-    stripeAllowedPriceIds: '',
+    // Comma-separated Stripe price id -> tier map for POST /billing checkout,
+    // e.g. "price_abc:starter,price_xyz:pro". Not a secret; blank rejects every
+    // checkout (fail closed).
+    stripePriceTierMap: '',
     // Secret ARNs (populated from SSM PutParameter output; safe to persist)
     openaiApiKeyArn: '',
     stripeSecretKeyArn: '',
@@ -437,12 +438,12 @@ async function collectConfig(existing, account) {
     stackName: config.stackName,
   });
 
-  // Not a secret — a plain allowlist. POST /billing rejects any priceId that is
-  // not listed, and rejects every checkout when the list is blank (fail closed),
-  // so this must be set for checkout to work at all.
-  config.stripeAllowedPriceIds = await prompt(
-    'Stripe price ids allowed for checkout, comma-separated (e.g. price_1AbC...)',
-    existing.stripeAllowedPriceIds
+  // Not a secret — a plain map. It doubles as the allowlist: POST /billing
+  // rejects any priceId not listed, and rejects every checkout when the map is
+  // blank (fail closed), so this must be set for checkout to work at all.
+  config.stripePriceTierMap = await prompt(
+    'Stripe price->tier map, comma-separated (e.g. price_1AbC:starter,price_1XyZ:pro)',
+    existing.stripePriceTierMap
   );
 
   banner('Operational settings');
@@ -528,7 +529,7 @@ function buildParamOverrides(config) {
   push('OpenAIApiKeyArn', config.openaiApiKeyArn);
   push('StripeSecretKeyArn', config.stripeSecretKeyArn);
   push('StripeWebhookSecretArn', config.stripeWebhookSecretArn);
-  push('StripeAllowedPriceIds', config.stripeAllowedPriceIds);
+  push('StripePriceTierMap', config.stripePriceTierMap);
   // External RAGStack — only when deployRAGStack=false. Plaintext NoEcho param
   // until we migrate to SSM ARN pattern.
   push('RagstackGraphqlEndpoint', config.ragstackEndpoint);

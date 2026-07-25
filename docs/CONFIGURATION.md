@@ -40,7 +40,8 @@ These values are typically populated after deploying the infrastructure with SAM
 
 | Variable                   | Description                                                                     | Default                |
 | -------------------------- | ------------------------------------------------------------------------------- | ---------------------- |
-| `VITE_STRIPE_PRO_PRICE_ID` | Stripe price ID for pro tier checkout                                           | `price_pro_monthly`    |
+| `VITE_STRIPE_STARTER_PRICE_ID` | Stripe price ID for Starter tier checkout. Must appear in the backend's `StripePriceTierMap`. | `price_starter_monthly` |
+| `VITE_STRIPE_PRO_PRICE_ID` | Stripe price ID for Pro tier checkout. Must appear in the backend's `StripePriceTierMap`. | `price_pro_monthly`    |
 | `VITE_TELEMETRY_ENDPOINT`  | Endpoint for frontend error telemetry. Optional; telemetry disabled when unset. | `/api/telemetry/error` |
 | `VITE_API_TIMEOUT_MS`      | API request timeout in milliseconds. Clamped to `[5000, 120000]`.               | `30000`                |
 
@@ -137,10 +138,32 @@ These variables are set by the SAM template at deploy time, not in `.env`.
 | `DIGEST_PER_USER_FUNCTION_NAME` | Lambda function name for fan-out invocation (digest-coordinator Lambda) | |
 | `STRIPE_SECRET_KEY_ARN` | SSM ARN for Stripe secret key (stripe-webhook Lambda) | |
 | `STRIPE_WEBHOOK_SECRET_ARN` | SSM ARN for Stripe webhook secret (stripe-webhook Lambda) | |
+| `STRIPE_PRICE_TIER_MAP` | Comma-separated `price_id:tier` map, e.g. `price_abc:starter,price_xyz:pro`. Read by `billing-api` (as the checkout allowlist) and `stripe-webhook` (to grant entitlements). Blank rejects every checkout — fail closed. SAM-set from the `StripePriceTierMap` parameter. | |
+| `OPENAI_MODEL_GENERAL` | Model for idea/message/icebreaker generation and synthesis. | `gpt-5.6-terra` |
+| `OPENAI_MODEL_ANALYSIS` | Model for tone, message-pattern, comment and summary ops. | `gpt-5.6-terra` |
+| `OPENAI_MODEL_DEEP_RESEARCH` | Deep-research model. Retires 2026-10-23. | `o4-mini-deep-research` |
+
+> **Model cost vs. tier margin.** `gpt-5.6-terra` ($2.50/$15.00 per 1M tokens) is
+> chosen over the cheaper `gpt-5.6-luna` ($1.00/$6.00) as a deliberate
+> quality-for-margin trade. At terra:
+>
+> | Tier | Net revenue | LLM grant cost | Headroom |
+> | --- | --- | --- | --- |
+> | Starter $39 | $37.57 | 1,000 ops → $12.50 | +$25.07 |
+> | Pro $79 | $76.41 | 3,000 ops → $37.50 | +$38.91 before deep research |
+>
+> Pro's remaining $38.91 has to cover 25 deep-research credits at $0.50–2.00
+> each. At the top of that range (25 × $2.00 = $50.00) a Pro subscriber who
+> exhausts **both** buckets is loss-making by about $11. Most users will not,
+> but the tail is real — either trim the deep-research grant, raise Pro, or
+> accept it knowingly. Revisit once token instrumentation reports actual usage.
+>
+> `OPENAI_MODEL_DEEP_RESEARCH` retires **2026-10-23**; every kickoff logs a
+> countdown warning from 120 days out.
 | `COGNITO_CLIENT_ID` | Cognito app client ID for JWT audience validation (websocket-connect Lambda) | |
 | `LLM_FUNCTION_NAME` | Name of the LLM Lambda, used by `goal_evidence_detector` to invoke it for auto-assessment. SAM-set (`!Ref LLMFunction`). | |
 | `AGENT_STATE_MACHINE_ARN` | ARN of the B-2 `AgentActionStateMachine`. `opportunity_action_service` starts an execution on `approve_action`. SAM-set (`!Ref AgentActionStateMachine`). | |
-| `PLANNER_MODEL` | OpenAI model for the B-2 agent planner (`goal_intelligence_service`). Code-only (read via `os.environ.get` with a default); not SAM-managed. | `gpt-4.1` |
+| `PLANNER_MODEL` | OpenAI model for the B-2 agent planner (`goal_intelligence_service`) and the agent's default config. Read by `shared_services/model_config.py`; code-only, not SAM-managed. Falls back to `OPENAI_MODEL_ANALYSIS`. | `gpt-5.6-terra` |
 | `AGENT_ASSESS_DEBOUNCE_SECONDS` | Debounce window before a post-evidence auto-assessment fires (`goal_evidence_detector`). Code-only; not SAM-managed. | `60` |
 | `AGENT_INFLIGHT_TTL_HOURS` | Hours a dispatched-unconfirmed agent action may stay in-flight before the reconciler expires it (`opportunity-reconciler`). Code-only; not SAM-managed. | `336` (14 days) |
 | `AGENT_PENDING_APPROVAL_TTL_HOURS` | Hours a pending-approval agent action may wait before the reconciler expires it (`opportunity-reconciler`). Code-only; not SAM-managed. | `168` (7 days) |

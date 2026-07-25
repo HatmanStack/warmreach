@@ -100,10 +100,34 @@ DEEP_RESEARCH_OPS = {'research_selected_ideas', 'synthesize_research'}
 # but NOT metered (no OpenAI spend) and NOT in DEEP_RESEARCH_OPS (which also
 # drives the ai_deep_research activity write — polling/cancel must not emit it).
 DEEP_RESEARCH_STATUS_OPS = {'get_active_research', 'cancel_research'}
+# Ops that additionally consume a deep-research credit in WarmReach Pro. The
+# community edition is unmetered, so the stub reservation is a no-op — the
+# plumbing is kept identical so the handler contract does not diverge.
+DEEP_RESEARCH_CREDIT_OPS = {'research_selected_ideas'}
 MESSAGE_INTEL_OPS = {'analyze_message_patterns'}
 TONE_ANALYSIS_OPS = {'analyze_tone'}
 
 _quota_service = QuotaService(table) if table else None
+
+
+def _release_reservations(user_id: str, op: str, reserved: bool, dr_reserved: bool) -> None:
+    """Best-effort release of both quota buckets after a failed operation.
+
+    Never raises. Both are no-ops in the community edition; the plumbing exists
+    so the handler contract matches pro.
+    """
+    if not _quota_service:
+        return
+    if reserved:
+        try:
+            _quota_service.release_usage(user_id, op, count=1)
+        except Exception:
+            logger.exception('release_usage failed for %s', op)
+    if dr_reserved:
+        try:
+            _quota_service.release_deep_research(user_id, op, count=1)
+        except Exception:
+            logger.exception('release_deep_research failed for %s', op)
 _feature_flag_service = FeatureFlagService(table) if table else None
 
 
@@ -296,25 +320,32 @@ def lambda_handler(event, _context):
                 logger.error('reserve_usage failed for %s, denying request (fail closed)', op)
                 return api_response(503, {'error': 'Quota service unavailable, please retry'}, event)
 
+        # Deep research consumes a second, scarcer bucket in pro. No-op here.
+        dr_reserved = False
+        if op in DEEP_RESEARCH_CREDIT_OPS and _quota_service:
+            try:
+                _quota_service.reserve_deep_research(user_id, op, count=1)
+                dr_reserved = True
+            except QuotaExceededError:
+                _release_reservations(user_id, op, reserved, False)
+                raise
+            except (ClientError, NotFoundError):
+                logger.error('reserve_deep_research failed for %s, denying request (fail closed)', op)
+                _release_reservations(user_id, op, reserved, False)
+                return api_response(503, {'error': 'Quota service unavailable, please retry'}, event)
+
         # Dispatch via routing table
         handler = HANDLERS[op]
         try:
             result = handler(body, user_id, _get_llm_service())
         except Exception:
-            if reserved and _quota_service:
-                try:
-                    _quota_service.release_usage(user_id, op, count=1)
-                except Exception:
-                    logger.exception('release_usage failed for %s', op)
+            _release_reservations(user_id, op, reserved, dr_reserved)
             raise
 
         # If the handler returned an api_response (e.g. 400 validation error), pass it through
         if isinstance(result, dict) and 'statusCode' in result:
-            if reserved and _quota_service and result.get('statusCode', 200) >= 400:
-                try:
-                    _quota_service.release_usage(user_id, op, count=1)
-                except Exception:
-                    logger.exception('release_usage failed for %s after handler error response', op)
+            if result.get('statusCode', 200) >= 400:
+                _release_reservations(user_id, op, reserved, dr_reserved)
             return result
 
         # Emit activity events for successful operations
