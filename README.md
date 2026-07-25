@@ -22,6 +22,7 @@ This is the **Community Edition** — a free, self-deployable version of WarmRea
 -   **[Development Guide](docs/DEVELOPMENT.md)**: Setup, running, and testing instructions.
 -   **[Configuration](docs/CONFIGURATION.md)**: Environment variables and settings.
 -   **[Deployment](docs/DEPLOYMENT.md)**: How to deploy to AWS using SAM.
+-   **[Releases](docs/RELEASE.md)**: Building, signing, and shipping the desktop client.
 -   **[Security](docs/SECURITY.md)**: Authentication and credential management.
 -   **[API Reference](docs/API_REFERENCE.md)**: Overview of available API endpoints.
 -   **[Troubleshooting](docs/TROUBLESHOOTING.md)**: Solutions for common issues.

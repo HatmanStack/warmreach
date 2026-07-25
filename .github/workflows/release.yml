@@ -99,3 +99,13 @@ jobs:
       tag: ${{ needs.release.outputs.tag }}
     secrets:
       WARMREACH_PUBLIC_PAT: ${{ secrets.WARMREACH_PUBLIC_PAT }}
+      # Signing secrets are optional: an unset secret arrives as an empty
+      # string, which the called workflow reads as "build unsigned". Setting
+      # them in repo settings turns signing on with no change here.
+      APPLE_CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
+      APPLE_CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}

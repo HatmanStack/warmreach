@@ -1,8 +1,8 @@
-name: Electron Release (Linux AppImage)
+name: Electron Release (Linux / macOS / Windows)
 
-# Builds the WarmReach Agent AppImage and attaches it to the matching
-# release on HatmanStack/warmreach (the community repo, which is where
-# electron-updater is configured to fetch from).
+# Builds the WarmReach Agent for every supported desktop platform and attaches
+# the artifacts to the matching release on HatmanStack/warmreach (the community
+# repo, which is where electron-updater is configured to fetch from).
 #
 # Invoked by release.yml via workflow_call after the GitHub release is
 # created (release-sync.yml fans the release out to the community repo
@@ -10,10 +10,25 @@ name: Electron Release (Linux AppImage)
 # Also runnable via workflow_dispatch for backfilling artifacts on past
 # tags.
 #
+# Each platform uploads its own auto-update manifest alongside the installer —
+# electron-updater reads latest-linux.yml / latest-mac.yml / latest.yml, so an
+# installer published without its manifest is invisible to the updater.
+#
+# Code signing is driven entirely by whether the relevant secrets are set. With
+# none configured every platform still builds, just unsigned, so this pipeline
+# is useful before the certificates are purchased. Adding the secrets later
+# turns signing on with no workflow change. NOTE: unsigned macOS and Windows
+# builds are blocked by Gatekeeper and SmartScreen respectively and are not fit
+# to hand to customers — see docs/RELEASE.md.
+#
 # Required secrets:
 #   WARMREACH_PUBLIC_PAT — Fine-grained PAT with contents:write on
 #                          HatmanStack/warmreach (already used by
 #                          release-sync.yml).
+# Optional signing secrets (see docs/RELEASE.md):
+#   APPLE_CSC_LINK, APPLE_CSC_KEY_PASSWORD — base64 .p12 + its password
+#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID — notarization
+#   WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD — base64 .pfx + its password
 
 on:
   workflow_call:
@@ -25,6 +40,20 @@ on:
     secrets:
       WARMREACH_PUBLIC_PAT:
         required: true
+      APPLE_CSC_LINK:
+        required: false
+      APPLE_CSC_KEY_PASSWORD:
+        required: false
+      APPLE_ID:
+        required: false
+      APPLE_APP_SPECIFIC_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      WIN_CSC_LINK:
+        required: false
+      WIN_CSC_KEY_PASSWORD:
+        required: false
   workflow_dispatch:
     inputs:
       tag:
@@ -35,12 +64,36 @@ permissions:
   contents: read
 
 jobs:
-  linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    # One platform failing must not suppress the others' artifacts — a release
+    # with two of three installers beats a release with none.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+            # Globs, not literal names: the mac zip's artifactName is
+            # electron-builder's default and the dmg is per-arch.
+            artifacts: 'client/dist/*.AppImage client/dist/latest-linux.yml'
+          # .blockmap files are what electron-updater uses to download only the
+          # changed chunks of an update. Without them every update is a full
+          # re-download. AppImage embeds its block map in the artifact, so Linux
+          # has no separate file to upload.
+          - platform: mac
+            os: macos-latest
+            artifacts: 'client/dist/*.dmg client/dist/*.zip client/dist/*.blockmap client/dist/latest-mac.yml'
+          - platform: win
+            os: windows-latest
+            artifacts: 'client/dist/*.exe client/dist/*.blockmap client/dist/latest.yml'
+
     steps:
       - name: Determine tag
         id: tag
+        shell: bash
         run: |
           TAG="${{ inputs.tag }}"
           if [ -z "$TAG" ]; then
@@ -70,20 +123,83 @@ jobs:
 
       - name: Sync client version with tag
         working-directory: client
+        shell: bash
         run: |
           VERSION="${{ steps.tag.outputs.version }}"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
-      - name: Build AppImage
-        working-directory: client
+      # Signing is opt-in per platform. Resolve it once here so the build step
+      # stays readable and the decision is visible in the log.
+      - name: Resolve signing mode
+        id: signing
+        shell: bash
         env:
-          # GH_TOKEN is consumed by electron-builder when --publish is on,
-          # which we don't use here — we upload manually below to keep the
-          # publish path explicit and idempotent.
+          APPLE_CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+        run: |
+          case "${{ matrix.platform }}" in
+            mac) [ -n "$APPLE_CSC_LINK" ] && SIGN=true || SIGN=false ;;
+            win) [ -n "$WIN_CSC_LINK" ] && SIGN=true || SIGN=false ;;
+            *)   SIGN=false ;;
+          esac
+          echo "sign=$SIGN" >> "$GITHUB_OUTPUT"
+          if [ "$SIGN" = "true" ]; then
+            echo "::notice::${{ matrix.platform }}: building SIGNED"
+          else
+            echo "::warning::${{ matrix.platform }}: signing secrets absent — building UNSIGNED (not fit for distribution on mac/win)"
+          fi
+
+      # The npm `electron:build` script chains a POSIX `find` in its clean step,
+      # which resolves to Windows' unrelated find.exe on windows-latest. Run the
+      # two useful halves directly instead; the runner is ephemeral so there is
+      # nothing to clean up afterwards.
+      # The upload globs by extension, so any stale installer left in dist would
+      # be published alongside the real one. A fresh checkout is already clean;
+      # this makes that a guarantee rather than an assumption. (Safe here:
+      # build:ts emits to build-tsc and beside its sources, never into dist.)
+      - name: Clear previous build output
+        shell: bash
+        run: rm -rf client/dist
+
+      - name: Compile TypeScript
+        working-directory: client
+        run: npm run build:ts
+
+      - name: Build (signed)
+        if: steps.signing.outputs.sign == 'true'
+        working-directory: client
+        shell: bash
+        env:
+          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.APPLE_CSC_LINK || secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
+          # Consumed by electron-builder's notarize step on macOS only.
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx electron-builder --${{ matrix.platform }} --publish never
+
+      - name: Build (unsigned)
+        if: steps.signing.outputs.sign != 'true'
+        working-directory: client
+        shell: bash
+        env:
+          # Without this, electron-builder hunts the keychain for an identity
+          # and fails the build on macOS rather than producing an unsigned app.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run electron:build
+        run: |
+          EXTRA=""
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            # Notarization requires a Developer ID signature, so it must be off
+            # for an unsigned build or electron-builder errors out. Skipping the
+            # signature itself is handled by CSC_IDENTITY_AUTO_DISCOVERY above —
+            # passing --config.mac.identity=null would hand yargs the *string*
+            # "null", which is not the same as the null the config expects.
+            EXTRA="--config.mac.notarize=false"
+          fi
+          npx electron-builder --${{ matrix.platform }} --publish never $EXTRA
 
       - name: Wait for warmreach release to exist
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.WARMREACH_PUBLIC_PAT }}
         run: |
@@ -99,13 +215,24 @@ jobs:
           echo "Release $TAG was not created on HatmanStack/warmreach within timeout"
           exit 1
 
-      - name: Upload AppImage and update metadata
+      - name: Upload artifacts and update metadata
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.WARMREACH_PUBLIC_PAT }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
+          # Expand the globs and fail loudly on an empty match — silently
+          # uploading nothing would leave the release looking published while
+          # offering no installer for this platform.
+          shopt -s nullglob
+          FILES=(${{ matrix.artifacts }})
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No artifacts matched for ${{ matrix.platform }}; contents of client/dist:"
+            ls -la client/dist || true
+            exit 1
+          fi
+          printf 'Uploading %s\n' "${FILES[@]}"
           gh release upload "$TAG" \
             --repo HatmanStack/warmreach \
             --clobber \
-            client/dist/WarmReach-Agent-${{ steps.tag.outputs.version }}.AppImage \
-            client/dist/latest-linux.yml
+            "${FILES[@]}"
