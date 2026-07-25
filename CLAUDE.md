@@ -183,7 +183,7 @@ Optional nested stack from [RAGStack-Lambda](https://github.com/HatmanStack/RAGS
 
 ## Key Technical Details
 
-- **Authentication**: AWS Cognito with JWT tokens, credentials encrypted with libsodium (Sealbox)
+- **Authentication**: AWS Cognito with JWT tokens. LinkedIn credentials are encrypted at rest via Electron `safeStorage` (OS keyring); libsodium Sealbox separately covers credentials arriving in a command payload
 - **Real-time**: WebSocket API Gateway for command dispatch: frontend -> backend -> Electron agent
 - **State Management**: React Query (`@tanstack/react-query`)
 - **UI Components**: Radix UI primitives with Tailwind CSS
@@ -199,7 +199,8 @@ Required `.env` variables (see `.env.example`):
 - `OPENAI_API_KEY_ARN` (SSM SecureString ARN), `BEDROCK_MODEL_ID` - AI config
 - AWS credentials for SAM deployment
 
-LinkedIn credentials live exclusively on-device in the desktop client
-(libsodium Sealbox). The cloud never accepts, returns, or stores them.
+LinkedIn credentials live exclusively on-device in the desktop client,
+encrypted at rest with Electron `safeStorage` (OS keyring). The cloud never
+accepts, returns, or stores them.
 
 See `docs/DEPLOYMENT.md` for deployment procedures.

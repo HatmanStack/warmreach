@@ -6,7 +6,17 @@
  * falls back to a small control window exposing the same actions.
  */
 
-import { app, Tray, Menu, BrowserWindow, ipcMain, nativeImage, shell, dialog } from 'electron';
+import {
+  app,
+  Tray,
+  Menu,
+  BrowserWindow,
+  ipcMain,
+  nativeImage,
+  shell,
+  dialog,
+  safeStorage,
+} from 'electron';
 import electronUpdater from 'electron-updater';
 import Store from 'electron-store';
 import path from 'path';
@@ -29,6 +39,8 @@ if (!app.requestSingleInstanceLock()) {
 import { WsClient } from './src/transport/wsClient.js';
 import { handleExecuteCommand } from './src/transport/commandRouter.js';
 import { CredentialStore } from './src/credentials/credentialStore.js';
+import { SecretStore } from './src/credentials/secretStore.js';
+import { openConfigStore, LEGACY_STORE_NAME } from './src/credentials/configStore.js';
 import { BrowserSessionManager } from './src/domains/session/services/browserSessionManager.js';
 // Imports server.js for its side effect: starts the Express backend on
 // localhost:3001 and registers structured-log error handlers.
@@ -60,8 +72,45 @@ try {
   console.error('[warmreach] failed to create log dir', LOG_DIR, err);
 }
 
-const store = new Store({ encryptionKey: 'warmreach-local-v1' });
-const credentialStore = new CredentialStore(store);
+// No static encryption key. Individual secrets are sealed with safeStorage
+// (OS keyring); the file itself is plain JSON. openConfigStore performs the
+// one-time migration off the old statically-keyed config.json — see that
+// module for why it declines to migrate when no keyring is present.
+const { store, degraded: secretsDegraded } = openConfigStore({
+  createStore: (options) => new Store(options),
+  safeStorage,
+  deleteLegacyFile: () => {
+    const legacy = path.join(app.getPath('userData'), `${LEGACY_STORE_NAME}.json`);
+    if (fs.existsSync(legacy)) fs.rmSync(legacy);
+  },
+});
+const credentialStore = new CredentialStore(store, safeStorage);
+const secretStore = new SecretStore(store, safeStorage);
+
+if (secretsDegraded) {
+  // eslint-disable-next-line no-console -- pre-logger main-process diagnostic; the user needs this before anything else fails
+  console.warn(
+    '[warmreach] No OS keyring found. Stored secrets cannot be encrypted, and ' +
+      'saving LinkedIn credentials will be refused. On Linux, install and unlock ' +
+      'gnome-keyring or kwallet.'
+  );
+}
+
+/**
+ * Persist a Cognito token, tolerating a machine with no OS keyring.
+ *
+ * Unlike LinkedIn credentials — where refusing to store is the whole point —
+ * a token that cannot be persisted just means the user signs in again next
+ * launch. Swallow the refusal so startup continues.
+ */
+function setAuthSecret(key, value) {
+  try {
+    secretStore.setSecret(key, value, 'the session token');
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // URLs are read at call time so saving from the settings window takes
 // effect immediately (no restart needed). Order: stored override → env
@@ -131,7 +180,7 @@ function getStatus() {
   return {
     version: app.getVersion(),
     backendPort: BACKEND_PORT,
-    wsConfigured: Boolean(getWsUrl() && store.get('auth.accessToken')),
+    wsConfigured: Boolean(getWsUrl() && secretStore.hasSecret('auth.accessToken')),
     wsConnected,
     automationPaused: Boolean(pauseStatus.paused),
     threatLevel: status.threatLevel || 0,
@@ -326,7 +375,7 @@ function restartWebSocket() {
 let refreshTimer = null;
 
 async function refreshIdToken() {
-  const refreshToken = store.get('auth.refreshToken');
+  const refreshToken = secretStore.getSecret('auth.refreshToken');
   const clientId = store.get('auth.cognitoClientId');
   const region = store.get('auth.region') || 'us-east-1';
   if (!refreshToken || !clientId) {
@@ -352,8 +401,8 @@ async function refreshIdToken() {
       // eslint-disable-next-line no-console -- pre-logger main-process diagnostic
       console.error('[electron-main] token refresh failed', resp.status, detail);
       if (resp.status === 400) {
-        store.delete('auth.accessToken');
-        store.delete('auth.refreshToken');
+        secretStore.deleteSecret('auth.accessToken');
+        secretStore.deleteSecret('auth.refreshToken');
         restartWebSocket();
         broadcastStatus();
       }
@@ -364,7 +413,7 @@ async function refreshIdToken() {
     if (!newIdToken) {
       return false;
     }
-    store.set('auth.accessToken', newIdToken);
+    setAuthSecret('auth.accessToken', newIdToken);
     restartWebSocket();
     broadcastStatus();
     return true;
@@ -380,7 +429,7 @@ function scheduleTokenRefresh() {
     clearInterval(refreshTimer);
     refreshTimer = null;
   }
-  if (!store.get('auth.refreshToken')) return;
+  if (!secretStore.hasSecret('auth.refreshToken')) return;
   // Cognito id tokens default to 1h validity; refresh every 50 min.
   refreshTimer = setInterval(refreshIdToken, 50 * 60 * 1000);
 }
@@ -389,8 +438,8 @@ function scheduleTokenRefresh() {
 // process so it can hand tokens straight to the main module instead of
 // going through IPC.
 globalThis.warmreachAuthSync = ({ idToken, refreshToken, cognitoClientId, region }) => {
-  if (idToken) store.set('auth.accessToken', idToken);
-  if (refreshToken) store.set('auth.refreshToken', refreshToken);
+  if (idToken) setAuthSecret('auth.accessToken', idToken);
+  if (refreshToken) setAuthSecret('auth.refreshToken', refreshToken);
   if (cognitoClientId) store.set('auth.cognitoClientId', cognitoClientId);
   if (region) store.set('auth.region', region);
   restartWebSocket();
@@ -402,8 +451,8 @@ globalThis.warmreachAuthSync = ({ idToken, refreshToken, cognitoClientId, region
 // web app doesn't leave the agent connected as the previous user (real
 // problem on shared machines — refresh tokens last 30 days by default).
 globalThis.warmreachAuthClear = () => {
-  store.delete('auth.accessToken');
-  store.delete('auth.refreshToken');
+  secretStore.deleteSecret('auth.accessToken');
+  secretStore.deleteSecret('auth.refreshToken');
   store.delete('auth.cognitoClientId');
   store.delete('auth.region');
   if (refreshTimer) {
@@ -423,7 +472,7 @@ globalThis.warmreachAuthClear = () => {
 };
 
 function startWebSocket() {
-  const token = store.get('auth.accessToken');
+  const token = secretStore.getSecret('auth.accessToken');
   const wsUrl = getWsUrl();
   if (!token || !wsUrl) {
     return;
@@ -443,7 +492,7 @@ function startWebSocket() {
         //   - searchPassword : LinkedIn password from CredentialStore
         // Don't overwrite an explicit value already in the payload.
         if (msg.payload && typeof msg.payload === 'object') {
-          const currentToken = store.get('auth.accessToken');
+          const currentToken = secretStore.getSecret('auth.accessToken');
           if (currentToken && !msg.payload.jwtToken) {
             msg.payload.jwtToken = currentToken;
           }
@@ -490,7 +539,15 @@ ipcMain.handle('settings:get-credentials', () => {
   return creds ? { email: creds.email } : null;
 });
 ipcMain.handle('settings:save-credentials', (_e, email, password) => {
-  credentialStore.setCredentials(email, password);
+  // Report the outcome rather than letting the IPC rejection surface as an
+  // opaque renderer error — a refusal to store must be visible to the user,
+  // not look like a successful save.
+  try {
+    credentialStore.setCredentials(email, password);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 ipcMain.handle('settings:clear-credentials', () => credentialStore.clearCredentials());
 ipcMain.handle('settings:get-ws-url', () => store.get('wsUrl') || '');
@@ -577,7 +634,7 @@ app.whenReady().then(() => {
   // case (expired refresh token) is handled inside refreshIdToken,
   // which clears creds and calls restartWebSocket() before returning
   // false — startWebSocket() then no-ops because the token is gone.
-  if (store.get('auth.refreshToken')) {
+  if (secretStore.hasSecret('auth.refreshToken')) {
     refreshIdToken()
       .then((success) => {
         if (!success) startWebSocket();

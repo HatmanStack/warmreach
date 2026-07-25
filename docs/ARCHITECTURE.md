@@ -20,7 +20,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 - **Organization**: Domain-driven (`src/domains/` — automation, connections, linkedin, messaging, navigation, profile, ragstack, search, session, storage, workflow)
 - **Transport**: WebSocket connection to backend for receiving commands from frontend
 - **Automation**: Queue-based LinkedIn interaction processing with session preservation and checkpoint-based heal/restore recovery
-- **Security**: Sealbox encryption (libsodium X25519) for LinkedIn credentials — decrypted just-in-time on the client, never sent to the cloud
+- **Security**: LinkedIn credentials are encrypted at rest on the user's machine with Electron `safeStorage` (OS keyring). Separately, credentials arriving in a command payload use Sealbox (libsodium X25519), decrypted just-in-time on the client and never sent to the cloud
 
 ### AWS Backend (`backend/`)
 
@@ -85,7 +85,7 @@ Electron Client (user's machine)
   +-- WebSocket <- receives commands from backend
   +-- Puppeteer -> LinkedIn browser automation
   +-- HTTP -> edge-crud Lambda (profile ingestion)
-  +-- Credentials stored locally only (Sealbox encrypted)
+  +-- Credentials stored locally only (OS keyring via Electron safeStorage)
 ```
 
 ## DynamoDB Schema (single table)
