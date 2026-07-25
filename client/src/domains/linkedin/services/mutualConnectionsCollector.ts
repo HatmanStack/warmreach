@@ -20,6 +20,7 @@ import { sharedConnectionsSelectors } from '../selectors/sharedConnectionsSelect
 import type { Page } from 'puppeteer';
 
 type CheerioRoot = ReturnType<typeof cheerio.load>;
+type CheerioSelection = ReturnType<CheerioRoot>;
 
 const PAGE_SETTLE_MS = 2500;
 const PROFILE_ID_PATTERN = /^[a-zA-Z0-9\-_.~%]+$/;
@@ -151,7 +152,7 @@ export class MutualConnectionsCollector {
   }
 
   /** Resolve a selector cascade against a cheerio instance; first match wins. */
-  _resolve($: CheerioRoot, selectorKey: string) {
+  _resolve($: CheerioRoot, selectorKey: string): CheerioSelection | null {
     const cascade = sharedConnectionsSelectors[selectorKey];
     if (!cascade) return null;
     for (const { selector } of cascade) {

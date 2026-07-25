@@ -17,6 +17,7 @@ import { profileSelectors } from '../selectors/profileSelectors.js';
 import type { Page } from 'puppeteer';
 
 type CheerioRoot = ReturnType<typeof cheerio.load>;
+type CheerioSelection = ReturnType<CheerioRoot>;
 
 const MAX_ACTIVITY_POSTS = 10;
 const PAGE_SETTLE_MS = 2500;
@@ -234,7 +235,7 @@ export class LocalProfileScraper {
    * Resolve a selector cascade against a cheerio instance.
    * Returns the first matching cheerio selection, or null.
    */
-  _resolveSelector($: CheerioRoot, selectorKey: string) {
+  _resolveSelector($: CheerioRoot, selectorKey: string): CheerioSelection | null {
     const cascade = profileSelectors[selectorKey];
     if (!cascade) {
       logger.warn('Unknown selector key', { selectorKey });
