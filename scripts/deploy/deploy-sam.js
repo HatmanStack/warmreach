@@ -56,7 +56,9 @@ function execCapture(cmd) {
 function streamExec(cmd, args, cwd) {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, { cwd, stdio: 'inherit' });
-    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+    proc.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))
+    );
     proc.on('error', reject);
   });
 }
@@ -72,8 +74,27 @@ function prompt(question, defaultValue = '') {
   });
 }
 
+/**
+ * Prompt that will not accept a blank or malformed answer.
+ *
+ * Used for values where an empty string silently degrades the stack rather than
+ * failing it — the alarm email is the case that prompted this: blank meant
+ * "deploy with no alerting at all", and nothing said so.
+ */
+async function promptRequired(question, defaultValue = '', validate = (v) => !!v, hint = '') {
+  for (;;) {
+    const answer = await prompt(question, defaultValue);
+    if (validate(answer)) return answer;
+    console.log(`  ${hint || 'A value is required.'}`);
+  }
+}
+
+const isEmail = (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);
+
 function promptSecret(question, hasExisting = false) {
-  const display = hasExisting ? `${question} [***, Enter to keep]: ` : `${question} (Enter to skip): `;
+  const display = hasExisting
+    ? `${question} [***, Enter to keep]: `
+    : `${question} (Enter to skip): `;
   process.stdout.write(display);
   return new Promise((resolve) => {
     let input = '';
@@ -199,7 +220,9 @@ function checkSamCli() {
     const v = execCapture('sam --version');
     ok(`SAM CLI: ${v}`);
   } catch {
-    fail('SAM CLI not installed. See https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html');
+    fail(
+      'SAM CLI not installed. See https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html'
+    );
   }
 }
 
@@ -222,7 +245,7 @@ function checkBedrockAccess() {
     if (isInferenceProfile) {
       const profiles = execCapture(
         `aws bedrock list-inference-profiles --region ${REGION} --type-equals SYSTEM_DEFINED ` +
-          `--query "inferenceProfileSummaries[?inferenceProfileId=='${CLAUDE_MODEL_ID}'].inferenceProfileId" --output text`,
+          `--query "inferenceProfileSummaries[?inferenceProfileId=='${CLAUDE_MODEL_ID}'].inferenceProfileId" --output text`
       );
       if (profiles) {
         ok(`Bedrock inference profile available: ${CLAUDE_MODEL_ID}`);
@@ -231,7 +254,7 @@ function checkBedrockAccess() {
     }
     const fm = execCapture(
       `aws bedrock list-foundation-models --region ${REGION} ` +
-        `--query "modelSummaries[?modelId=='${underlying}'].modelId" --output text`,
+        `--query "modelSummaries[?modelId=='${underlying}'].modelId" --output text`
     );
     if (fm) {
       ok(`Bedrock foundation model visible: ${underlying}`);
@@ -249,12 +272,12 @@ function checkLambdaConcurrency() {
   try {
     const out = execCapture(
       `aws service-quotas get-service-quota --service-code lambda --quota-code L-B99A9384 ` +
-        `--region ${REGION} --query "Quota.Value" --output text`,
+        `--region ${REGION} --query "Quota.Value" --output text`
     );
     const limit = parseFloat(out);
     if (Number.isFinite(limit) && limit < 200) {
       warn(
-        `Lambda unreserved concurrency limit is ${limit}. Template reserves ~150; request a limit increase if you hit throttling.`,
+        `Lambda unreserved concurrency limit is ${limit}. Template reserves ~150; request a limit increase if you hit throttling.`
       );
     } else {
       ok(`Lambda concurrency headroom: ${limit}`);
@@ -268,15 +291,19 @@ function checkSesIdentity(email) {
   if (!email) return;
   try {
     const out = execCapture(
-      `aws ses get-identity-verification-attributes --region ${REGION} --identities ${email} --output json`,
+      `aws ses get-identity-verification-attributes --region ${REGION} --identities ${email} --output json`
     );
     const parsed = JSON.parse(out);
     const status = parsed?.VerificationAttributes?.[email]?.VerificationStatus;
     if (status === 'Success') {
       ok(`SES identity verified: ${email}`);
     } else {
-      warn(`SES identity ${email} status: ${status || 'not found'}. Verify in SES console before enabling digests.`);
-      warn('If SES is in sandbox mode, recipients must also be verified until a production-access request is approved.');
+      warn(
+        `SES identity ${email} status: ${status || 'not found'}. Verify in SES console before enabling digests.`
+      );
+      warn(
+        'If SES is in sandbox mode, recipients must also be verified until a production-access request is approved.'
+      );
     }
   } catch {
     warn('Could not check SES identity.');
@@ -285,7 +312,8 @@ function checkSesIdentity(email) {
 
 function checkRagstackTemplateUrl(deployRAGStack) {
   if (deployRAGStack !== 'true') return;
-  const url = 'https://ragstack-quicklaunch-public.s3.us-east-1.amazonaws.com/ragstack-template.yaml';
+  const url =
+    'https://ragstack-quicklaunch-public.s3.us-east-1.amazonaws.com/ragstack-template.yaml';
   try {
     const code = execCapture(`curl -sS -o /dev/null -w "%{http_code}" "${url}"`);
     if (code === '200') {
@@ -301,7 +329,7 @@ function checkRagstackTemplateUrl(deployRAGStack) {
 
 function checkDomainWarning() {
   warn(
-    'No custom domain configured. Stack will issue *.execute-api, *.cloudfront.net, and whatever your Amplify apps use. Revisit once a domain is purchased.',
+    'No custom domain configured. Stack will issue *.execute-api, *.cloudfront.net, and whatever your Amplify apps use. Revisit once a domain is purchased.'
   );
 }
 
@@ -339,7 +367,7 @@ async function ensureUnsubscribeSecret(environment) {
   const paramPath = `/warmreach/${environment}/unsubscribe-secret`;
   try {
     execCapture(
-      `aws ssm get-parameter --region ${REGION} --name ${paramPath} --with-decryption --query "Parameter.Name" --output text`,
+      `aws ssm get-parameter --region ${REGION} --name ${paramPath} --with-decryption --query "Parameter.Name" --output text`
     );
     ok(`Unsubscribe secret already present: ${paramPath}`);
     return;
@@ -372,7 +400,9 @@ function putSsmSecureString(name, value) {
   const tmp = `/tmp/warmreach-ssm-${Date.now()}.json`;
   writeFileSync(tmp, payload, { mode: 0o600 });
   try {
-    exec(`aws ssm put-parameter --region ${REGION} --cli-input-json file://${tmp}`, { quiet: true });
+    exec(`aws ssm put-parameter --region ${REGION} --cli-input-json file://${tmp}`, {
+      quiet: true,
+    });
   } finally {
     try {
       execCapture(`rm -f ${tmp}`);
@@ -431,7 +461,8 @@ async function collectConfig(existing, account) {
   });
 
   config.stripeWebhookSecretArn = await ensureSecret({
-    label: 'Stripe webhook signing secret (blank on first deploy; register URL with Stripe then re-run)',
+    label:
+      'Stripe webhook signing secret (blank on first deploy; register URL with Stripe then re-run)',
     key: 'stripe-webhook-secret',
     existingArn: existing.stripeWebhookSecretArn,
     account,
@@ -448,17 +479,28 @@ async function collectConfig(existing, account) {
 
   banner('Operational settings');
 
-  config.sesVerifiedEmail = await prompt('SES verified sender email (blank to skip)', existing.sesVerifiedEmail);
-  config.alarmNotificationEmail = await prompt(
-    'CloudWatch alarm notification email (blank to skip)',
+  config.sesVerifiedEmail = await prompt(
+    'SES verified sender email (blank to skip)',
+    existing.sesVerifiedEmail
+  );
+  // Required: the template no longer accepts a blank value, so catching it here
+  // gives a usable prompt instead of a CloudFormation parameter-constraint error
+  // several minutes into the deploy.
+  config.alarmNotificationEmail = await promptRequired(
+    'CloudWatch alarm + DLQ notification email (required)',
     existing.alarmNotificationEmail,
+    isEmail,
+    'Alerting cannot be disabled. Enter an address a human actually reads.'
   );
   config.adminEmail = await prompt('Admin email (RAGStack + admin dashboard)', existing.adminEmail);
   config.adminUserSub = await prompt(
     'Admin user Cognito sub (fill in on second deploy after first sign-up)',
-    existing.adminUserSub,
+    existing.adminUserSub
   );
-  config.deployRAGStack = await prompt('Deploy RAGStack nested stack? (true/false)', existing.deployRAGStack);
+  config.deployRAGStack = await prompt(
+    'Deploy RAGStack nested stack? (true/false)',
+    existing.deployRAGStack
+  );
 
   // External RAGStack path — only used when deployRAGStack=false. Prompted
   // every deploy (the API key is NOT persisted to .deploy-config.json; the
@@ -469,11 +511,13 @@ async function collectConfig(existing, account) {
   if (config.deployRAGStack === 'false') {
     config.ragstackEndpoint = await prompt(
       'External RAGStack GraphQL endpoint',
-      existing.ragstackEndpoint,
+      existing.ragstackEndpoint
     );
     config.ragstackApiKey = await promptSecret('External RAGStack API key', false);
     if (!config.ragstackEndpoint || !config.ragstackApiKey) {
-      warn('External RAGStack endpoint or API key missing — the stack will deploy with empty values and RAGStack-dependent features will fail at runtime.');
+      warn(
+        'External RAGStack endpoint or API key missing — the stack will deploy with empty values and RAGStack-dependent features will fail at runtime.'
+      );
     }
   } else {
     config.ragstackEndpoint = '';
@@ -481,28 +525,31 @@ async function collectConfig(existing, account) {
 
   config.productionOrigins = await prompt(
     'Production CORS origins (comma-separated, blank if none)',
-    existing.productionOrigins,
+    existing.productionOrigins
   );
-  config.includeDevOrigins = await prompt('Include localhost origins in CORS? (true/false)', existing.includeDevOrigins);
+  config.includeDevOrigins = await prompt(
+    'Include localhost origins in CORS? (true/false)',
+    existing.includeDevOrigins
+  );
   config.enableDigests = await prompt(
     'Enable weekly digest lambdas? (true/false; requires SES email)',
-    existing.enableDigests,
+    existing.enableDigests
   );
 
   banner('Desktop client downloads (blank = "coming soon")');
   console.log(
     '  URLs accept either https:// (e.g. GitHub Releases asset)\n' +
-      '  or s3://bucket/key (Lambda mints a 5-min presigned URL on each request).\n',
+      '  or s3://bucket/key (Lambda mints a 5-min presigned URL on each request).\n'
   );
   config.clientDownloadMacUrl = await prompt('macOS download URL', existing.clientDownloadMacUrl);
   config.clientDownloadWinUrl = await prompt('Windows download URL', existing.clientDownloadWinUrl);
   config.clientDownloadLinuxUrl = await prompt(
     'Linux download URL',
-    existing.clientDownloadLinuxUrl,
+    existing.clientDownloadLinuxUrl
   );
   config.clientDownloadVersion = await prompt(
     'Version label (optional, shown next to download buttons)',
-    existing.clientDownloadVersion,
+    existing.clientDownloadVersion
   );
 
   return config;
@@ -549,7 +596,7 @@ function generateSamConfig(config, deployBucket) {
         // Escape backslash first, then double quotes — TOML treats both
         // as escapable characters and we'd otherwise corrupt secrets
         // containing either (e.g., "foo\bar" or 'a"b').
-        `    "${k}=${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
+        `    "${k}=${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
     )
     .join(',\n');
 
@@ -598,7 +645,7 @@ async function runSamDeploy() {
 
 function getStackOutputs(stackName) {
   const raw = execCapture(
-    `aws cloudformation describe-stacks --region ${REGION} --stack-name ${stackName} --query "Stacks[0].Outputs" --output json`,
+    `aws cloudformation describe-stacks --region ${REGION} --stack-name ${stackName} --query "Stacks[0].Outputs" --output json`
   );
   const arr = JSON.parse(raw);
   const map = {};
@@ -704,7 +751,9 @@ function printHandoff(outputs, config) {
   `);
 
   if (!config.stripeWebhookSecretArn) {
-    warn('Stripe webhook secret was empty. Stripe-dependent lambdas are conditional on StripeSecretKeyArn — re-deploy after registering the webhook URL.');
+    warn(
+      'Stripe webhook secret was empty. Stripe-dependent lambdas are conditional on StripeSecretKeyArn — re-deploy after registering the webhook URL.'
+    );
   }
   if (config.enableDigests === 'true' && !config.sesVerifiedEmail) {
     warn('EnableDigests=true but no SESVerifiedEmail — digest lambdas will not be created.');
@@ -787,7 +836,7 @@ async function main() {
       try {
         const fnName = `warmreach-admin-metrics-${config.environment}`;
         const currentJson = execCapture(
-          `aws lambda get-function-configuration --region ${REGION} --function-name ${fnName} --query "Environment.Variables" --output json`,
+          `aws lambda get-function-configuration --region ${REGION} --function-name ${fnName} --query "Environment.Variables" --output json`
         );
         const current = JSON.parse(currentJson);
         const merged = { ...current, HTTP_API_ID: apiId };
@@ -796,10 +845,16 @@ async function main() {
         const tmp = `/tmp/warmreach-lambda-env-${Date.now()}.json`;
         writeFileSync(tmp, JSON.stringify({ Variables: merged }), { mode: 0o600 });
         execCapture(
-          `aws lambda update-function-configuration --region ${REGION} --function-name ${fnName} --environment file://${tmp}`,
+          `aws lambda update-function-configuration --region ${REGION} --function-name ${fnName} --environment file://${tmp}`
         );
-        try { execCapture(`rm -f ${tmp}`); } catch { /* ignore */ }
-        ok(`Populated HTTP_API_ID=${apiId} on ${fnName} (preserved ${Object.keys(current).length} other vars)`);
+        try {
+          execCapture(`rm -f ${tmp}`);
+        } catch {
+          /* ignore */
+        }
+        ok(
+          `Populated HTTP_API_ID=${apiId} on ${fnName} (preserved ${Object.keys(current).length} other vars)`
+        );
       } catch (e) {
         warn(`Could not populate HTTP_API_ID on admin-metrics Lambda: ${e.message}`);
       }

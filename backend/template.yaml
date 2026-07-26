@@ -719,6 +719,13 @@ Resources:
   LLMFunction:
     Type: AWS::Serverless::Function
     Properties:
+      # Async invocations retry twice and then vanish. This function is
+      # invoked asynchronously, so without a DLQ a failed run leaves nothing to
+      # find. The community edition has no alarm stack, so nothing watches this
+      # queue automatically — but the failed payload is at least recoverable.
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt LLMDLQ.Arn
       FunctionName: !Sub 'warmreach-llm-${Environment}'
       CodeUri: lambdas/llm/
       Handler: lambda_function.lambda_handler
@@ -774,6 +781,13 @@ Resources:
   ResearchReconcilerFunction:
     Type: AWS::Serverless::Function
     Properties:
+      # Async invocations retry twice and then vanish. This function is
+      # invoked asynchronously, so without a DLQ a failed run leaves nothing to
+      # find. The community edition has no alarm stack, so nothing watches this
+      # queue automatically — but the failed payload is at least recoverable.
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ResearchReconcilerDLQ.Arn
       FunctionName: !Sub 'warmreach-research-reconciler-${Environment}'
       CodeUri: lambdas/llm/
       Handler: reconcile_handler.lambda_handler
@@ -837,6 +851,18 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+
+  LLMDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'warmreach-llm-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600
+
+  ResearchReconcilerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'warmreach-research-reconciler-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600
 
 Outputs:
   ApiUrl:

@@ -231,6 +231,31 @@ Users
         +-- LinkedIn credentials (local only, never sent to backend)
 ```
 
+## Dead-letter queues
+
+Two Lambdas are invoked asynchronously and so get an SQS dead-letter queue:
+
+| Queue                                     | Catches failures from                                |
+| ----------------------------------------- | ---------------------------------------------------- |
+| `warmreach-llm-dlq-{env}`                 | `llm`, when invoked async for evidence re-assessment |
+| `warmreach-research-reconciler-dlq-{env}` | `research-reconciler`, on its EventBridge schedule   |
+
+An async invocation retries twice and is then discarded, so without these a
+failed run leaves nothing behind to inspect. Messages are kept for 14 days.
+
+Nothing watches these queues automatically in the community edition — check
+them with `aws sqs receive-message` if work appears to have gone missing:
+
+```bash
+ENV=dev                          # the Environment you deployed with
+REGION=${AWS_REGION:-us-west-2}
+
+aws sqs get-queue-attributes --region "$REGION" \
+  --queue-url "$(aws sqs get-queue-url --queue-name "warmreach-llm-dlq-$ENV" \
+    --region "$REGION" --query QueueUrl --output text)" \
+  --attribute-names ApproximateNumberOfMessages
+```
+
 ## Tearing Down
 
 ```bash
