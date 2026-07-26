@@ -38,6 +38,14 @@ def mock_dynamodb_table():
 
 
 @pytest.fixture
+def llm_service_module():
+    """The module itself, for the constants and helpers the index contract lives in."""
+    from conftest import load_service_class
+
+    return load_service_class('llm', 'llm_service')
+
+
+@pytest.fixture
 def service(mock_openai_client, mock_dynamodb_table):
     """Create LLMService with mocked dependencies."""
     from conftest import load_service_class
@@ -700,3 +708,82 @@ class TestAnalyzeMessagePatterns:
         )
         assert 'insights' in result
         assert result['insights'] == []
+
+
+class TestResearchReconciliationIndex:
+    """The sparse GSI3 keys that make the reconciler O(in-flight) instead of O(table).
+
+    The index is only correct while every status write maintains it. A row that
+    keeps its keys after going terminal is swept forever; a row that loses them
+    while still active becomes invisible to the reconciler and nothing reports
+    it. Both are silent, so they are asserted per write path rather than assumed.
+    """
+
+    def test_new_research_row_enters_the_index(
+        self, service, mock_openai_client, mock_dynamodb_table, llm_service_module
+    ):
+        service.research_selected_ideas(
+            user_data={'name': 'Test User'},
+            selected_ideas=['Topic 1'],
+            user_id='user-123',
+        )
+
+        item = mock_dynamodb_table.put_item.call_args.kwargs['Item']
+        assert item['status'] == 'starting'
+        assert item['GSI3PK'] == llm_service_module.RESEARCH_RECON_PARTITION
+        assert item['GSI3SK']
+
+    @pytest.mark.parametrize('status', ['completed', 'failed', 'cancelled', 'abandoned'])
+    def test_terminal_status_drops_out_of_the_index(self, service, mock_dynamodb_table, status):
+        service._set_research_status('user-123', 'job-1', status)
+
+        expr = mock_dynamodb_table.update_item.call_args.kwargs['UpdateExpression']
+        assert 'REMOVE GSI3PK, GSI3SK' in expr
+        assert 'GSI3PK = ' not in expr
+
+    @pytest.mark.parametrize('status', ['starting', 'in_progress'])
+    def test_active_status_stays_in_the_index(
+        self, service, mock_dynamodb_table, status, llm_service_module
+    ):
+        service._set_research_status('user-123', 'job-1', status)
+
+        kwargs = mock_dynamodb_table.update_item.call_args.kwargs
+        assert 'GSI3PK = :g3pk' in kwargs['UpdateExpression']
+        assert 'REMOVE' not in kwargs['UpdateExpression']
+        assert kwargs['ExpressionAttributeValues'][':g3pk'] == (
+            llm_service_module.RESEARCH_RECON_PARTITION
+        )
+
+    def test_attaching_the_response_id_keeps_the_row_indexed(self, service, mock_dynamodb_table):
+        # Also back-fills a row created before the index existed.
+        service._attach_research_response_id('user-123', 'job-1', 'resp_abc')
+
+        kwargs = mock_dynamodb_table.update_item.call_args.kwargs
+        assert 'GSI3PK = :g3pk' in kwargs['UpdateExpression']
+        assert kwargs['ExpressionAttributeValues'][':s'] == 'in_progress'
+
+    def test_cancel_drops_out_of_the_index(
+        self, service, mock_openai_client, mock_dynamodb_table
+    ):
+        mock_dynamodb_table.get_item.return_value = {
+            'Item': {
+                'PK': 'USER#user-123',
+                'SK': 'RESEARCH#job-1',
+                'status': 'in_progress',
+                'openai_response_id': 'resp_abc',
+            }
+        }
+
+        service.cancel_research(user_id='user-123', job_id='job-1')
+
+        expr = mock_dynamodb_table.update_item.call_args.kwargs['UpdateExpression']
+        assert 'REMOVE GSI3PK, GSI3SK' in expr
+
+    def test_update_expression_never_emits_two_set_clauses(self, llm_service_module):
+        # DynamoDB permits one SET and one REMOVE per expression; concatenating
+        # the caller's SET with the index's own would be rejected at runtime.
+        expr = llm_service_module.build_update_expression(['a = :a', 'b = :b'], ['X', 'Y'])
+
+        assert expr == 'SET a = :a, b = :b REMOVE X, Y'
+        assert expr.count('SET') == 1
+        assert expr.count('REMOVE') == 1

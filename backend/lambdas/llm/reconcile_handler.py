@@ -21,7 +21,12 @@ from datetime import UTC, datetime, timedelta
 
 import boto3
 from openai import OpenAI
-from services.llm_service import STALE_RESEARCH_HOURS, LLMService, parse_iso_datetime
+from services.llm_service import (
+    RESEARCH_RECON_PARTITION,
+    STALE_RESEARCH_HOURS,
+    LLMService,
+    parse_iso_datetime,
+)
 from shared_services.handler_utils import parallel_scan
 from shared_services.ssm_cache import SSMCachedSecret
 
@@ -54,15 +59,53 @@ def _get_service() -> LLMService:
     return _service
 
 
-def lambda_handler(event, _context):
-    """Reconcile in-progress deep-research jobs against OpenAI."""
-    if table is None:
-        logger.error('DYNAMODB_TABLE_NAME not configured — reconciler is a no-op')
-        return {'scanned': 0, 'reconciled': 0, 'completed': 0, 'abandoned': 0, 'errors': 0}
+# One tick in twelve — hourly at rate(5 minutes) — also runs the old scan.
+SWEEP_EVERY_N_TICKS = 12
 
-    svc = _get_service()
 
-    items = parallel_scan(
+def _query_active_research() -> list[dict]:
+    """Read the in-flight research rows from the sparse GSI3.
+
+    Replaces a filtered ``parallel_scan`` that read the entire table on every
+    tick (1,152 scan calls/day at 4 segments x rate(5 minutes)), whose cost grew
+    with the table rather than with the number of in-flight jobs. The query reads
+    O(active jobs).
+    """
+    items: list[dict] = []
+    params: dict = {
+        'IndexName': 'GSI3',
+        'KeyConditionExpression': 'GSI3PK = :pk',
+        'ExpressionAttributeValues': {':pk': RESEARCH_RECON_PARTITION},
+    }
+    while True:
+        resp = table.query(**params)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            break
+        params['ExclusiveStartKey'] = last
+    return items
+
+
+def _sweep_for_unindexed(indexed: list[dict]) -> list[dict]:
+    """Scan for active rows the index missed, and say so loudly if there are any.
+
+    A sparse index is only as good as the write paths that maintain it: a row
+    that misses its GSI3 keys becomes permanently unreconcilable, and nothing
+    would ever report it — the reconciler would just quietly stop seeing it.
+    That is the same silent-failure shape the index is meant to remove, so it is
+    worth paying for a periodic check rather than assuming.
+
+    Two things make this cheap: it runs once an hour rather than every tick, and
+    it should find nothing. A non-empty result is a bug in one of the write
+    sites in ``llm_service.research_index_parts``, not a routine occurrence —
+    hence ``logger.error``.
+
+    Rows created before the index existed also surface here, which is what
+    carries in-flight jobs across the deploy that introduces it.
+    """
+    seen = {(i.get('PK'), i.get('SK')) for i in indexed}
+    found = parallel_scan(
         table,
         total_segments=4,
         scan_kwargs={
@@ -75,6 +118,48 @@ def lambda_handler(event, _context):
             },
         },
     )
+    missed = [i for i in found if (i.get('PK'), i.get('SK')) not in seen]
+    if missed:
+        logger.error(
+            'GSI3 reconciliation index missed %d active research row(s) — a write path '
+            'is not maintaining GSI3PK/GSI3SK (or these predate the index). Keys: %s',
+            len(missed),
+            [f'{i.get("PK")}/{i.get("SK")}' for i in missed[:10]],
+        )
+    return missed
+
+
+def _should_sweep() -> bool:
+    """Whether this tick also runs the index-verification sweep.
+
+    Wall-clock derived so it needs no stored state, but kept as its own function
+    so tests can pin it. Reading the clock inline would make every other test in
+    this module behave differently between :00 and :05.
+    """
+    return datetime.now(UTC).minute < (60 // SWEEP_EVERY_N_TICKS)
+
+
+def lambda_handler(event, _context):
+    """Reconcile in-progress deep-research jobs against OpenAI."""
+    if table is None:
+        logger.error('DYNAMODB_TABLE_NAME not configured — reconciler is a no-op')
+        return {
+            'scanned': 0,
+            'unindexed': 0,
+            'reconciled': 0,
+            'completed': 0,
+            'abandoned': 0,
+            'errors': 0,
+        }
+
+    svc = _get_service()
+
+    items = _query_active_research()
+
+    unindexed: list[dict] = []
+    if _should_sweep():
+        unindexed = _sweep_for_unindexed(items)
+        items = items + unindexed
 
     by_user: dict[str, list[dict]] = defaultdict(list)
     for it in items:
@@ -125,6 +210,9 @@ def lambda_handler(event, _context):
 
     summary = {
         'scanned': scanned,
+        # Should always be 0. Anything else means a write path stopped
+        # maintaining the GSI3 keys — see _sweep_for_unindexed.
+        'unindexed': len(unindexed),
         'reconciled': reconciled,
         'completed': completed,
         'abandoned': abandoned,

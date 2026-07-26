@@ -96,6 +96,56 @@ OPERATION_MAX_OUTPUT_TOKENS: dict[str, int] = {
 # the composer on the user's next visit) and the reconciler retires it.
 STALE_RESEARCH_HOURS = 6
 
+# --- Sparse GSI3 reconciliation index for deep research -----------------------
+#
+# The reconciler used to find its work with a filtered parallel_scan, which reads
+# the whole table on every tick: at rate(5 minutes) x 4 segments that is 1,152
+# full-table scan calls a day, and the cost grows with the table rather than with
+# the number of in-flight jobs.
+#
+# A row carries GSI3PK/GSI3SK only while it is non-terminal, and the keys are
+# REMOVEd on the terminal transition, so the index holds only rows the reconciler
+# must sweep. GSI3SK is the write's own timestamp, giving a cheap age ordering.
+RESEARCH_RECON_PARTITION = 'DRECON#research'
+
+# Statuses that keep a row in the index. Everything else — completed, failed,
+# cancelled, abandoned — is terminal and drops out.
+ACTIVE_RESEARCH_STATUSES = ('starting', 'in_progress')
+
+
+def research_index_parts(status: str, timestamp: str) -> tuple[list[str], list[str], dict]:
+    """Return (set_parts, remove_parts, values) maintaining a row's GSI3 keys.
+
+    Callers merge these into their own UpdateExpression rather than issuing a
+    second write, so the status change and the index change land atomically —
+    a row can never be terminal-but-indexed or active-but-invisible.
+
+    Every write that changes a RESEARCH# row's status must apply this. Deriving
+    it in one place is what stops the write sites from drifting apart; a site
+    that forgets it makes the row silently unreconcilable.
+    """
+    if status in ACTIVE_RESEARCH_STATUSES:
+        return (
+            ['GSI3PK = :g3pk', 'GSI3SK = :g3sk'],
+            [],
+            {':g3pk': RESEARCH_RECON_PARTITION, ':g3sk': timestamp},
+        )
+    return ([], ['GSI3PK', 'GSI3SK'], {})
+
+
+def build_update_expression(set_parts: list[str], remove_parts: list[str]) -> str:
+    """Assemble a DynamoDB UpdateExpression from SET and REMOVE clauses.
+
+    DynamoDB allows at most one SET and one REMOVE clause per expression, so the
+    parts have to be merged rather than concatenated.
+    """
+    clauses = []
+    if set_parts:
+        clauses.append('SET ' + ', '.join(set_parts))
+    if remove_parts:
+        clauses.append('REMOVE ' + ', '.join(remove_parts))
+    return ' '.join(clauses)
+
 
 
 def parse_iso_datetime(value):
@@ -175,11 +225,15 @@ class LLMService(BaseService):
         if not self.table or not user_id:
             return
         try:
+            now_iso = datetime.now(UTC).isoformat()
+            idx_set, idx_remove, idx_values = research_index_parts(status, now_iso)
             self.table.update_item(
                 Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'},
-                UpdateExpression='SET #s = :s, updated_at = :ts',
+                UpdateExpression=build_update_expression(
+                    ['#s = :s', 'updated_at = :ts', *idx_set], idx_remove
+                ),
                 ExpressionAttributeNames={'#s': 'status'},
-                ExpressionAttributeValues={':s': status, ':ts': datetime.now(UTC).isoformat()},
+                ExpressionAttributeValues={':s': status, ':ts': now_iso, **idx_values},
             )
         except Exception as e:
             logger.warning('Failed to set research status %s for job %s: %s', status, job_id, e)
@@ -222,11 +276,20 @@ class LLMService(BaseService):
         if not self.table:
             return
         try:
+            ip_set, ip_remove, ip_values = research_index_parts(
+                'in_progress', datetime.now(UTC).isoformat()
+            )
             self.table.update_item(
                 Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'},
-                UpdateExpression='SET openai_response_id = :rid, #s = :s',
+                UpdateExpression=build_update_expression(
+                    ['openai_response_id = :rid', '#s = :s', *ip_set], ip_remove
+                ),
                 ExpressionAttributeNames={'#s': 'status'},
-                ExpressionAttributeValues={':rid': response_id, ':s': 'in_progress'},
+                ExpressionAttributeValues={
+                    ':rid': response_id,
+                    ':s': 'in_progress',
+                    **ip_values,
+                },
             )
         except Exception as e:
             logger.error(
@@ -350,6 +413,9 @@ class LLMService(BaseService):
                     'PK': f'USER#{user_id}',
                     'SK': f'RESEARCH#{job_id}',
                     'status': 'starting',
+                    # Enters the sparse reconciliation index straight away.
+                    'GSI3PK': RESEARCH_RECON_PARTITION,
+                    'GSI3SK': now.isoformat(),
                     'selected_ideas': [str(idea)[:500] for idea in selected_ideas],
                     'created_at': now.isoformat(),
                     'ttl': int((now + timedelta(days=7)).timestamp()),
@@ -653,7 +719,9 @@ class LLMService(BaseService):
         try:
             self.table.update_item(
                 Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'},
-                UpdateExpression='SET #s = :s, updated_at = :ts',
+                UpdateExpression=build_update_expression(
+                    ['#s = :s', 'updated_at = :ts'], ['GSI3PK', 'GSI3SK']
+                ),
                 ExpressionAttributeNames={'#s': 'status'},
                 ExpressionAttributeValues={':s': 'cancelled', ':ts': datetime.now(UTC).isoformat()},
             )
