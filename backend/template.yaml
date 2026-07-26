@@ -27,10 +27,6 @@ Parameters:
     Type: String
     Default: ''
     Description: ARN of SSM SecureString parameter containing OpenAI API key
-  BedrockModelId:
-    Type: String
-    Default: us.anthropic.claude-sonnet-4-5-20250929-v1:0
-    Description: Bedrock model ID for LLM operations (cross-region inference profile, us-east-1)
   # RAGStack Integration - Nested Stack (recommended)
   DeployRAGStack:
     Type: String
@@ -734,21 +730,9 @@ Resources:
       Environment:
         Variables:
           OPENAI_API_KEY_ARN: !Ref OpenAIApiKeyArn
-          BEDROCK_MODEL_ID: !Ref BedrockModelId
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ProfilesTable
-        - Statement:
-            - Effect: Allow
-              Action:
-                - bedrock:InvokeModel
-              # Cross-region inference profiles (us.* IDs) require permission
-              # on both the inference-profile ARN and the underlying foundation
-              # models. Foundation-model wildcards are intentional so operators
-              # can switch models without redeploy.
-              Resource:
-                - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}'
-                - !Sub 'arn:aws:bedrock:*::foundation-model/*'
         - Statement:
             - Effect: Allow
               Action:

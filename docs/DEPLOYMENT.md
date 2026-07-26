@@ -25,7 +25,7 @@ The script will prompt for:
 - Region (us-east-1 recommended for Bedrock access)
 - Environment (`dev` or `prod`)
 - RAGStack deployment mode (nested or external)
-- OpenAI API key (optional)
+- OpenAI API key, stored as an SSM SecureString (optional; the LLM Lambda reads it at runtime by ARN, so the key itself is never a stack parameter)
 
 It automatically runs `sam build && sam deploy`, captures outputs, and updates your `.env` file.
 
@@ -39,16 +39,15 @@ sam deploy --guided
 
 Key parameter prompts:
 
-| Parameter           | Value                                          | Notes                                                                                               |
-| ------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `Environment`       | `prod`                                         | `dev` includes localhost CORS origins                                                               |
-| `IncludeDevOrigins` | `false`                                        | Set `true` for dev stacks                                                                           |
-| `ProductionOrigins` | `https://app.warmreach.com`                    | Comma-separated allowed origins                                                                     |
-| `ProductionOrigin`  | `https://app.warmreach.com`                    | Primary origin for S3 CORS                                                                          |
-| `OpenAIApiKey`      | your key                                       | For LLM Lambda                                                                                      |
-| `BedrockModelId`    | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Inert — set as an env var but read by no code (the `llm` Lambda is OpenAI-only); accept the default |
-| `DeployRAGStack`    | `true` or `false`                              | Nested RAGStack or use external                                                                     |
-| `AdminEmail`        | your email                                     | Required if nested RAGStack                                                                         |
+| Parameter           | Value                           | Notes                                  |
+| ------------------- | ------------------------------- | -------------------------------------- |
+| `Environment`       | `prod`                          | `dev` includes localhost CORS origins  |
+| `IncludeDevOrigins` | `false`                         | Set `true` for dev stacks              |
+| `ProductionOrigins` | `https://app.warmreach.com`     | Comma-separated allowed origins        |
+| `ProductionOrigin`  | `https://app.warmreach.com`     | Primary origin for S3 CORS             |
+| `OpenAIApiKeyArn`   | `arn:aws:ssm:...:parameter/...` | SSM SecureString ARN — not the raw key |
+| `DeployRAGStack`    | `true` or `false`               | Nested RAGStack or use external        |
+| `AdminEmail`        | your email                      | Required if nested RAGStack            |
 
 Deployment takes 5-20 minutes depending on whether RAGStack is nested.
 

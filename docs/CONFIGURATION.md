@@ -38,12 +38,12 @@ These values are typically populated after deploying the infrastructure with SAM
 
 ### Frontend Feature Configuration
 
-| Variable                   | Description                                                                     | Default                |
-| -------------------------- | ------------------------------------------------------------------------------- | ---------------------- |
+| Variable                       | Description                                                                                   | Default                 |
+| ------------------------------ | --------------------------------------------------------------------------------------------- | ----------------------- |
 | `VITE_STRIPE_STARTER_PRICE_ID` | Stripe price ID for Starter tier checkout. Must appear in the backend's `StripePriceTierMap`. | `price_starter_monthly` |
-| `VITE_STRIPE_PRO_PRICE_ID` | Stripe price ID for Pro tier checkout. Must appear in the backend's `StripePriceTierMap`. | `price_pro_monthly`    |
-| `VITE_TELEMETRY_ENDPOINT`  | Endpoint for frontend error telemetry. Optional; telemetry disabled when unset. | `/api/telemetry/error` |
-| `VITE_API_TIMEOUT_MS`      | API request timeout in milliseconds. Clamped to `[5000, 120000]`.               | `30000`                |
+| `VITE_STRIPE_PRO_PRICE_ID`     | Stripe price ID for Pro tier checkout. Must appear in the backend's `StripePriceTierMap`.     | `price_pro_monthly`     |
+| `VITE_TELEMETRY_ENDPOINT`      | Endpoint for frontend error telemetry. Optional; telemetry disabled when unset.               | `/api/telemetry/error`  |
+| `VITE_API_TIMEOUT_MS`          | API request timeout in milliseconds. Clamped to `[5000, 120000]`.                             | `30000`                 |
 
 ### RAGStack
 
@@ -119,7 +119,6 @@ These variables are set by the SAM template at deploy time, not in `.env`.
 | `STACK_NAME` | CloudFormation stack name. Set by SAM template for admin-metrics Lambda. | |
 | `OPENAI_API_KEY_ARN` | SSM SecureString ARN for OpenAI API key. The LLM Lambda fetches the key at runtime via SSM `GetParameter` with decryption. | |
 | `OPENAI_TIMEOUT` | Timeout in seconds for OpenAI API calls. Used by `llm/lambda_function.py`. Code-only (read via `os.environ.get`), not SAM-managed. Transient failures retry up to 3 times with exponential backoff (2s, 4s) in `llm_service.py`. | `60` |
-| `BEDROCK_MODEL_ID` | Currently unused by code. Set on the LLM Lambda from the SAM `BedrockModelId` parameter (default `us.anthropic.claude-sonnet-4-5-20250929-v1:0`), but Bedrock support was removed in the audit remediation and the `llm` Lambda is OpenAI-only — no code reads this env var. The parameter and env var are inert until Bedrock is re-added. | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
 | `DYNAMODB_TABLE_NAME` | DynamoDB table name (SAM-managed, set by `!Ref ProfilesTable`). Lambda-side name for the same table the client backend reads as `DYNAMODB_TABLE`; the names differ only because the two runtimes were wired independently. Both point at the `DynamoDBTableName` stack output. | |
 | `COMMAND_RATE_LIMIT_MAX` | Max commands per minute per user | `10` |
 | `DEV_MODE` | When `true`, enables test user ID fallback in edge-crud, ragstack-ops, and analytics-insights (bypasses JWT user extraction via `handler_utils.get_user_id`). Manually set if needed; not in template.yaml. Do not enable in production. | `false` |
@@ -142,15 +141,31 @@ These variables are set by the SAM template at deploy time, not in `.env`.
 | `OPENAI_MODEL_GENERAL` | Model for idea/message/icebreaker generation and synthesis. | `gpt-5.6-terra` |
 | `OPENAI_MODEL_ANALYSIS` | Model for tone, message-pattern, comment and summary ops. | `gpt-5.6-terra` |
 | `OPENAI_MODEL_DEEP_RESEARCH` | Deep-research model. Retires 2026-10-23. | `o4-mini-deep-research` |
+| `COGNITO_CLIENT_ID` | Cognito app client ID for JWT audience validation (websocket-connect Lambda) | |
+| `LLM_FUNCTION_NAME` | Name of the LLM Lambda, used by `goal_evidence_detector` to invoke it for auto-assessment. SAM-set (`!Ref LLMFunction`). | |
+| `AGENT_STATE_MACHINE_ARN` | ARN of the B-2 `AgentActionStateMachine`. `opportunity_action_service` starts an execution on `approve_action`. SAM-set (`!Ref AgentActionStateMachine`). | |
+| `PLANNER_MODEL` | OpenAI model for the B-2 agent planner (`goal_intelligence_service`) and the agent's default config. Read by `shared_services/model_config.py`; code-only, not SAM-managed. Falls back to `OPENAI_MODEL_ANALYSIS`. | `gpt-5.6-terra` |
+| `AGENT_ASSESS_DEBOUNCE_SECONDS` | Debounce window before a post-evidence auto-assessment fires (`goal_evidence_detector`). Code-only; not SAM-managed. | `60` |
+| `AGENT_INFLIGHT_TTL_HOURS` | Hours a dispatched-unconfirmed agent action may stay in-flight before the reconciler expires it (`opportunity-reconciler`). Code-only; not SAM-managed. | `336` (14 days) |
+| `AGENT_PENDING_APPROVAL_TTL_HOURS` | Hours a pending-approval agent action may wait before the reconciler expires it (`opportunity-reconciler`). Code-only; not SAM-managed. | `168` (7 days) |
+| `AGENT_RESEARCH_STALENESS_HOURS` | Staleness cutoff for agent deep-research rows (`agent_research_service`). Code-only; not SAM-managed. | `336` (14 days) |
+| `CONNECT_CONFIRMATION_TIMEOUT_SECONDS` | Task-token wait before a connect action is judged unconfirmed (`agent-action-task/confirm_follow`). Code-only; not SAM-managed. | `1209600` (14 days) |
+| `MESSAGE_CONFIRMATION_TIMEOUT_SECONDS` | Poll deadline before a message action is judged unconfirmed (`agent-action-task/confirm_follow`). Code-only; not SAM-managed. | `1800` (30 min) |
+| `FOLLOW_CONFIRMATION_TIMEOUT_SECONDS` | Poll deadline before a follow action is judged unconfirmed (`agent-action-task/confirm_follow`). Code-only; not SAM-managed. | `900` (15 min) |
+| `COMMENT_CONFIRMATION_TIMEOUT_SECONDS` | Poll deadline before a comment action is judged unconfirmed (`agent-action-task/confirm_follow`). Code-only; not SAM-managed. | `1800` (30 min) |
+| `DEPENDENCY_WAIT_TIMEOUT_SECONDS` | Max wait for an action's dependency before the wait times out (`agent-action-task/check_dependency`). Code-only; not SAM-managed. | `1209600` (14 days) |
+| `DISPATCH_DEFER_DEADLINE_SECONDS` | Deadline after which a deferred (agent-offline) dispatch expires instead of retrying (`agent-action-task/gate_dispatch`). Code-only; not SAM-managed. | `604800` (7 days) |
+| `CLIENT_DOWNLOAD_MAC` / `_WIN` / `_LINUX` | Per-platform desktop client download URL (`client-downloads` Lambda). `https://` values pass through; `s3://` values are presigned per request. Empty renders "coming soon". SAM-set from the `ClientDownload{Mac,Win,Linux}Url` parameters. | |
+| `CLIENT_DOWNLOAD_VERSION` | Desktop client version string returned by `client-downloads`. SAM-set from the `ClientDownloadVersion` parameter. | |
 
 > **Model cost vs. tier margin.** `gpt-5.6-terra` ($2.50/$15.00 per 1M tokens) is
 > chosen over the cheaper `gpt-5.6-luna` ($1.00/$6.00) as a deliberate
 > quality-for-margin trade. At terra:
 >
-> | Tier | Net revenue | LLM grant cost | Headroom |
-> | --- | --- | --- | --- |
-> | Starter $39 | $37.57 | 1,000 ops → $12.50 | +$25.07 |
-> | Pro $79 | $76.41 | 3,000 ops → $37.50 | +$38.91 before deep research |
+> | Tier        | Net revenue | LLM grant cost     | Headroom                     |
+> | ----------- | ----------- | ------------------ | ---------------------------- |
+> | Starter $39 | $37.57      | 1,000 ops → $12.50 | +$25.07                      |
+> | Pro $79     | $76.41      | 3,000 ops → $37.50 | +$38.91 before deep research |
 >
 > Pro's remaining $38.91 has to cover 25 deep-research credits at $0.50–2.00
 > each. At the top of that range (25 × $2.00 = $50.00) a Pro subscriber who
@@ -187,22 +202,6 @@ These variables are set by the SAM template at deploy time, not in `.env`.
 > 3. **Per-user attribution is partial.** It covers `generate_ideas` and
 >    `synthesize_research`. The other operations record per-operation cost to
 >    CloudWatch but have no `user_id` in scope to attribute against.
-| `COGNITO_CLIENT_ID` | Cognito app client ID for JWT audience validation (websocket-connect Lambda) | |
-| `LLM_FUNCTION_NAME` | Name of the LLM Lambda, used by `goal_evidence_detector` to invoke it for auto-assessment. SAM-set (`!Ref LLMFunction`). | |
-| `AGENT_STATE_MACHINE_ARN` | ARN of the B-2 `AgentActionStateMachine`. `opportunity_action_service` starts an execution on `approve_action`. SAM-set (`!Ref AgentActionStateMachine`). | |
-| `PLANNER_MODEL` | OpenAI model for the B-2 agent planner (`goal_intelligence_service`) and the agent's default config. Read by `shared_services/model_config.py`; code-only, not SAM-managed. Falls back to `OPENAI_MODEL_ANALYSIS`. | `gpt-5.6-terra` |
-| `AGENT_ASSESS_DEBOUNCE_SECONDS` | Debounce window before a post-evidence auto-assessment fires (`goal_evidence_detector`). Code-only; not SAM-managed. | `60` |
-| `AGENT_INFLIGHT_TTL_HOURS` | Hours a dispatched-unconfirmed agent action may stay in-flight before the reconciler expires it (`opportunity-reconciler`). Code-only; not SAM-managed. | `336` (14 days) |
-| `AGENT_PENDING_APPROVAL_TTL_HOURS` | Hours a pending-approval agent action may wait before the reconciler expires it (`opportunity-reconciler`). Code-only; not SAM-managed. | `168` (7 days) |
-| `AGENT_RESEARCH_STALENESS_HOURS` | Staleness cutoff for agent deep-research rows (`agent_research_service`). Code-only; not SAM-managed. | `336` (14 days) |
-| `CONNECT_CONFIRMATION_TIMEOUT_SECONDS` | Task-token wait before a connect action is judged unconfirmed (`agent-action-task/confirm_follow`). Code-only; not SAM-managed. | `1209600` (14 days) |
-| `MESSAGE_CONFIRMATION_TIMEOUT_SECONDS` | Poll deadline before a message action is judged unconfirmed (`agent-action-task/confirm_follow`). Code-only; not SAM-managed. | `1800` (30 min) |
-| `FOLLOW_CONFIRMATION_TIMEOUT_SECONDS` | Poll deadline before a follow action is judged unconfirmed (`agent-action-task/confirm_follow`). Code-only; not SAM-managed. | `900` (15 min) |
-| `COMMENT_CONFIRMATION_TIMEOUT_SECONDS` | Poll deadline before a comment action is judged unconfirmed (`agent-action-task/confirm_follow`). Code-only; not SAM-managed. | `1800` (30 min) |
-| `DEPENDENCY_WAIT_TIMEOUT_SECONDS` | Max wait for an action's dependency before the wait times out (`agent-action-task/check_dependency`). Code-only; not SAM-managed. | `1209600` (14 days) |
-| `DISPATCH_DEFER_DEADLINE_SECONDS` | Deadline after which a deferred (agent-offline) dispatch expires instead of retrying (`agent-action-task/gate_dispatch`). Code-only; not SAM-managed. | `604800` (7 days) |
-| `CLIENT_DOWNLOAD_MAC` / `_WIN` / `_LINUX` | Per-platform desktop client download URL (`client-downloads` Lambda). `https://` values pass through; `s3://` values are presigned per request. Empty renders "coming soon". SAM-set from the `ClientDownload{Mac,Win,Linux}Url` parameters. | |
-| `CLIENT_DOWNLOAD_VERSION` | Desktop client version string returned by `client-downloads`. SAM-set from the `ClientDownloadVersion` parameter. | |
 
 ### Client Environment
 

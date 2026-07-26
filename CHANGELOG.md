@@ -57,6 +57,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backend/uv.lock` stub, pruned dead barrel re-exports and duplicate default
   exports, and silenced knip false positives.
 
+### Removed
+
+- **Backend:** the `BedrockModelId` parameter, the `BEDROCK_MODEL_ID` env var on
+  the `llm` Lambda, and the `bedrock:InvokeModel` IAM grant. No code has read any
+  of them since Bedrock support was removed in the audit remediation — the grant
+  was a standing permission (with a `foundation-model/*` wildcard) for a call
+  that is never made, and three separate audits have had to document the
+  parameter as inert rather than delete it. RAGStack's own Bedrock use for
+  embeddings is in its nested stack and is unaffected. **Deployers:** if you pass
+  `BedrockModelId` explicitly, drop it — CloudFormation rejects unknown
+  parameters. The interactive deploy script never passed it.
+
 ### Docs
 
 - **Docs:** Described the `llm` Lambda as OpenAI-only (Bedrock scoped to RAGStack

@@ -10,14 +10,14 @@ AI-powered content generation for LinkedIn posts and personalized messaging.
 
 ## Operations
 
-| Operation | Model | Mode | Description |
-|-----------|-------|------|-------------|
-| `generate_ideas` | gpt-5.2 | Synchronous | Generate LinkedIn post ideas from user profile + prompt |
-| `research_selected_ideas` | o4-mini-deep-research | Async (background) | Deep research with web search; returns `job_id` for polling |
-| `get_research_result` | — | Poll | Check DynamoDB/OpenAI for completed research/ideas/synthesis |
-| `synthesize_research` | gpt-5.2 | Synchronous | Synthesize research + ideas into a ready-to-post LinkedIn post |
-| `generate_message` | gpt-5.2 | Synchronous | Generate personalized message for a connection |
-| `analyze_message_patterns` | gpt-4.1 | Synchronous | Analyze sent/received message patterns for insights |
+| Operation                  | Model                 | Mode               | Description                                                    |
+| -------------------------- | --------------------- | ------------------ | -------------------------------------------------------------- |
+| `generate_ideas`           | gpt-5.2               | Synchronous        | Generate LinkedIn post ideas from user profile + prompt        |
+| `research_selected_ideas`  | o4-mini-deep-research | Async (background) | Deep research with web search; returns `job_id` for polling    |
+| `get_research_result`      | —                     | Poll               | Check DynamoDB/OpenAI for completed research/ideas/synthesis   |
+| `synthesize_research`      | gpt-5.2               | Synchronous        | Synthesize research + ideas into a ready-to-post LinkedIn post |
+| `generate_message`         | gpt-5.2               | Synchronous        | Generate personalized message for a connection                 |
+| `analyze_message_patterns` | gpt-4.1               | Synchronous        | Analyze sent/received message patterns for insights            |
 
 > Additional AI operations (tone analysis) are available in WarmReach Pro.
 
@@ -50,16 +50,16 @@ AI-powered content generation for LinkedIn posts and personalized messaging.
 ## Authentication
 
 Extracts `sub` from JWT claims via API Gateway authorizer:
+
 - HTTP API v2: `event.requestContext.authorizer.jwt.claims.sub`
 - REST API fallback: `event.requestContext.authorizer.claims.sub`
 
 ## Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes | OpenAI API key |
-| `DYNAMODB_TABLE_NAME` | Yes | DynamoDB table for result storage and quota tracking |
-| `BEDROCK_MODEL_ID` | No | Bedrock model ID (for RAGStack embeddings) |
+| Variable              | Required | Description                                          |
+| --------------------- | -------- | ---------------------------------------------------- |
+| `OPENAI_API_KEY_ARN`  | Yes      | ARN of the SSM SecureString holding the OpenAI key   |
+| `DYNAMODB_TABLE_NAME` | Yes      | DynamoDB table for result storage and quota tracking |
 
 ## Architecture
 

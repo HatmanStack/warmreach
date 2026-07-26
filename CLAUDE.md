@@ -200,7 +200,7 @@ Optional nested stack from [RAGStack-Lambda](https://github.com/HatmanStack/RAGS
 Required `.env` variables (see `.env.example`):
 
 - `VITE_API_URL`, `VITE_COGNITO_*`, `VITE_WEBSOCKET_URL` - Frontend config
-- `OPENAI_API_KEY_ARN` (SSM SecureString ARN), `BEDROCK_MODEL_ID` - AI config
+- `OPENAI_API_KEY_ARN` (SSM SecureString ARN) - AI config
 - AWS credentials for SAM deployment
 
 LinkedIn credentials live exclusively on-device in the desktop client,
