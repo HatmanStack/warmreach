@@ -143,6 +143,7 @@ Lambdas share code via `lambdas/shared/python/`:
 - `shared_services/base_service.py` - Base class for all service layers
 - `shared_services/circuit_breaker.py` - Circuit breaker pattern (public API: `on_success()`/`on_failure()`)
 - `shared_services/command_dispatch_core.py` - Community-clean command-creation core (record, rate-limit, dispatch)
+- `shared_services/data_rights_service.py` - GDPR/CCPA data export and account erasure
 - `shared_services/dynamodb_types.py` - TypedDict definitions for DynamoDB item schemas
 - `shared_services/edge_constants.py` - Edge-related constants
 - `shared_services/edge_data_service.py` - Edge CRUD operations

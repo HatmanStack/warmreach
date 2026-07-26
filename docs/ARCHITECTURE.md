@@ -58,6 +58,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 | `observability.py`         | Correlation context and structured JSON logging                      |
 | `message_utils.py`         | Shared message analysis utilities                                    |
 | `llm_cost.py`              | OpenAI token accounting and cost attribution                         |
+| `data_rights_service.py`   | GDPR/CCPA data export and account erasure                            |
 | `model_config.py`          | Central registry of OpenAI model ids (env-overridable)               |
 | `dynamodb_types.py`        | TypedDict definitions for DynamoDB item schemas                      |
 | `protocols.py`             | Typing-only Protocol DI contracts for handler utilities              |

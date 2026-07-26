@@ -76,9 +76,21 @@ Served by the `linkedin-action-gate` Lambda, which dispatches the action to the 
 | Endpoint    | Method | Description                                                            |
 | ----------- | ------ | ---------------------------------------------------------------------- |
 | `/dynamodb` | `GET`  | Get user settings or profile metadata                                  |
-| `/dynamodb` | `POST` | Operations: `create`, `update_user_settings`, `update_profile_picture` |
+| `/dynamodb` | `POST` | Operations: `create`, `update_user_settings`, `update_profile_picture`, `export_my_data`, `delete_my_account` |
 | `/profiles` | `GET`  | Get user profile data                                                  |
 | `/profiles` | `POST` | Update user profile                                                    |
+
+### Data Subject Rights
+
+`export_my_data` returns everything held about the requesting account.
+`delete_my_account` erases it and requires `{"confirm": "DELETE MY ACCOUNT"}` —
+an erasure is irreversible, so the caller states intent explicitly. It is
+idempotent, and returns 500 rather than 200 on a partial erasure so a subject is
+never told their data is gone when some remains.
+
+Scraped third-party profile records (`PROFILE#{id}`) are shared across every
+account connected to that person, so they are neither exported nor deleted with
+an individual account.
 
 ### AI & Processing
 

@@ -108,6 +108,77 @@ def _handle_complete_onboarding_step(body, user_id, event):
 
 
 # ---------------------------------------------------------------------------
+# Data subject rights (GDPR Art. 15 / 17, CCPA)
+# ---------------------------------------------------------------------------
+
+_data_rights_service = None
+
+
+def _get_data_rights_service():
+    global _data_rights_service
+    if _data_rights_service is None:
+        from shared_services.data_rights_service import DataRightsService
+
+        _data_rights_service = DataRightsService(table)
+    return _data_rights_service
+
+
+def _handle_export_my_data(body, user_id, event):
+    """Return everything held about the requesting account."""
+    from shared_services.data_rights_service import to_json
+
+    result = _get_data_rights_service().export_user_data(user_id)
+    write_activity(table, user_id, 'data_exported', metadata={'itemCount': result.get('itemCount', 0)})
+    # api_response serialises with default=str, which would turn DynamoDB
+    # Decimals into strings and hand the subject "12" instead of 12. Normalise
+    # through to_json first so counters stay numbers.
+    return _resp(200, json.loads(to_json(result)), event)
+
+
+def _handle_delete_my_account(body, user_id, event):
+    """Erase the requesting account's data. Irreversible.
+
+    Requires an explicit confirmation field. An erasure triggered by a
+    mis-routed request is unrecoverable, so the caller has to say so twice.
+    """
+    if body.get('confirm') != 'DELETE MY ACCOUNT':
+        return _resp(
+            400,
+            {
+                'error': 'Confirmation required',
+                'code': 'CONFIRMATION_REQUIRED',
+                'hint': 'Send {"confirm": "DELETE MY ACCOUNT"} to proceed. This cannot be undone.',
+            },
+            event,
+        )
+
+    # Deliberately NOT written as an ACTIVITY# item: that lives in the user's own
+    # partition and would be swept up by the very erasure it documents, leaving
+    # no trace the account was ever asked to be deleted. A structured log line
+    # outlives the data it describes, which is the point of an audit record.
+    logger.info(
+        'account_deletion_requested',
+        extra={'user_id': user_id, 'operation': 'delete_my_account'},
+    )
+
+    result = _get_data_rights_service().delete_user_data(user_id)
+    logger.info(
+        'account_deletion_result',
+        extra={
+            'user_id': user_id,
+            'operation': 'delete_my_account',
+            'status_code': 200 if result.get('complete') else 500,
+        },
+    )
+    if not result.get('complete'):
+        # Reporting 200 on a partial erasure would tell the subject their data
+        # is gone when some of it is not. The operation is idempotent, so a
+        # retry finishes it.
+        return _resp(500, {**result, 'error': 'Erasure incomplete, please retry'}, event)
+    return _resp(200, result, event)
+
+
+# ---------------------------------------------------------------------------
 # POST operation routing table
 # ---------------------------------------------------------------------------
 
@@ -119,6 +190,8 @@ POST_HANDLERS = {
     'save_import_checkpoint': _handle_save_import_checkpoint,
     'clear_import_checkpoint': _handle_clear_import_checkpoint,
     'complete_onboarding_step': _handle_complete_onboarding_step,
+    'export_my_data': _handle_export_my_data,
+    'delete_my_account': _handle_delete_my_account,
 }
 
 # ---------------------------------------------------------------------------
