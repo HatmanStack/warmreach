@@ -145,17 +145,20 @@ class TestCallSitesUseTheRegistry:
         root = pathlib.Path(__file__).resolve().parents[3] / 'backend' / 'lambdas'
         offenders = []
         for path in root.rglob('*.py'):
-            # model_config is the registry — MODEL_SHUTDOWNS has to name the
-            # retired ids, and gpt-5.2 is deliberately retained there as a
-            # tripwire for env overrides.
-            if '.aws-sam' in path.parts or path.name == 'model_config.py':
+            # Two modules legitimately name retired ids: model_config, whose
+            # MODEL_SHUTDOWNS map is the point, and llm_cost, whose price table
+            # retains them so historical usage still prices correctly.
+            if '.aws-sam' in path.parts or path.name in ('model_config.py', 'llm_cost.py'):
                 continue
             for num, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
                 code = line.split('#', 1)[0]
                 for retired in RETIRED_MODELS:
                     if re.search(rf"""['"]{re.escape(retired)}['"]""", code):
                         offenders.append(f'{path.relative_to(root)}:{num}')
-        assert not offenders, f'retired model ids hardcoded outside model_config: {offenders}'
+        assert not offenders, (
+            f'retired model ids hardcoded outside the allowlisted registry/pricing '
+            f'modules (model_config.py, llm_cost.py): {offenders}'
+        )
 
 
 class TestDeprecationNotices:

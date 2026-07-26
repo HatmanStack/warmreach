@@ -10,6 +10,7 @@ from typing import Any
 
 # Shared layer imports (from /opt/python via Lambda Layer)
 import openai
+from errors.exceptions import ExternalServiceError
 from shared_services.base_service import BaseService
 from shared_services.model_config import MODEL_ANALYSIS, MODEL_DEEP_RESEARCH, MODEL_GENERAL, warn_if_deprecated
 
@@ -62,6 +63,31 @@ OPERATION_TIMEOUTS: dict[str, int] = {
     'analyze_message_patterns': 30,
     'research_selected_ideas': 90,
     'synthesize_research': 60,
+}
+
+# Per-operation ceiling on generated tokens. Without a cap a single response has
+# no cost bound at all — one runaway generation can burn a meaningful amount of
+# the operator's own OpenAI spend. Values are generous relative to what these
+# prompts need; they are a backstop, not a length target.
+#
+# research_selected_ideas is deliberately absent: it is a background
+# deep-research job whose output length is the product, so capping it would
+# truncate the report rather than save money.
+#
+# IMPORTANT: max_output_tokens counts *reasoning* tokens as well as visible
+# output. On a reasoning model a tight cap can be consumed entirely by reasoning
+# and return status='incomplete' with empty output_text, which reads as "Empty
+# response from AI". These are sized with generous reasoning headroom; they
+# exist to stop a runaway, not to trim ordinary responses.
+OPERATION_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    'generate_ideas': 8_000,
+    'generate_message': 6_000,
+    'generate_icebreaker': 6_000,
+    'analyze_tone': 6_000,
+    'analyze_message_patterns': 8_000,
+    'generate_comment': 6_000,
+    'synthesize_research': 16_000,
+    'summarize_evidence': 8_000,
 }
 
 # A deep-research job still 'in_progress' this long after kickoff is a zombie
@@ -239,12 +265,14 @@ class LLMService(BaseService):
                 model=MODEL_GENERAL,
                 input=llm_prompt,
                 timeout=OPERATION_TIMEOUTS.get('generate_ideas', 60),
+                max_output_tokens=OPERATION_MAX_OUTPUT_TOKENS['generate_ideas'],
             )
 
             # Parse ideas from response
-            has_output_text = hasattr(response, 'output_text')
-            content = response.output_text if has_output_text else str(response)
-            logger.info(f'generate_ideas response: has_output_text={has_output_text}, content_length={len(content)}')
+            # Routed through _extract_response_content so a truncated reply
+            # raises rather than parsing as an empty idea list.
+            content = self._extract_response_content(response)
+            logger.info(f'generate_ideas response: content_length={len(content)}')
             ideas = self._parse_ideas(content)
             logger.info(f'generate_ideas parsed {len(ideas)} ideas')
 
@@ -265,6 +293,11 @@ class LLMService(BaseService):
 
             return {'success': True, 'ideas': ideas}
 
+        except ExternalServiceError:
+            # Truncation carries an actionable, retryable message. The broad
+            # handlers below would collapse it into a generic failure and the
+            # user would be told nothing useful.
+            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in generate_ideas: {e}')
             return {'success': False, 'error': 'Failed to generate ideas'}
@@ -351,6 +384,11 @@ class LLMService(BaseService):
                     {'type': 'code_interpreter', 'container': {'type': 'auto'}},
                 ],
             )
+        except ExternalServiceError:
+            # Truncation carries an actionable, retryable message. The broad
+            # handlers below would collapse it into a generic failure and the
+            # user would be told nothing useful.
+            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in research_selected_ideas: {e}')
             self._set_research_status(user_id, job_id, 'failed')
@@ -624,8 +662,32 @@ class LLMService(BaseService):
             return {'success': False, 'error': 'Failed to record cancellation'}
         return {'success': True}
 
+    @staticmethod
+    def _truncation_reason(response) -> str | None:
+        """Return why a response was cut short, or None if it completed.
+
+        A truncated reply has empty output_text, otherwise indistinguishable
+        from the model returning nothing — so it surfaces as a misleading
+        "Empty response from AI" rather than "raise the cap".
+        """
+        if getattr(response, 'status', None) != 'incomplete':
+            return None
+        return getattr(getattr(response, 'incomplete_details', None), 'reason', None) or 'unknown'
+
     def _extract_response_content(self, response) -> str:
         """Extract text content from an OpenAI response, handling multiple output formats."""
+        truncated = self._truncation_reason(response)
+        if truncated:
+            logger.error(
+                'OpenAI response was truncated before completing (reason=%s); '
+                'raise OPERATION_MAX_OUTPUT_TOKENS for this operation',
+                truncated,
+            )
+            raise ExternalServiceError(
+                'The AI response was cut short before it finished. Please try again.',
+                service='OpenAI',
+            )
+
         # Try output_text first (standard responses)
         if hasattr(response, 'output_text') and response.output_text:
             logger.info(f'Extracted content from output_text, length={len(response.output_text)}')
@@ -693,6 +755,7 @@ class LLMService(BaseService):
                 model=MODEL_GENERAL,
                 input=llm_prompt,
                 timeout=OPERATION_TIMEOUTS.get('synthesize_research', 60),
+                max_output_tokens=OPERATION_MAX_OUTPUT_TOKENS['synthesize_research'],
             )
 
             content = self._extract_response_content(response)
@@ -717,6 +780,11 @@ class LLMService(BaseService):
             self._persist_profile_field(user_id, 'ai_synthesized_post', synthesized)
             return {'success': True, 'content': synthesized}
 
+        except ExternalServiceError:
+            # Truncation carries an actionable, retryable message. The broad
+            # handlers below would collapse it into a generic failure and the
+            # user would be told nothing useful.
+            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in synthesize_research: {e}')
             return {'success': False, 'error': 'Failed to synthesize research into post'}
@@ -811,6 +879,7 @@ class LLMService(BaseService):
                 model=MODEL_GENERAL,
                 input=llm_prompt,
                 timeout=OPERATION_TIMEOUTS.get('generate_message', 60),
+                max_output_tokens=OPERATION_MAX_OUTPUT_TOKENS['generate_message'],
             )
 
             content = self._extract_response_content(response)
@@ -821,6 +890,11 @@ class LLMService(BaseService):
 
             return {'generatedMessage': content.strip(), 'confidence': 0.85}
 
+        except ExternalServiceError:
+            # Truncation carries an actionable, retryable message. The broad
+            # handlers below would collapse it into a generic failure and the
+            # user would be told nothing useful.
+            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in generate_message: {e}')
             return {'generatedMessage': '', 'confidence': 0, 'error': 'Failed to generate message'}
@@ -868,6 +942,7 @@ class LLMService(BaseService):
                 model=MODEL_GENERAL,
                 input=llm_prompt,
                 timeout=OPERATION_TIMEOUTS.get('generate_message', 60),
+                max_output_tokens=OPERATION_MAX_OUTPUT_TOKENS['generate_icebreaker'],
             )
 
             content = self._extract_response_content(response)
@@ -881,6 +956,11 @@ class LLMService(BaseService):
 
             return {'icebreakers': icebreakers}
 
+        except ExternalServiceError:
+            # Truncation carries an actionable, retryable message. The broad
+            # handlers below would collapse it into a generic failure and the
+            # user would be told nothing useful.
+            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in generate_icebreaker: {e}')
             return {'icebreakers': [], 'error': 'Failed to generate icebreakers'}
@@ -936,6 +1016,7 @@ class LLMService(BaseService):
                 model=MODEL_ANALYSIS,
                 input=prompt,
                 timeout=OPERATION_TIMEOUTS.get('analyze_message_patterns', 60),
+                max_output_tokens=OPERATION_MAX_OUTPUT_TOKENS['analyze_message_patterns'],
             )
 
             content = self._extract_response_content(response)
@@ -955,6 +1036,11 @@ class LLMService(BaseService):
                 'analyzedAt': datetime.now(UTC).isoformat(),
             }
 
+        except ExternalServiceError:
+            # Truncation carries an actionable, retryable message. The broad
+            # handlers below would collapse it into a generic failure and the
+            # user would be told nothing useful.
+            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in analyze_message_patterns: {e}')
             return {'insights': [], 'analyzedAt': datetime.now(UTC).isoformat(), 'error': str(e)}
@@ -987,11 +1073,17 @@ class LLMService(BaseService):
                 model=MODEL_ANALYSIS,
                 input=prompt,
                 timeout=OPERATION_TIMEOUTS.get('analyze_tone', 60),
+                max_output_tokens=OPERATION_MAX_OUTPUT_TOKENS['analyze_tone'],
             )
 
             content = self._extract_response_content(response)
             return self._parse_tone_response(content)
 
+        except ExternalServiceError:
+            # Truncation carries an actionable, retryable message. The broad
+            # handlers below would collapse it into a generic failure and the
+            # user would be told nothing useful.
+            raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
             logger.error(f'OpenAI API error in analyze_tone: {e}')
             return {'error': 'Tone analysis failed'}

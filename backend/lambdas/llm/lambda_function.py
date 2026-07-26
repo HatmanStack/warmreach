@@ -104,6 +104,11 @@ DEEP_RESEARCH_STATUS_OPS = {'get_active_research', 'cancel_research'}
 # community edition is unmetered, so the stub reservation is a no-op — the
 # plumbing is kept identical so the handler contract does not diverge.
 DEEP_RESEARCH_CREDIT_OPS = {'research_selected_ideas'}
+
+# Unlike the pro edition, this handler makes no OpenAI calls of its own — every
+# request routes through LLMService. So the per-operation output caps
+# (OPERATION_MAX_OUTPUT_TOKENS) and the truncation check both live there, and
+# there is no call site here that needs an operation name attached.
 MESSAGE_INTEL_OPS = {'analyze_message_patterns'}
 TONE_ANALYSIS_OPS = {'analyze_tone'}
 

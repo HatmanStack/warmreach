@@ -160,6 +160,33 @@ These variables are set by the SAM template at deploy time, not in `.env`.
 >
 > `OPENAI_MODEL_DEEP_RESEARCH` retires **2026-10-23**; every kickoff logs a
 > countdown warning from 120 days out.
+>
+> **Measuring it.** Every OpenAI call now records what it consumed. Two places
+> to look:
+>
+> - CloudWatch: one `llm_usage` log line per call carrying `model`,
+>   `operation`, `input_tokens`, `output_tokens`, `cached_input_tokens` and
+>   `cost_usd`. Aggregate by `operation` to size the tier grants against real
+>   volumes rather than the assumed 2k-in/500-out used above.
+> - DynamoDB: `USER#<sub> / USAGE#cost#monthly#<YYYY-MM>` holds `microUsd`,
+>   `inputTokens`, `outputTokens` and `callCount` — a single account's COGS
+>   against what it pays.
+>
+> Three caveats when reading them.
+>
+> 1. **Deep research is not costed yet.** `research_selected_ideas` runs as a
+>    background job, so the kickoff returns before any tokens are consumed and
+>    reports no usage — those lines carry `deferred: true` and write no cost
+>    row. The real consumption exists only when the job completes, and the
+>    polling path does not record it (doing so needs an idempotency guard so
+>    polling and the reconciler cannot double-count). **Do not size the
+>    deep-research credit grant from this data until that lands.**
+> 2. **Tool fees are excluded.** Lines for tool-augmented operations carry
+>    `excludes_tool_fees: true`: web-search and code-interpreter bill per call
+>    on top of tokens, so even a costed figure is a floor.
+> 3. **Per-user attribution is partial.** It covers `generate_ideas` and
+>    `synthesize_research`. The other operations record per-operation cost to
+>    CloudWatch but have no `user_id` in scope to attribute against.
 | `COGNITO_CLIENT_ID` | Cognito app client ID for JWT audience validation (websocket-connect Lambda) | |
 | `LLM_FUNCTION_NAME` | Name of the LLM Lambda, used by `goal_evidence_detector` to invoke it for auto-assessment. SAM-set (`!Ref LLMFunction`). | |
 | `AGENT_STATE_MACHINE_ARN` | ARN of the B-2 `AgentActionStateMachine`. `opportunity_action_service` starts an execution on `approve_action`. SAM-set (`!Ref AgentActionStateMachine`). | |

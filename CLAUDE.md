@@ -153,6 +153,7 @@ Lambdas share code via `lambdas/shared/python/`:
 - `shared_services/edge_status_service.py` - Edge status operations
 - `shared_services/handler_utils.py` - Lambda routing, feature gating, lazy service init
 - `shared_services/ingestion_service.py` - Profile data ingestion
+- `shared_services/llm_cost.py` - OpenAI token accounting and cost attribution
 - `shared_services/message_utils.py` - Shared message analysis utilities
 - `shared_services/model_config.py` - Central registry of OpenAI model ids (env-overridable)
 - `shared_services/monetization.py` - Community edition stubs (all features enabled)

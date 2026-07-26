@@ -76,10 +76,35 @@ class StructuredJsonFormatter(logging.Formatter):
             }
 
         # Include extra fields passed via logger.info('msg', extra={...}).
+        #
+        # This is an allowlist, not a passthrough, so that an `extra` carrying
+        # user content cannot accidentally end up in CloudWatch. The cost of
+        # that safety is that a new field is invisible until added here — the
+        # llm_usage fields below shipped emitting nothing for exactly that
+        # reason, so add the key when you add the log line.
+        #
         # Keys covered:
         #   user_id, operation, duration_ms, status_code — request shape
         #   method, path, op — set by the dynamodb-api request log
-        for key in ('user_id', 'operation', 'duration_ms', 'status_code', 'method', 'path', 'op'):
+        #   model..excludes_tool_fees — llm_cost token/cost accounting
+        for key in (
+            'user_id',
+            'operation',
+            'duration_ms',
+            'status_code',
+            'method',
+            'path',
+            'op',
+            'model',
+            'input_tokens',
+            'output_tokens',
+            'cached_input_tokens',
+            'reasoning_tokens',
+            'cost_usd',
+            'excludes_tool_fees',
+            'priced',
+            'deferred',
+        ):
             if hasattr(record, key):
                 log_entry[key] = getattr(record, key)
 
