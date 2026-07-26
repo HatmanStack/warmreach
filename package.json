@@ -14,7 +14,7 @@
     "test:frontend": "cd frontend && npm run test",
     "test:client": "cd client && npm run test",
     "test:backend": "cd tests/backend && . .venv/bin/activate && python -m pytest unit/ -v --tb=short --cov=../../backend/lambdas --cov-fail-under=75",
-    "typecheck:frontend": "cd frontend && npx tsc --noEmit",
+    "typecheck:frontend": "cd frontend && npx tsc -b",
     "typecheck:client": "cd client && npx tsc --noEmit",
     "typecheck:backend": "cd tests/backend && . .venv/bin/activate && cd ../../backend && python -m mypy -p shared_services",
     "build:admin": "cd admin && npm run build",
@@ -31,7 +31,7 @@
     "docs:api": "npm run docs:api:ts && npm run docs:api:py",
     "format": "npx prettier --write 'frontend/src/**/*.{ts,tsx}' 'client/src/**/*.{js,ts}' 'admin/src/**/*.{ts,tsx}' 'mock-linkedin/**/*.js'",
     "format:check": "npx prettier --check 'frontend/src/**/*.{ts,tsx}' 'client/src/**/*.{js,ts}' 'admin/src/**/*.{ts,tsx}' 'mock-linkedin/**/*.js'",
-    "typecheck:admin": "cd admin && npx tsc --noEmit",
+    "typecheck:admin": "cd admin && npx tsc -b",
     "check": "npm run format:check && npm run lint && npm run typecheck:frontend && npm run typecheck:client && npm run typecheck:admin && npm run test",
     "benchmark": "node scripts/benchmarks/benchmark-performance.js",
     "cleanup": "bash scripts/cleanup/code-cleanup.sh",
@@ -42,7 +42,8 @@
     "deploy:ragstack": "node scripts/deploy/deploy-ragstack.js",
     "teardown": "bash scripts/deploy/teardown.sh",
     "teardown:dry": "bash scripts/deploy/teardown.sh --dry-run",
-    "prepare": "husky"
+    "prepare": "husky",
+    "legal:sync": "node scripts/sync-legal-docs.mjs"
   },
   "author": "HatmanStack",
   "license": "Apache-2.0",

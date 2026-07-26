@@ -27,9 +27,11 @@ jobs:
 
       # NOTE: the community smoke test intentionally omits `npm audit`. The pro
       # CI runs it scoped to production deps (`npm audit --omit=dev`); the
-      # community gate stays lean and deterministic. (Pro also allowlists
+      # community gate stays lean and deterministic. (Pro allowlists
       # GHSA-qwww-vcr4-c8h2 — react-router RSC-mode CSRF, not reachable in the
-      # client SPA — so it no longer blocks dependency updates; N/A to community.)
+      # client SPA — in both its frontend and admin audit jobs, so it no longer
+      # blocks dependency updates. N/A to community: no audit job, and the admin
+      # dashboard is pro-only.)
 
       # Frontend
       - uses: actions/setup-node@v6

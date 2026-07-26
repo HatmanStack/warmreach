@@ -8,6 +8,7 @@ import { AuthProvider, ProtectedRoute } from '@/features/auth';
 import { TierProvider } from '@/features/tier';
 import { UserProfileProvider } from '@/features/profile';
 import { PostComposerProvider } from '@/features/posts';
+import { LegalAcceptanceGate } from '@/features/legal';
 import { WebSocketProvider } from '@/shared/contexts/WebSocketContext';
 import { ClientRequiredDialogProvider } from '@/shared/contexts/ClientRequiredDialogContext';
 import { ClientRequiredDialog } from '@/shared/components/ClientRequiredDialog';
@@ -35,6 +36,11 @@ const App = () => (
                   <PostComposerProvider>
                     <BrowserRouter>
                       <Suspense fallback={<SuspenseFallback />}>
+                        {/* This edition automates LinkedIn too, and
+                            linkedin-action-gate enforces the same acceptance
+                            check — without the modal a self-hoster would get a
+                            403 with no way to accept. */}
+                        <LegalAcceptanceGate />
                         <ClientRequiredDialog />
                         <Routes>
                           <Route path="/" element={<Index />} />
