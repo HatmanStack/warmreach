@@ -92,6 +92,10 @@ export const config = {
     enableRequestInterception: parseBoolean(process.env.PUPPETEER_REQUEST_INTERCEPTION, true),
     enableFingerprintNoise: parseBoolean(process.env.PUPPETEER_FINGERPRINT_NOISE, true),
     enableMouseSimulation: parseBoolean(process.env.PUPPETEER_MOUSE_SIMULATION, true),
+    // Escape hatch for containers/CI images that cannot grant unprivileged user
+    // namespaces. Defaults to false: the sandbox is what contains a renderer
+    // compromise, and this browser renders attacker-authored feed content.
+    disableSandbox: parseBoolean(process.env.PUPPETEER_DISABLE_SANDBOX, false),
   },
 
   // Timeouts

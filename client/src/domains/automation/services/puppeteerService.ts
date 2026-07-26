@@ -119,13 +119,39 @@ export class PuppeteerService {
         `Initializing Puppeteer browser... HEADLESS env = ${process.env.HEADLESS} resolved headless = ${resolvedHeadless} DISPLAY = ${displayEnv || 'unset'} session = ${sessionType || 'unknown'} `
       );
 
+      // Chromium's sandbox is the only thing standing between a compromised
+      // renderer and the user's desktop, and this browser renders LinkedIn feed
+      // content that other people author. It stays ON unless the environment
+      // genuinely cannot support it.
+      //
+      // Two cases can't: Chromium refuses to run sandboxed as root, so a root
+      // session must opt out or the browser will not start at all; and some
+      // container/CI images cannot grant unprivileged user namespaces, which is
+      // what PUPPETEER_DISABLE_SANDBOX is for. Neither applies to the desktop
+      // installs this ships to, so both are opt-in and loud.
+      const runningAsRoot =
+        process.platform === 'linux' &&
+        typeof process.getuid === 'function' &&
+        process.getuid() === 0;
+      const sandboxDisabled = !!config.puppeteer.disableSandbox || runningAsRoot;
+
+      if (sandboxDisabled) {
+        logger.warn(
+          `Chromium sandbox DISABLED (${
+            runningAsRoot ? 'running as root' : 'PUPPETEER_DISABLE_SANDBOX is set'
+          }). A renderer compromise would run with this process's privileges over ` +
+            'the LinkedIn credentials and session tokens it can reach. Run as a normal user instead.'
+        );
+      }
+
       const launchArgs = [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
+        // --no-zygote belongs with --no-sandbox and only there: the zygote is
+        // part of the sandboxed process-launch path on Linux, so keeping it
+        // disabled while the sandbox is on is an untested combination.
+        ...(sandboxDisabled ? ['--no-sandbox', '--disable-setuid-sandbox', '--no-zygote'] : []),
         '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
-        '--no-zygote',
         // NOTE: intentionally NO --disable-gpu. getWebGLSpoofScript() advertises a
         // real discrete GPU (NVIDIA/AMD/Intel ANGLE D3D11 renderer); launching with
         // the GPU pipeline disabled makes the rest of the WebGL/canvas surface fall

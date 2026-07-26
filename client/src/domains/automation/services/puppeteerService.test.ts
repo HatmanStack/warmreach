@@ -6,6 +6,7 @@ import {
 } from './puppeteerService';
 import * as fingerprintProfile from '../utils/fingerprintProfile';
 import config from '#shared-config/index.js';
+import { logger } from '#utils/logger.js';
 
 const mockPage = {
   setViewport: vi.fn(),
@@ -70,6 +71,9 @@ describe('PuppeteerService', () => {
     service = new PuppeteerService();
     config.puppeteer.enableFingerprintNoise = true;
     config.puppeteer.enableStealth = true;
+    // Reset here, not just in the sandbox block: a leaked `true` would let the
+    // root-detection test pass without detecting anything.
+    config.puppeteer.disableSandbox = false;
   });
 
   it('uses fingerprint profile if available', async () => {
@@ -131,6 +135,78 @@ describe('PuppeteerService', () => {
     expect(launchArg.headless).toBe(true);
     // GPU stays enabled so it doesn't contradict the spoofed discrete-GPU renderer.
     expect(launchArg.args).not.toContain('--disable-gpu');
+  });
+
+  describe('Chromium sandbox', () => {
+    // The browser renders LinkedIn feed content authored by other people. With
+    // the sandbox off, a renderer compromise runs with this process's
+    // privileges over the stored LinkedIn credentials and session tokens.
+    // These assertions depend on the runner's UID: as root, initialize()
+    // correctly disables the sandbox, so a default-path test would fail on a
+    // root CI container for the right reason. Pin the UID per case.
+    const withUid = async (uid: number, fn: () => Promise<void>) => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+      const getuid = process.getuid;
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      // @ts-expect-error — overridden for the duration of the callback
+      process.getuid = () => uid;
+      try {
+        await fn();
+      } finally {
+        process.getuid = getuid;
+        if (platform) Object.defineProperty(process, 'platform', platform);
+      }
+    };
+
+    const argsOfLastLaunch = async () => {
+      const puppeteer = await import('puppeteer');
+      const call = vi.mocked(puppeteer.default.launch).mock.calls.at(-1)?.[0] as any;
+      return call.args as string[];
+    };
+
+    beforeEach(() => {
+      vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+        throw new Error('No profile');
+      });
+    });
+
+    it('stays enabled by default', async () => {
+      await withUid(1000, async () => {
+        await service.initialize();
+
+        const args = await argsOfLastLaunch();
+        expect(args).not.toContain('--no-sandbox');
+        expect(args).not.toContain('--disable-setuid-sandbox');
+        // The zygote is part of the sandboxed launch path; disabling it while
+        // the sandbox is on is an untested combination.
+        expect(args).not.toContain('--no-zygote');
+      });
+    });
+
+    it('can be turned off explicitly for containers that cannot sandbox', async () => {
+      config.puppeteer.disableSandbox = true;
+      await service.initialize();
+
+      const args = await argsOfLastLaunch();
+      expect(args).toContain('--no-sandbox');
+      expect(args).toContain('--disable-setuid-sandbox');
+      expect(args).toContain('--no-zygote');
+    });
+
+    it('says so in the log when it gives the sandbox up', async () => {
+      // A silent downgrade is how this shipped disabled in the first place.
+      config.puppeteer.disableSandbox = true;
+      await service.initialize();
+
+      expect(vi.mocked(logger.warn).mock.calls.flat().join(' ')).toMatch(/sandbox DISABLED/i);
+    });
+
+    it('gives it up when running as root, which Chromium cannot sandbox', async () => {
+      await withUid(0, async () => {
+        await service.initialize();
+        expect(await argsOfLastLaunch()).toContain('--no-sandbox');
+      });
+    });
   });
 
   it('injects no stealth scripts when enableStealth is disabled', async () => {

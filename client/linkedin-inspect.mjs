@@ -31,7 +31,10 @@ import {
   getAudioNoiseScript,
   getHeadlessEvasionScript,
 } from './src/domains/automation/utils/stealthScripts.ts';
-import { loadOrCreateProfile, GPU_PROFILES } from './src/domains/automation/utils/fingerprintProfile.ts';
+import {
+  loadOrCreateProfile,
+  GPU_PROFILES,
+} from './src/domains/automation/utils/fingerprintProfile.ts';
 import { RandomHelpers } from './src/shared/utils/randomHelpers.js';
 
 const connectMode = process.argv.includes('--connect');
@@ -44,16 +47,16 @@ function detectSystemChrome() {
   const candidates =
     process.platform === 'win32'
       ? [
-        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      ]
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        ]
       : [
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/google-chrome',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/chromium',
-        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      ];
+          '/usr/bin/google-chrome-stable',
+          '/usr/bin/google-chrome',
+          '/usr/bin/chromium-browser',
+          '/usr/bin/chromium',
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        ];
 
   for (const candidate of candidates) {
     try {
@@ -79,7 +82,9 @@ if (connectMode) {
   const port = process.env.CONNECT_PORT || '9222';
   const chromePath = executablePath;
   if (!chromePath) {
-    console.error('--connect requires a system Chrome. Set CHROME_EXECUTABLE_PATH or install Chrome/Chromium.');
+    console.error(
+      '--connect requires a system Chrome. Set CHROME_EXECUTABLE_PATH or install Chrome/Chromium.'
+    );
     process.exit(1);
   }
 
@@ -126,15 +131,36 @@ if (connectMode) {
   console.log('Connected to Chrome (no Puppeteer launch flags)');
 } else {
   console.log('Using standard Puppeteer launch');
+  // Mirrors PuppeteerService: parse the opt-out with the same accepted values
+  // as config/index.js `parseBoolean`, and fall back for Linux root, which
+  // Chromium refuses to sandbox. A bare truthiness test would read the
+  // documented `PUPPETEER_DISABLE_SANDBOX=false` as "disable" — the string
+  // "false" is truthy — and silently turn the sandbox off by default.
+  const rawOptOut = String(process.env.PUPPETEER_DISABLE_SANDBOX ?? '')
+    .trim()
+    .toLowerCase();
+  const optedOut = ['1', 'true', 'yes', 'y', 'on'].includes(rawOptOut);
+  const runningAsRoot =
+    process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0;
+  const sandboxDisabled = optedOut || runningAsRoot;
+
+  if (sandboxDisabled) {
+    console.warn(
+      `WARNING: Chromium sandbox DISABLED (${
+        runningAsRoot ? 'running as root' : 'PUPPETEER_DISABLE_SANDBOX is set'
+      }). A renderer compromise would run with this process's privileges.`
+    );
+  }
+
   const launchOptions = {
     headless: false,
     defaultViewport: null,
     args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
+      // No --no-sandbox by default: this loads the real LinkedIn, so it gets
+      // the same sandbox the client itself uses.
+      ...(sandboxDisabled ? ['--no-sandbox', '--disable-setuid-sandbox', '--no-zygote'] : []),
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
-      '--no-zygote',
       '--start-maximized',
       '--window-size=1400,900',
       '--disable-blink-features=AutomationControlled',
@@ -211,12 +237,15 @@ if (useProfile) {
 
 const userAgent = profile ? profile.userAgent : (RandomHelpers.getRandomUserAgent() ?? '');
 const noiseEnabled = (process.env.PUPPETEER_FINGERPRINT_NOISE ?? 'true').toLowerCase() !== 'false';
-const viewport = profile ? { width: profile.screenResolution.width, height: profile.screenResolution.height } : { width: 1400, height: 900 };
+const viewport = profile
+  ? { width: profile.screenResolution.width, height: profile.screenResolution.height }
+  : { width: 1400, height: 900 };
 
 // Stable noise seeds for the session (reused across all tabs)
 const canvasSeed = profile?.canvasNoiseSeed ?? Math.floor(Math.random() * 1000000);
 const audioSeed = profile?.audioNoiseSeed ?? Math.floor(Math.random() * 1000000);
-const gpuProfile = profile?.gpuProfile ?? GPU_PROFILES[Math.floor(Math.random() * GPU_PROFILES.length)];
+const gpuProfile =
+  profile?.gpuProfile ?? GPU_PROFILES[Math.floor(Math.random() * GPU_PROFILES.length)];
 
 // Inject evasion scripts on a page — called for initial page and every new tab
 async function injectEvasionScripts(targetPage) {
@@ -224,11 +253,13 @@ async function injectEvasionScripts(targetPage) {
   await targetPage.setViewport(viewport);
 
   if (profile) {
-    await targetPage.evaluateOnNewDocument(getHeadlessEvasionScript({
-      platform: profile.platform,
-      language: profile.language,
-      pluginCount: profile.pluginCount,
-    }));
+    await targetPage.evaluateOnNewDocument(
+      getHeadlessEvasionScript({
+        platform: profile.platform,
+        language: profile.language,
+        pluginCount: profile.pluginCount,
+      })
+    );
   } else {
     await targetPage.evaluateOnNewDocument(getHeadlessEvasionScript());
   }
@@ -262,7 +293,9 @@ if (noiseEnabled) {
   console.log('Fingerprint noise disabled (PUPPETEER_FINGERPRINT_NOISE=false)');
 }
 
-console.log(`Browser ready (${connectMode ? 'connect' : 'launch'} mode) — navigating to linkedin.com`);
+console.log(
+  `Browser ready (${connectMode ? 'connect' : 'launch'} mode) — navigating to linkedin.com`
+);
 await page.goto('https://www.linkedin.com', { waitUntil: 'domcontentloaded' });
 
 // Keep process alive until the browser is closed
@@ -275,6 +308,10 @@ browser.on('disconnected', () => {
 // Handle Ctrl-C gracefully
 process.on('SIGINT', async () => {
   console.log('\nShutting down...');
-  try { await browser.close(); } catch { /* already closed */ }
+  try {
+    await browser.close();
+  } catch {
+    /* already closed */
+  }
   if (chromeProcess && !chromeProcess.killed) chromeProcess.kill();
 });
