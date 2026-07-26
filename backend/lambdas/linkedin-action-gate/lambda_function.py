@@ -22,6 +22,10 @@ import boto3
 from botocore.exceptions import ClientError
 from errors.exceptions import NotFoundError, QuotaExceededError
 from shared_services.command_dispatch_core import create_command
+from shared_services.legal_acceptance_service import (
+    AcceptanceRequiredError,
+    require_automation_acceptance,
+)
 from shared_services.monetization import QuotaService, ensure_tier_exists
 from shared_services.observability import setup_correlation_context
 from shared_services.request_utils import api_response, extract_user_id
@@ -96,6 +100,24 @@ def lambda_handler(event, context):
         ensure_tier_exists(table, user_id)
     except Exception:
         logger.exception('Tier auto-provision failed for %s (non-blocking)', command_type)
+
+    # The LinkedIn risk disclosure gates automation, and it is enforced here
+    # rather than only in the UI: a client that never renders the modal must
+    # still be unable to dispatch a real LinkedIn action.
+    try:
+        require_automation_acceptance(table, user_id)
+    except AcceptanceRequiredError as e:
+        return api_response(
+            403,
+            {
+                'error': 'You must review and accept the LinkedIn automation risk disclosure before using automation.',
+                'code': 'LEGAL_ACCEPTANCE_REQUIRED',
+                'documentId': e.document_id,
+                'version': e.version,
+            },
+            event,
+            allowed_methods=_ALLOWED_METHODS,
+        )
 
     # Reserve the shared li-actions bucket BEFORE dispatching (enforcing). No-op
     # in the community edition (stub QuotaService).

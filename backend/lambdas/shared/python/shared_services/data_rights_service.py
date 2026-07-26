@@ -13,7 +13,7 @@ adjacency mesh — plus the ``STRIPE#{customer}`` mapping, which is keyed by
 customer id but is unambiguously personal data.
 
 Deliberately *not* included: ``PROFILE#{id} / #METADATA`` and ``#INGEST_STATE``.
-Those are scraped third-party profile records shared across every user who has
+Those are imported third-party profile records shared across every user who has
 that connection, so deleting them on one account's erasure would silently
 destroy other users' data. They need a separate retention sweep that removes a
 profile once no user references it — see :func:`orphaned_profile_note`.
@@ -232,7 +232,7 @@ def orphaned_profile_note() -> dict[str, str]:
     """Explain what an export/erasure does not cover, and why."""
     return {
         'sharedProfileRecords': (
-            'Scraped LinkedIn profile records (PROFILE#{id}) are shared across every '
+            'Imported LinkedIn profile records (PROFILE#{id}) are shared across every '
             'user connected to that person, so they are neither exported as your data '
             "nor deleted with your account — doing so would destroy other users' data. "
             'They contain no information about you. A separate retention sweep removes '

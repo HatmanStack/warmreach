@@ -108,6 +108,49 @@ def _handle_complete_onboarding_step(body, user_id, event):
 
 
 # ---------------------------------------------------------------------------
+# Legal document acceptance
+# ---------------------------------------------------------------------------
+
+_legal_service = None
+
+
+def _get_legal_service():
+    global _legal_service
+    if _legal_service is None:
+        from shared_services.legal_acceptance_service import LegalAcceptanceService
+
+        _legal_service = LegalAcceptanceService(table)
+    return _legal_service
+
+
+def _handle_get_legal_status(body, user_id, event):
+    """Which documents this user still has to accept, and at what version."""
+    svc = _get_legal_service()
+    outstanding = svc.outstanding_documents(user_id)
+    return _resp(
+        200,
+        {
+            'outstanding': outstanding,
+            'accepted': svc.get_acceptances(user_id),
+            'allAccepted': not outstanding,
+        },
+        event,
+    )
+
+
+def _handle_accept_legal_documents(body, user_id, event):
+    """Record acceptance of one or more documents at their current versions."""
+    document_ids = body.get('documentIds')
+    if not isinstance(document_ids, list) or not document_ids:
+        return _resp(400, {'error': 'documentIds must be a non-empty list'}, event)
+    if not all(isinstance(d, str) for d in document_ids):
+        return _resp(400, {'error': 'documentIds must be strings'}, event)
+
+    result = _get_legal_service().record_acceptance(user_id, document_ids)
+    return _resp(200, result, event)
+
+
+# ---------------------------------------------------------------------------
 # Data subject rights (GDPR Art. 15 / 17, CCPA)
 # ---------------------------------------------------------------------------
 
@@ -190,6 +233,8 @@ POST_HANDLERS = {
     'save_import_checkpoint': _handle_save_import_checkpoint,
     'clear_import_checkpoint': _handle_clear_import_checkpoint,
     'complete_onboarding_step': _handle_complete_onboarding_step,
+    'get_legal_status': _handle_get_legal_status,
+    'accept_legal_documents': _handle_accept_legal_documents,
     'export_my_data': _handle_export_my_data,
     'delete_my_account': _handle_delete_my_account,
 }

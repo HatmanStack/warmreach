@@ -57,6 +57,7 @@ WarmReach is a monorepo with three components: a React frontend, an Electron/Pup
 | `ingestion_service.py`     | Profile data ingestion                                               |
 | `observability.py`         | Correlation context and structured JSON logging                      |
 | `message_utils.py`         | Shared message analysis utilities                                    |
+| `legal_acceptance_service.py` | Legal document acceptance and the automation gate                 |
 | `llm_cost.py`              | OpenAI token accounting and cost attribution                         |
 | `data_rights_service.py`   | GDPR/CCPA data export and account erasure                            |
 | `model_config.py`          | Central registry of OpenAI model ids (env-overridable)               |

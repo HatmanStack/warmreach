@@ -1,0 +1,162 @@
+# LinkedIn Automation Risk Disclosure
+
+> **DRAFT — NOT LEGAL ADVICE.** This document was drafted by the engineering
+> team and has **not** been reviewed by a lawyer. It must be reviewed by
+> qualified counsel before WarmReach accepts payment from anyone. See
+> [README](README.md).
+
+**Version:** `2026-07-26.1`
+**Acknowledgment required:** yes — the application blocks LinkedIn automation
+until you have read and accepted this disclosure.
+
+---
+
+## The short version
+
+WarmReach automates actions on LinkedIn using your own account and credentials.
+
+**LinkedIn's User Agreement restricts automated access to its service, and
+LinkedIn restricts, suspends and permanently bans accounts it believes are
+automated.** Using WarmReach may therefore get your LinkedIn account restricted,
+suspended, or permanently banned. That risk is real, it is yours, and no
+configuration of this software eliminates it.
+
+If losing access to your LinkedIn account would be seriously damaging to you,
+**do not use this software.**
+
+## What the software actually does
+
+When you use its automation features, WarmReach signs into LinkedIn as you, in
+a real browser on your own computer, and performs actions you have configured:
+viewing profiles, sending connection requests, sending messages, following
+people, and posting comments. It also reads and stores data about your
+connections.
+
+**What it is not:** WarmReach does not collect data on people you are not
+connected to, does not access anything you could not see yourself by browsing
+LinkedIn normally, and does not compile or sell datasets. It operates on your
+own account, over your own network, and everything it reads is already visible
+to you. The difference is that it does so systematically rather than by hand.
+
+That distinction matters to how you should think about the tool. It does not,
+however, change the practical risk below, because LinkedIn's enforcement keys on
+_automated activity_, not on whether the data was yours to see.
+
+It does this with your LinkedIn email and password, which you provide and which
+are stored encrypted on your own machine.
+
+## Why this carries risk
+
+**LinkedIn's User Agreement restricts automated access.** At the time of
+writing, LinkedIn's terms address the use of bots and other automated methods to
+access the service, the scraping or copying of profiles and data, and software
+that sends automated messages or requests.
+
+WarmReach acts on your own account, using credentials you supply, on data you
+already have access to as a LinkedIn member. Whether and how those terms apply
+to a member automating their own account is a question we are not in a position
+to answer for you, and nothing here is legal advice. **What is not in question
+is the practical consequence:** LinkedIn decides how to enforce its terms, and
+it enforces against accounts it believes are automated.
+
+**LinkedIn actively detects and acts on automation.** LinkedIn operates
+detection systems and enforces against accounts it believes are automated.
+Enforcement is at LinkedIn's sole discretion and can include:
+
+- temporary restriction of features such as search, messaging or invitations
+- a requirement to verify your identity
+- temporary suspension
+- **permanent, irreversible account ban**
+
+**A ban may cost you more than the account.** Your LinkedIn account may hold
+years of professional connections, message history, recommendations and
+reputation. Loss of the account can mean loss of all of it. It may also affect
+recruiting, sales or client relationships that depend on it.
+
+**You cannot appeal your way out of this reliably.** LinkedIn is under no
+obligation to restore a restricted or banned account, and the fact that a
+third-party tool was involved is not a defence.
+
+## What WarmReach does to reduce — not remove — the risk
+
+These measures reduce the probability of detection. **None of them is a
+guarantee.** They are described so your consent is informed, not to suggest the
+risk is managed away — and the fact that they exist should tell you plainly that
+detection is something this product expects LinkedIn to attempt.
+
+- Automation runs on **your own machine and network**, rather than from a data
+  centre, so the traffic looks like ordinary use of your own connection.
+- Actions are **rate limited** and paced with variable timing rather than run at
+  machine speed.
+- The browser is configured to **reduce automation fingerprints**.
+- Daily and monthly caps limit total volume.
+
+Detection methods change without notice. Measures that work today may not work
+tomorrow, and we cannot tell you when that changes.
+
+## Things that increase your risk
+
+- Running near the volume limits rather than well below them
+- Running the automation for long unbroken periods
+- Operating a new, sparse, or recently created LinkedIn account
+- Sending connection requests or messages that recipients report as spam
+- Running WarmReach at the same time as other LinkedIn automation tools
+- Ignoring a restriction warning from LinkedIn and continuing to automate
+
+## Two-factor authentication
+
+If your LinkedIn account uses two-factor authentication, automated sign-in may
+fail or loop.
+
+**Do not disable two-factor authentication on your LinkedIn account in order to
+use this software.** 2FA materially protects your account against takeover, and
+that protection matters more than the convenience of automation. If automation
+cannot sign in with 2FA enabled, the correct response is to not use the
+automation features.
+
+## Your third parties
+
+WarmReach stores information about the people you are connected to — their
+profile details, your message history with them, and **inferences generated
+about them by a large language model**, such as estimated relationship strength,
+likelihood of replying, and their position in your network.
+
+Those people have not consented to this and generally do not know it is
+happening. Depending on where you and they are located, you may have your own
+legal obligations to them — for example under the GDPR, where you may be a data
+controller in your own right. **This disclosure does not discharge those
+obligations, and we are not able to advise you on them.**
+
+## What you are accepting
+
+By acknowledging this disclosure you confirm that:
+
+1. You have read this disclosure and understand that LinkedIn's User Agreement
+   restricts automated access to its service.
+2. You understand your LinkedIn account may be restricted, suspended or
+   permanently banned as a result of using this software, and that this may
+   cause you loss you cannot recover.
+3. You accept that risk, and you accept it on your own behalf.
+4. You are using your own LinkedIn account, or you have authority to operate the
+   account you are using.
+5. You will not disable two-factor authentication in order to use this software.
+6. You understand WarmReach cannot and does not guarantee that your account will
+   not be actioned by LinkedIn.
+
+## What we do not promise
+
+To be explicit, because the point of this document is that you are not
+surprised later:
+
+- We do not promise your account will not be banned.
+- We do not promise LinkedIn will not change its terms, detection, or
+  enforcement.
+- We do not promise to restore, compensate for, or assist in recovering a
+  restricted or banned account.
+- We are not affiliated with, endorsed by, or connected to LinkedIn Corporation
+  in any way.
+
+---
+
+_LinkedIn is a registered trademark of LinkedIn Corporation. WarmReach is an
+independent product with no affiliation to LinkedIn Corporation._

@@ -21,6 +21,12 @@ def gate_module():
     module = load_lambda_module('linkedin-action-gate')
     module._quota_service = MagicMock()
     module.create_command = MagicMock(return_value=(200, {'commandId': 'cmd-1', 'status': 'dispatched'}))
+    # These tests cover quota reservation and dispatch. The LinkedIn risk
+    # disclosure gate sits ahead of both and would 403 every one of them, so it
+    # is stubbed satisfied here — its own enforcement is covered directly in
+    # test_legal_acceptance_service.py, including that a client which skips the
+    # modal still cannot dispatch.
+    module.require_automation_acceptance = MagicMock(return_value=None)
     return module
 
 

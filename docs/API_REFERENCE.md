@@ -76,6 +76,19 @@ Served by the `linkedin-action-gate` Lambda, which dispatches the action to the 
 | Endpoint    | Method | Description                                                            |
 | ----------- | ------ | ---------------------------------------------------------------------- |
 | `/dynamodb` | `GET`  | Get user settings or profile metadata                                  |
+| `/dynamodb` | `POST` | Operations: `create`, `update_user_settings`, `update_profile_picture`, `get_legal_status`, `accept_legal_documents` |
+| `/profiles` | `GET`  | Get user profile data                                                  |
+| `/profiles` | `POST` | Update user profile                                                    |
+
+### Legal Acceptance
+
+`get_legal_status` returns which documents the user still has to accept;
+`accept_legal_documents` records acceptance.
+
+This edition automates LinkedIn too, so the same server-side gate applies:
+`POST /linkedin-actions` returns `403` with `code: LEGAL_ACCEPTANCE_REQUIRED`
+until the LinkedIn risk disclosure has been accepted. Self-hosting does not
+remove the risk to your LinkedIn account — see `docs/legal/`.
 | `/dynamodb` | `POST` | Operations: `create`, `update_user_settings`, `update_profile_picture`, `export_my_data`, `delete_my_account` |
 | `/profiles` | `GET`  | Get user profile data                                                  |
 | `/profiles` | `POST` | Update user profile                                                    |

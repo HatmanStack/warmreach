@@ -436,3 +436,32 @@ class TestConcurrentWritesDoNotSurvive:
 
         assert report['complete'] is False
         assert report['remaining'] == 7
+
+
+class TestUserFacingTerminology:
+    """The export text is read by data subjects, so its wording is substantive.
+
+    "Scraped" was corrected in the documents and the docstrings but survived in
+    the string actually returned to users — three separate passes missed it.
+    This pins it rather than relying on remembering.
+    """
+
+    def test_the_export_note_does_not_call_records_scraped(self, table):
+        _seed(table)
+
+        note = DataRightsService(table).export_user_data(USER)['notIncluded']
+
+        blob = json.dumps(note).lower()
+        assert 'scrap' not in blob, (
+            'the export tells data subjects their connections were "scraped"; '
+            'the legal documents deliberately describe these as imported records'
+        )
+
+    def test_the_note_still_explains_the_exclusion(self, table):
+        """Rewording must not quietly drop the substance."""
+        _seed(table)
+
+        note = DataRightsService(table).export_user_data(USER)['notIncluded']['sharedProfileRecords']
+
+        assert 'shared' in note.lower()
+        assert 'other users' in note.lower()
