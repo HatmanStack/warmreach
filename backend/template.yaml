@@ -70,6 +70,18 @@ Parameters:
     Type: String
     Default: ''
     Description: Optional version label shown next to the download buttons
+  ClientDownloadBucket:
+    Type: String
+    Default: ''
+    # Only needed when a ClientDownload*Url uses s3://. Naming the bucket lets
+    # the grant be scoped to it; left blank, the Lambda gets no S3 permission at
+    # all, which is correct for https:// URLs and for platforms not yet
+    # published.
+    Description: >-
+      Bucket holding the desktop client binaries. Required only if a
+      ClientDownload*Url uses an s3:// reference.
+    AllowedPattern: '^[a-z0-9.\-]*$'
+    ConstraintDescription: Must be a valid S3 bucket name, or empty.
 
 Rules:
   AdminEmailRequiredForRAGStack:
@@ -96,6 +108,7 @@ Globals:
           - !Ref ProductionOrigins
 
 Conditions:
+  HasClientDownloadBucket: !Not [!Equals [!Ref ClientDownloadBucket, '']]
   IncludeDevOriginsCondition: !Equals [!Ref IncludeDevOrigins, 'true']
   HasProductionOrigin: !Not [!Equals [!Ref ProductionOrigin, '']]
   DeployRAGStackCondition: !Equals [!Ref DeployRAGStack, 'true']
@@ -812,12 +825,21 @@ Resources:
           CLIENT_DOWNLOAD_WIN: !Ref ClientDownloadWinUrl
           CLIENT_DOWNLOAD_LINUX: !Ref ClientDownloadLinuxUrl
           CLIENT_DOWNLOAD_VERSION: !Ref ClientDownloadVersion
+      # s3:GetObject only when an operator actually points a ClientDownload*Url
+      # at s3://, and then only at the bucket they named. This endpoint is
+      # public and unauthenticated (Authorizer: NONE below), so an unscoped
+      # grant would give it account-wide object read for a capability most
+      # deployments never use — https:// URLs need no S3 access at all.
+      # Changing buckets now needs a redeploy, which is the intended trade.
       Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - s3:GetObject
-              Resource: '*'
+        - !If
+          - HasClientDownloadBucket
+          - Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${ClientDownloadBucket}/*'
+          - !Ref 'AWS::NoValue'
       Events:
         ClientDownloadsApi:
           Type: HttpApi

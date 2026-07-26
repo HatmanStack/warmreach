@@ -19,7 +19,7 @@ class InsightCacheService:
         return {}
 
     def compute_and_store_scores(
-        self, user_id, edge_query_fn=None, scoring_service=None, profile_metadata_fn=None
+        self, user_id, edge_query_fn=None, scoring_service=None, profile_metadata_batch_fn=None
     ):
         return {}
 

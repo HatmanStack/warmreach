@@ -39,15 +39,16 @@ sam deploy --guided
 
 Key parameter prompts:
 
-| Parameter           | Value                           | Notes                                  |
-| ------------------- | ------------------------------- | -------------------------------------- |
-| `Environment`       | `prod`                          | `dev` includes localhost CORS origins  |
-| `IncludeDevOrigins` | `false`                         | Set `true` for dev stacks              |
-| `ProductionOrigins` | `https://app.warmreach.com`     | Comma-separated allowed origins        |
-| `ProductionOrigin`  | `https://app.warmreach.com`     | Primary origin for S3 CORS             |
-| `OpenAIApiKeyArn`   | `arn:aws:ssm:...:parameter/...` | SSM SecureString ARN — not the raw key |
-| `DeployRAGStack`    | `true` or `false`               | Nested RAGStack or use external        |
-| `AdminEmail`        | your email                      | Required if nested RAGStack            |
+| Parameter              | Value                           | Notes                                                         |
+| ---------------------- | ------------------------------- | ------------------------------------------------------------- |
+| `Environment`          | `prod`                          | `dev` includes localhost CORS origins                         |
+| `IncludeDevOrigins`    | `false`                         | Set `true` for dev stacks                                     |
+| `ProductionOrigins`    | `https://app.warmreach.com`     | Comma-separated allowed origins                               |
+| `ProductionOrigin`     | `https://app.warmreach.com`     | Primary origin for S3 CORS                                    |
+| `OpenAIApiKeyArn`      | `arn:aws:ssm:...:parameter/...` | SSM SecureString ARN — not the raw key                        |
+| `ClientDownloadBucket` | your-bucket                     | Only if a download URL uses `s3://`; scopes the presign grant |
+| `DeployRAGStack`       | `true` or `false`               | Nested RAGStack or use external                               |
+| `AdminEmail`           | your email                      | Required if nested RAGStack                                   |
 
 Deployment takes 5-20 minutes depending on whether RAGStack is nested.
 
