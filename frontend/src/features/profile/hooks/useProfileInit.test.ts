@@ -138,16 +138,6 @@ describe('useProfileInit', () => {
       expect(onSuccess).toHaveBeenCalled();
     });
 
-    it('should handle healing status', () => {
-      mockStatus = 'completed';
-      mockResult = { healing: true, message: 'Healing...' };
-
-      const { result } = renderHook(() => useProfileInit(), { wrapper: createWrapper() });
-
-      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Processing' }));
-      expect(result.current.initializationMessage).toBe('Healing...');
-    });
-
     it('should handle failure', () => {
       mockStatus = 'failed';
       mockError = 'Dispatch failed';

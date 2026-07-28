@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { processConnection, isConnectionLevelError } from './profileScraping';
-import type { ProfileInitService } from './profileInitService';
+import { processConnection, isConnectionLevelError } from './profileScraping.js';
+import type { ProfileInitService } from './profileInitService.js';
 
 vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
@@ -27,7 +27,7 @@ vi.mock('../../linkedin/utils/linkedinErrorHandler.js', () => ({
 }));
 
 describe('profileScraping', () => {
-  let mockService: any;
+  let mockService: ProfileInitService;
   const state = { requestId: 'req1', jwtToken: 'token' };
 
   beforeEach(() => {

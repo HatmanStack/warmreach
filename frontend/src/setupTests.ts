@@ -1,7 +1,19 @@
 import '@testing-library/jest-dom';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach, vi, beforeAll, afterAll } from 'vitest';
 import { server } from './test-utils/msw/server';
+
+// Testing Library's waitFor/findBy* have their own 1000ms budget, separate from
+// vitest's testTimeout. Raising testTimeout to 15s in vitest.config.ts does not
+// reach them, so under load a waitFor still fails at 1s while the test itself
+// has 14s left — observed here as UserProfileContext.test.tsx failing a
+// waitFor(() => expect(isLoading).toBe(false)) on a loaded box and passing
+// three times out of three in isolation.
+//
+// 5s, not 15s: it must stay well below testTimeout so a genuinely stuck wait
+// still fails as a timed-out wait with the assertion's own error message,
+// rather than being swallowed by the test timeout with no useful diagnostic.
+configure({ asyncUtilTimeout: 5000 });
 
 // MSW Setup
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));

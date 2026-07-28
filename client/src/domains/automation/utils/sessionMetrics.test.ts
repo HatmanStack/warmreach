@@ -1,24 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SessionMetrics } from './sessionMetrics.ts';
+import { SessionMetrics } from './sessionMetrics.js';
 
 // Mock logger
 vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
+/** The SignalDetector members SessionMetrics calls. */
+const makeDetector = () => ({
+  recordContentSignal: vi.fn(),
+});
+
 describe('SessionMetrics', () => {
   let metrics: SessionMetrics;
-  let mockDetector: any;
+  let mockDetector: ReturnType<typeof makeDetector>;
 
   beforeEach(() => {
-    mockDetector = {
-      recordContentSignal: vi.fn(),
-    };
-    metrics = new SessionMetrics(mockDetector, {
-      errorRateThreshold: 0.3,
-      checkpointThreshold: 1,
-      loginRedirectThreshold: 2,
-    });
+    mockDetector = makeDetector();
+    metrics = new SessionMetrics(
+      mockDetector as unknown as ConstructorParameters<typeof SessionMetrics>[0],
+      {
+        errorRateThreshold: 0.3,
+        checkpointThreshold: 1,
+        loginRedirectThreshold: 2,
+      }
+    );
     vi.useFakeTimers();
     vi.setSystemTime(1000000);
   });

@@ -3,7 +3,17 @@ import { logger } from '#utils/logger.js';
 /**
  * Job status types
  */
-type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+/**
+ * Statuses a job can no longer leave. Eviction keys off this set — a status
+ * missing from it would leak its record for the process lifetime.
+ */
+const TERMINAL_STATUSES: ReadonlySet<JobStatus> = new Set<JobStatus>([
+  'succeeded',
+  'failed',
+  'cancelled',
+]);
 
 /**
  * Metadata for a job
@@ -56,6 +66,8 @@ interface JobResultResponse {
 interface QueueItem {
   jobId: string;
   run: () => Promise<void>;
+  /** Settles the caller's promise when the job is dropped before it starts. */
+  reject: (err: unknown) => void;
 }
 
 /**
@@ -279,7 +291,7 @@ class InteractionQueue {
 
     const completed: [string, number][] = [];
     for (const [id, job] of this.jobs) {
-      if (job.status === 'succeeded' || job.status === 'failed') {
+      if (TERMINAL_STATUSES.has(job.status)) {
         completed.push([id, job.finishedAt || 0]);
       }
     }
@@ -305,6 +317,21 @@ class InteractionQueue {
    * @returns resolves/rejects with task result
    */
   enqueue<T>(taskFn: TaskFunction<T>, meta: JobMeta = {}): Promise<T> {
+    return this.enqueueCancellable(taskFn, meta).promise;
+  }
+
+  /**
+   * Enqueue and also hand back the job id, so the caller can drop the job with
+   * `cancel()` if it is still waiting.
+   *
+   * Note the queue dequeues synchronously when a slot is free, so a job may
+   * already be running by the time this returns — which is exactly why
+   * `cancel()` reports whether it succeeded rather than assuming it did.
+   */
+  enqueueCancellable<T>(
+    taskFn: TaskFunction<T>,
+    meta: JobMeta = {}
+  ): { jobId: string; promise: Promise<T> } {
     if (typeof taskFn !== 'function') {
       throw new Error('enqueue requires a function');
     }
@@ -323,7 +350,7 @@ class InteractionQueue {
 
     this.jobs.set(jobId, jobRecord);
 
-    return new Promise<T>((resolve, reject) => {
+    const promise = new Promise<T>((resolve, reject) => {
       const run = async (): Promise<void> => {
         jobRecord.status = 'running';
         jobRecord.startedAt = Date.now();
@@ -360,10 +387,42 @@ class InteractionQueue {
         }
       };
 
-      this.queue.push({ jobId, run });
+      this.queue.push({ jobId, run, reject });
       logger.debug('InteractionQueue: job enqueued', { jobId, queueLength: this.queue.length });
       this._dequeueNext();
     });
+
+    return { jobId, promise };
+  }
+
+  /**
+   * Drop a job that has not started yet.
+   *
+   * Safe precisely because none of the task's code has run — unlike a job in
+   * flight, which may be mid-navigation in Puppeteer and cannot be abandoned
+   * without leaving the shared page in an unknown state. Callers must respect
+   * the return value: `false` means the job is already running (or finished),
+   * and racing it is then the only option.
+   *
+   * @returns true only when a still-queued job was removed.
+   */
+  cancel(jobId: string, reason: Error): boolean {
+    const index = this.queue.findIndex((item) => item.jobId === jobId);
+    if (index === -1) return false;
+
+    const [item] = this.queue.splice(index, 1);
+    const job = this.jobs.get(jobId);
+    if (job) {
+      job.status = 'cancelled';
+      job.finishedAt = Date.now();
+      job.error = { message: reason.message };
+    }
+    logger.info('InteractionQueue: job cancelled before it started', {
+      jobId,
+      reason: reason.message,
+    });
+    item!.reject(reason);
+    return true;
   }
 
   /**
@@ -421,7 +480,7 @@ class InteractionQueue {
     if (this.jobs.size <= this.maxJobHistory) return;
     const completed: [string, number][] = [];
     for (const [id, job] of this.jobs) {
-      if (job.status === 'succeeded' || job.status === 'failed') {
+      if (TERMINAL_STATUSES.has(job.status)) {
         completed.push([id, job.finishedAt || 0]);
       }
     }
@@ -441,7 +500,7 @@ class InteractionQueue {
     let evictedCount = 0;
 
     for (const [id, job] of this.jobs) {
-      if (job.status === 'succeeded' || job.status === 'failed') {
+      if (TERMINAL_STATUSES.has(job.status)) {
         const jobTime = job.finishedAt || job.createdAt;
         if (jobTime < staleThreshold) {
           this.jobs.delete(id);

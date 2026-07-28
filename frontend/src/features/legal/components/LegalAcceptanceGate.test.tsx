@@ -160,6 +160,25 @@ describe('LegalAcceptanceGate', () => {
     expect(screen.getByText(/Currently viewing: Terms of Use/)).toBeInTheDocument();
   });
 
+  it('lets the reader open the retention policy without accepting it', () => {
+    // The privacy policy's whole "How long we keep it" section is a pointer to
+    // this document. It is reference material, so opening it must not put it
+    // into the acceptance payload — the record has to say exactly what was
+    // agreed to.
+    mockState = { ...mockState, outstanding: [RISK] };
+
+    render(<LegalAcceptanceGate />);
+    fireEvent.click(screen.getByTestId('legal-reference-tab-data_retention'));
+
+    expect(screen.getByText(/reference only, not part of this acceptance/)).toBeInTheDocument();
+    expect(screen.getByTestId('legal-document-body').textContent).toMatch(/Data Retention Policy/i);
+
+    fireEvent.click(screen.getByTestId('legal-confirm-checkbox'));
+    fireEvent.click(screen.getByTestId('legal-accept-button'));
+
+    expect(mockAccept).toHaveBeenCalledWith(['linkedin_risk_disclosure']);
+  });
+
   it('surfaces a failure to record acceptance', () => {
     mockState = { ...mockState, acceptError: new Error('nope') };
 

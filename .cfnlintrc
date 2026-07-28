@@ -1,0 +1,26 @@
+# cfn-lint configuration.
+#
+# Two rules are ignored, both by name and both with a reason. This is not a
+# blanket ignore: every other cfn-lint rule fails the build, which is the point
+# of adding the gate at all.
+
+ignore_checks:
+  # W1030 — "Validate the values that come from a Ref function".
+  #
+  # cfn-lint resolves `!Ref <Parameter>` to that parameter's Default and then
+  # pattern-matches the result. Every secret-ARN parameter in this template
+  # (OpenAIApiKeyArn, RagstackApiKeyArn, UnsubscribeSecretArn, ...) has
+  # `Default: ''` on purpose: the operator supplies the real ARN at deploy time,
+  # and the empty default is what the Has* conditions test to decide whether the
+  # resource is created at all. So the warning fires on '' never matching an ARN
+  # regex, which is the intended state, not a defect. Giving the parameters
+  # placeholder ARN defaults to silence it would make a misconfigured deploy
+  # produce a stack pointing at a nonexistent parameter instead of failing.
+  - W1030
+
+  # W1028 — "Fn::If branch is not reachable".
+  #
+  # The same mechanism one level up: with the default parameter values resolved,
+  # cfn-lint concludes one branch of each conditional cannot be taken. Both
+  # branches are reachable at deploy time — that is what the parameters are for.
+  - W1028

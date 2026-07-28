@@ -19,7 +19,6 @@ import time
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-import boto3
 from openai import OpenAI
 from services.llm_service import (
     RESEARCH_RECON_PARTITION,
@@ -27,6 +26,11 @@ from services.llm_service import (
     LLMService,
     parse_iso_datetime,
 )
+from shared_services.aws_clients import dynamodb_resource, require_table
+
+# parallel_scan raises PartialScanError when a segment fails, and that
+# deliberately propagates here: a reconciliation sweep that silently skipped
+# part of the table would report success while leaving rows stuck.
 from shared_services.handler_utils import parallel_scan
 from shared_services.ssm_cache import SSMCachedSecret
 
@@ -37,7 +41,7 @@ OPENAI_TIMEOUT = int(os.environ.get('OPENAI_TIMEOUT', '60'))
 _openai_secret = SSMCachedSecret(os.environ.get('OPENAI_API_KEY_ARN', ''))
 
 table_name = os.environ.get('DYNAMODB_TABLE_NAME')
-table = boto3.resource('dynamodb').Table(table_name) if table_name else None
+table = dynamodb_resource().Table(table_name) if table_name else None
 
 # STALE_RESEARCH_HOURS is shared with get_active_research (imported from
 # llm_service) so the on-demand and background paths retire zombies identically.
@@ -62,6 +66,44 @@ def _get_service() -> LLMService:
 # One tick in twelve — hourly at rate(5 minutes) — also runs the old scan.
 SWEEP_EVERY_N_TICKS = 12
 
+# --- Deadline budgeting ------------------------------------------------------
+# Leave room for the cursor write and the summary log after the loop breaks.
+_DEADLINE_RESERVE_MS = 30_000
+# Resume cursor for the per-user loop below.
+_CURSOR_KEY = {'PK': 'RESEARCHRECON#CURSOR', 'SK': '#CURSOR'}
+
+
+def _budget_exhausted(context) -> bool:
+    """True when less than the reserve remains. ``context`` may be None in tests."""
+    if context is None or not hasattr(context, 'get_remaining_time_in_millis'):
+        return False
+    # <= not <: at exactly the reserve there is no margin left to persist the
+    # cursor and summary, so starting another OpenAI call spends the whole of it.
+    return context.get_remaining_time_in_millis() <= _DEADLINE_RESERVE_MS
+
+
+def _read_cursor() -> str:
+    try:
+        item = require_table(table).get_item(Key=_CURSOR_KEY).get('Item') or {}
+        return str(item.get('lastUserId', ''))
+    except Exception:
+        logger.exception('Failed to read the reconciler cursor; starting from the first user')
+        return ''
+
+
+def _write_cursor(last_user_id: str) -> None:
+    try:
+        require_table(table).put_item(Item={**_CURSOR_KEY, 'lastUserId': last_user_id})
+    except Exception:
+        logger.exception('Failed to persist the reconciler cursor; the next tick repeats this prefix')
+
+
+def _clear_cursor() -> None:
+    try:
+        require_table(table).delete_item(Key=_CURSOR_KEY)
+    except Exception:
+        logger.exception('Failed to clear the reconciler cursor; users before it are skipped next tick')
+
 
 def _query_active_research() -> list[dict]:
     """Read the in-flight research rows from the sparse GSI3.
@@ -78,7 +120,7 @@ def _query_active_research() -> list[dict]:
         'ExpressionAttributeValues': {':pk': RESEARCH_RECON_PARTITION},
     }
     while True:
-        resp = table.query(**params)
+        resp = require_table(table).query(**params)
         items.extend(resp.get('Items', []))
         last = resp.get('LastEvaluatedKey')
         if not last:
@@ -139,8 +181,24 @@ def _should_sweep() -> bool:
     return datetime.now(UTC).minute < (60 // SWEEP_EVERY_N_TICKS)
 
 
-def lambda_handler(event, _context):
-    """Reconcile in-progress deep-research jobs against OpenAI."""
+def lambda_handler(event, context):
+    """Reconcile in-progress deep-research jobs against OpenAI.
+
+    The per-user loop is bounded by the invocation's remaining time and resumes
+    from a persisted cursor. Without both, a backlog larger than one 300s tick
+    meant Lambda hard-killed the run — no summary, partial work committed — and,
+    because users arrive in a stable sorted order, every subsequent tick
+    reprocessed the same head while the tail never drained.
+
+    **The budget is spent per user, not per row, and the row list is
+    deliberately not capped.** Truncating the rows would split a user's job set
+    across ticks, and this module's whole safety guard is that only a user's
+    *newest* active job may mirror to the profile: an older job promoted to
+    primary is exactly the "completed old job clobbers current research" failure
+    the module docstring exists to prevent. The row list is bounded in practice
+    anyway — it is the sparse GSI3 partition of *in-flight* research jobs, not a
+    table scan.
+    """
     if table is None:
         logger.error('DYNAMODB_TABLE_NAME not configured — reconciler is a no-op')
         return {
@@ -150,6 +208,9 @@ def lambda_handler(event, _context):
             'completed': 0,
             'abandoned': 0,
             'errors': 0,
+            'processed': 0,
+            'remaining': 0,
+            'hasMore': False,
         }
 
     svc = _get_service()
@@ -171,7 +232,26 @@ def lambda_handler(event, _context):
     scanned = len(items)
     reconciled = completed = abandoned = errors = 0
 
-    for user_id, jobs in by_user.items():
+    # Sorted so the resume cursor is well defined; dict order would make it
+    # meaningless.
+    user_ids = sorted(by_user)
+    cursor = _read_cursor()
+    if cursor:
+        user_ids = [uid for uid in user_ids if uid > cursor]
+        logger.info('Resuming after %s: %s users remain', cursor, len(user_ids))
+
+    processed = 0
+    has_more = False
+    last_user_id = ''
+
+    for user_id in user_ids:
+        # Budget checked at the TOP of the iteration, before any OpenAI call.
+        if _budget_exhausted(context):
+            has_more = True
+            break
+        jobs = by_user[user_id]
+        processed += 1
+        last_user_id = user_id
         # Newest first: only the newest active job may reconcile/mirror; older
         # ones are superseded so a stale result can't clobber the profile.
         jobs.sort(key=lambda i: i.get('created_at', ''), reverse=True)
@@ -208,6 +288,15 @@ def lambda_handler(event, _context):
             errors += 1
             logger.exception('Reconcile failed for %s/%s', user_id, job_id)
 
+    # A bare break would re-process the same prefix every tick and never drain
+    # the tail, so the cursor is what makes the deadline safe. Clearing it on a
+    # complete pass matters just as much: users sorting before the cursor must
+    # become visible again.
+    if has_more and last_user_id:
+        _write_cursor(last_user_id)
+    elif not has_more:
+        _clear_cursor()
+
     summary = {
         'scanned': scanned,
         # Should always be 0. Anything else means a write path stopped
@@ -217,6 +306,9 @@ def lambda_handler(event, _context):
         'completed': completed,
         'abandoned': abandoned,
         'errors': errors,
+        'processed': processed,
+        'remaining': len(user_ids) - processed,
+        'hasMore': has_more,
     }
     logger.info('Research reconciler complete: %s', summary)
     return summary

@@ -18,44 +18,12 @@ import {
 } from './profileIngestion.js';
 
 /**
- * Profile initialization state
+ * Profile initialization state. Defined in `../types/profileInit.js` so the
+ * state manager can describe what it builds without importing this module
+ * back; re-exported here because this is where callers already import it from.
  */
-export interface ProfileInitState {
-  requestId?: string;
-  recursionCount?: number;
-  healPhase?: string;
-  currentProcessingList?: string;
-  currentBatch?: number;
-  currentIndex?: number;
-  jwtToken?: string;
-  searchName?: string;
-  searchPassword?: string;
-  credentialsCiphertext?: string;
-  masterIndexFile?: string;
-  totalConnections?: {
-    ally: number;
-    incoming: number;
-    outgoing: number;
-  };
-  completedBatches?: number[];
-  lastError?: {
-    connectionType: string;
-    message: string;
-    timestamp: string;
-  };
-  listCreationState?: {
-    connectionType: string;
-    expansionAttempt: number;
-    currentFileIndex: number;
-  };
-  /**
-   * Consent flag from the profile-init payload. When true (and a collector is
-   * injected), each scraped contact's mutual connections are collected and
-   * persisted as private adjacency edges. Absent/false => no collection.
-   */
-  collectMutuals?: boolean;
-  [key: string]: unknown;
-}
+export type { ProfileInitState } from '../types/profileInit.js';
+import type { ProfileInitState } from '../types/profileInit.js';
 
 /**
  * Master index file structure

@@ -17,6 +17,40 @@ electron-updater is configured (`client/electron-builder.yml` → `publish`) to
 fetch from `HatmanStack/warmreach`, which is why artifacts go there rather than
 here.
 
+## Where the version number lives
+
+`CHANGELOG.md` is the single source of truth. `release.yml` reads the newest
+heading whose version starts with a digit and creates the tag from it, so
+nothing else can change what ships.
+
+| File                   | Tracks the release version? | Why                                                                             |
+| ---------------------- | --------------------------- | -------------------------------------------------------------------------------- |
+| `CHANGELOG.md`         | **Yes — authoritative**     | `release.yml` extracts the tag and the release body from it                     |
+| `client/package.json`  | Yes                         | electron-builder embeds it in the installer filename and the update manifest    |
+| `package.json` (root)  | Yes                         | Not read by the release pipeline, but it is what `npm version` and most tooling report — a decorative value ten minors behind is a trap, so it is kept in step |
+| `frontend/package.json`, `admin/package.json` | **No** | Bundled SPAs, never published as packages. Their `version` is unused; they stay at `1.0.0` rather than acquiring a number nothing maintains |
+
+**The two SPAs do not version independently.** They ship inside the same
+deployment as the backend and have no separate release channel, so an
+independent number would be a second thing to forget. If either is ever
+published on its own, this decision changes and this table is where to say so.
+
+When cutting a release, bump `CHANGELOG.md`, `client/package.json`, and the root
+`package.json` together.
+
+## The 1.14.0 gap, and what actually happened
+
+For a while `CHANGELOG.md` appeared to skip 1.14.0. It did not: `v1.14.0` was
+tagged on 2026-04-24 with 66 commits behind it, and its entry was written. The
+1.15.0 commit (`cc8b7530`) replaced the `## [1.14.0] - 2026-04-24` heading line
+with its own, so 1.14.0's notes rendered as part of 1.15.0 — and a later commit
+deliberately folded a third narrative into 1.15.0 on top of that, which is why
+one section carried three. The heading has been restored and the three
+narratives redistributed to the two releases they belong to.
+
+The lesson is mechanical: a new release heading is an **insertion** above the
+previous one, never a replacement of it.
+
 ## Platforms and their update manifests
 
 | Platform | Runner           | Artifacts                      | Update manifest    |

@@ -3,7 +3,15 @@ import config from '../config/index.js';
 import { ConfigValidator, type ValidationResult } from './configValidator.js';
 import ControlPlaneService from '../services/controlPlaneService.js';
 
-type LinkedInConfig = Record<string, any>;
+/**
+ * The `config.linkedinInteractions` block, derived from the config module
+ * itself so the two cannot drift. The `Record<string, unknown>` intersection is
+ * load-bearing: validateNumericRanges and validateFeatureFlags index it with
+ * runtime-computed keys, and TS truncates the inferred object type at ~50
+ * properties, so several real keys are only reachable through the index
+ * signature.
+ */
+type LinkedInConfig = typeof config.linkedinInteractions & Record<string, unknown>;
 type ConfigWatcherCallback = (event: string, data: unknown) => void;
 
 export class ConfigManager {

@@ -10,7 +10,7 @@ test.describe('Profile', () => {
     await expect(authenticatedPage.getByTestId('save-profile-button')).toBeVisible();
   });
 
-  test('should update profile and see success feedback', async ({ authenticatedPage }) => {
+  test('should update profile and see success feedback', { tag: '@needs-api' }, async ({ authenticatedPage }) => {
     await authenticatedPage.goto('/profile');
 
     // Update the name field

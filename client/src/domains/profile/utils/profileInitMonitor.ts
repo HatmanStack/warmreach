@@ -1,12 +1,119 @@
 import { logger } from '#utils/logger.js';
 
 /**
+ * Free-form structured-logging bag. Callers attach whatever is useful for the
+ * log line; nothing here is read by name, so `unknown` values are correct
+ * rather than a cop-out.
+ */
+type LogContext = Record<string, unknown>;
+
+/** Per-outcome connection counters. */
+export interface ConnectionCounters {
+  processed: number;
+  skipped: number;
+  errors: number;
+}
+
+/** The outcome vocabulary `recordConnection` callers use. */
+export type ConnectionOutcome = 'processed' | 'skipped' | 'error';
+
+/**
+ * Outcome name -> counter name. `error` and `errors` differ, and the counters
+ * used to be indexed by the raw outcome string: `connections['error']++` on an
+ * absent key set it to NaN and left `connections.errors` at zero, so failed
+ * connections were never counted. The map makes the mismatch explicit and the
+ * lookup total.
+ */
+const COUNTER_BY_OUTCOME: Record<ConnectionOutcome, keyof ConnectionCounters> = {
+  processed: 'processed',
+  skipped: 'skipped',
+  error: 'errors',
+};
+
+/** Aggregate metrics tracked by {@link ProfileInitMonitor}. */
+export interface ProfileInitMetrics {
+  requests: {
+    total: number;
+    successful: number;
+    failed: number;
+    healing: number;
+  };
+  connections: ConnectionCounters;
+  performance: {
+    averageRequestDuration: number;
+    averageConnectionProcessingTime: number;
+    totalProcessingTime: number;
+  };
+  errors: {
+    byType: Record<string, number>;
+    byCategory: Record<string, number>;
+    recoverableCount: number;
+    nonRecoverableCount: number;
+  };
+  healing: {
+    totalHealingAttempts: number;
+    successfulHealings: number;
+    failedHealings: number;
+    averageRecursionCount: number;
+  };
+}
+
+/** In-flight request bookkeeping, dropped once the request settles. */
+interface ActiveRequest {
+  requestId: string;
+  startTime: number;
+  context: LogContext;
+  connections: ConnectionCounters;
+  errors: unknown[];
+  healingAttempts: number;
+}
+
+/** The processing counts {@link ProfileInitMonitor.recordSuccess} reads. */
+interface RequestResult {
+  data?: {
+    processed?: number;
+    skipped?: number;
+    errors?: number;
+  };
+}
+
+/** The categorized-error fields the monitor reads off a failure. */
+interface MonitorErrorDetails {
+  type?: string;
+  category?: string;
+  isRecoverable?: boolean;
+}
+
+/** The healing fields the monitor reads off a heal attempt. */
+interface HealingContext {
+  recursionCount?: number;
+  healPhase?: string | null;
+  healReason?: string | null;
+}
+
+/** A frequency-ranked error signature. */
+interface ErrorPattern {
+  pattern: string;
+  count: number;
+}
+
+/** {@link ProfileInitMetrics} plus the derived fields computed on read. */
+export interface ProfileInitMetricsSnapshot extends ProfileInitMetrics {
+  activeRequests: number;
+  successRate: number | string;
+  failureRate: number | string;
+  healingSuccessRate: number | string;
+  topErrorPatterns: ErrorPattern[];
+  timestamp: string;
+}
+
+/**
  * Profile Initialization Monitoring Utility
  * Tracks metrics, performance, and error patterns for profile initialization
  */
 class ProfileInitMonitor {
-  metrics: Record<string, any>;
-  activeRequests: Map<string, Record<string, any>> = new Map();
+  metrics: ProfileInitMetrics;
+  activeRequests: Map<string, ActiveRequest> = new Map();
   errorPatterns: Map<string, number> = new Map();
 
   constructor() {
@@ -50,7 +157,7 @@ class ProfileInitMonitor {
    * @param {string} requestId - Unique request identifier
    * @param {Object} context - Request context
    */
-  startRequest(requestId: string, context: Record<string, any> = {}) {
+  startRequest(requestId: string, context: LogContext = {}) {
     const requestData = {
       requestId,
       startTime: Date.now(),
@@ -80,7 +187,7 @@ class ProfileInitMonitor {
    * @param {string} requestId - Request identifier
    * @param {Object} result - Request result
    */
-  recordSuccess(requestId: string, result: Record<string, any> = {}) {
+  recordSuccess(requestId: string, result: RequestResult = {}) {
     const requestData = this.activeRequests.get(requestId);
     if (!requestData) {
       logger.warn('Profile init monitoring: Unknown request ID for success', { requestId });
@@ -119,7 +226,7 @@ class ProfileInitMonitor {
    * @param {Error} error - Error that occurred
    * @param {Object} errorDetails - Categorized error details
    */
-  recordFailure(requestId: string, error: Error, errorDetails: Record<string, any> = {}) {
+  recordFailure(requestId: string, error: Error, errorDetails: MonitorErrorDetails = {}) {
     const requestData = this.activeRequests.get(requestId);
     if (!requestData) {
       logger.warn('Profile init monitoring: Unknown request ID for failure', { requestId });
@@ -166,7 +273,7 @@ class ProfileInitMonitor {
    * @param {string} requestId - Request identifier
    * @param {Object} healingContext - Healing context
    */
-  recordHealing(requestId: string, healingContext: Record<string, any> = {}) {
+  recordHealing(requestId: string, healingContext: HealingContext = {}) {
     const requestData = this.activeRequests.get(requestId);
     if (requestData) {
       requestData.healingAttempts++;
@@ -192,24 +299,25 @@ class ProfileInitMonitor {
    * Record connection processing metrics
    * @param {string} requestId - Request identifier
    * @param {string} profileId - Connection profile ID
-   * @param {string} status - Processing status (processed, skipped, error)
-   * @param {number} duration - Processing duration
-   * @param {Object} details - Additional details
+   * @param status - Processing outcome (processed, skipped, error)
+   * @param duration - Processing duration
+   * @param details - Additional details
    */
   recordConnection(
     requestId: string,
     profileId: string,
-    status: string,
+    status: ConnectionOutcome,
     duration: number,
-    details: Record<string, any> = {}
+    details: LogContext = {}
   ) {
+    const counter = COUNTER_BY_OUTCOME[status];
     const requestData = this.activeRequests.get(requestId);
     if (requestData) {
-      requestData.connections[status]++;
+      requestData.connections[counter]++;
     }
 
     // Update global connection metrics
-    this.metrics.connections[status]++;
+    this.metrics.connections[counter]++;
 
     // Update average connection processing time
     if (status === 'processed' && duration) {
@@ -232,7 +340,7 @@ class ProfileInitMonitor {
    * Get current monitoring metrics
    * @returns {Object} Current metrics
    */
-  getMetrics(): Record<string, any> {
+  getMetrics(): ProfileInitMetricsSnapshot {
     return {
       ...this.metrics,
       activeRequests: this.activeRequests.size,
@@ -276,7 +384,7 @@ class ProfileInitMonitor {
    * Track error patterns for analysis
    * @private
    */
-  _trackErrorPattern(_error: Error, errorDetails: Record<string, any>): void {
+  _trackErrorPattern(_error: Error, errorDetails: MonitorErrorDetails): void {
     const pattern = `${errorDetails.type || 'Unknown'}:${errorDetails.category || 'unknown'}`;
     const count = this.errorPatterns.get(pattern) || 0;
     this.errorPatterns.set(pattern, count + 1);
@@ -346,7 +454,7 @@ class ProfileInitMonitor {
    * Get top error patterns
    * @private
    */
-  _getTopErrorPatterns(): Array<{ pattern: string; count: number }> {
+  _getTopErrorPatterns(): ErrorPattern[] {
     return Array.from(this.errorPatterns.entries())
       .sort(([, a], [, b]) => b - a)
       .slice(0, 5)

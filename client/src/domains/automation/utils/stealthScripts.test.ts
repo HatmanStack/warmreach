@@ -4,7 +4,7 @@ import {
   getWebGLSpoofScript,
   getAudioNoiseScript,
   getHeadlessEvasionScript,
-} from './stealthScripts';
+} from './stealthScripts.js';
 
 /**
  * Build a minimal mock canvas DOM and evaluate the generated canvas-noise script
@@ -117,7 +117,6 @@ function evalHeadlessScript(pluginCount: number): {
 describe('stealthScripts', () => {
   describe('getCanvasNoiseScript', () => {
     it('requires a seed parameter', () => {
-      // @ts-ignore
       const script = getCanvasNoiseScript(12345);
       expect(script).toContain('12345');
     });

@@ -368,10 +368,6 @@ async function startServer(): Promise<void> {
       logger.info(
         `  POST http://localhost:${config.port}/search           - Perform LinkedIn search`
       );
-      logger.info(`  GET  http://localhost:${config.port}/search/results   - Get stored results`);
-      logger.info(
-        `  GET  http://localhost:${config.port}/search/health    - Search route health check`
-      );
       logger.info(
         `  POST http://localhost:${config.port}/profile-init - Initialize LinkedIn profile database`
       );
@@ -389,18 +385,6 @@ async function startServer(): Promise<void> {
       );
       logger.info(
         `  GET  http://localhost:${config.port}/profile-init/health - Profile init health check`
-      );
-      logger.info(
-        `  POST http://localhost:${config.port}/linkedin-interactions/send-message - Send LinkedIn message`
-      );
-      logger.info(
-        `  POST http://localhost:${config.port}/linkedin-interactions/add-connection - Add LinkedIn connection`
-      );
-      logger.info(
-        `  POST http://localhost:${config.port}/linkedin-interactions/create-post - Create LinkedIn post`
-      );
-      logger.info(
-        `  GET  http://localhost:${config.port}/linkedin-interactions/session-status - Get session status`
       );
     });
   } catch (error: unknown) {

@@ -36,12 +36,17 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0);
 }
 
+import { envInt } from '#config';
+import { logger } from '#utils/logger.js';
 import { WsClient } from './src/transport/wsClient.js';
 import { handleExecuteCommand } from './src/transport/commandRouter.js';
 import { CredentialStore } from './src/credentials/credentialStore.js';
 import { SecretStore } from './src/credentials/secretStore.js';
 import { openConfigStore, LEGACY_STORE_NAME } from './src/credentials/configStore.js';
 import { BrowserSessionManager } from './src/domains/session/services/browserSessionManager.js';
+import { buildBeforeQuitHandler } from './src/lifecycle/appShutdown.js';
+import { createUpdateStatusTracker } from './src/lifecycle/updateStatus.js';
+import { buildUpdateDownloadedHandler } from './src/lifecycle/updatePrompt.js';
 // Imports server.js for its side effect: starts the Express backend on
 // localhost:3001 and registers structured-log error handlers.
 import './src/server.js';
@@ -103,6 +108,11 @@ if (secretsDegraded) {
  * a token that cannot be persisted just means the user signs in again next
  * launch. Swallow the refusal so startup continues.
  */
+/**
+ * @param {string} key
+ * @param {string} value
+ * @returns {boolean}
+ */
 function setAuthSecret(key, value) {
   try {
     secretStore.setSecret(key, value, 'the session token');
@@ -115,26 +125,95 @@ function setAuthSecret(key, value) {
 // URLs are read at call time so saving from the settings window takes
 // effect immediately (no restart needed). Order: stored override → env
 // override → production default.
-function getWsUrl() {
-  return (
-    store.get('wsUrl') ||
-    process.env.WARMREACH_WS_URL ||
-    'wss://xy7bvlt6rh.execute-api.us-east-1.amazonaws.com/prod'
-  );
+/**
+ * Read a string setting out of electron-store, which returns `unknown` because
+ * the on-disk JSON is untrusted.
+ * @param {string} key
+ * @returns {string}
+ */
+function getStoredString(key) {
+  const value = store.get(key);
+  return typeof value === 'string' ? value : '';
 }
+
+/**
+ * Whether a persisted WebSocket endpoint is safe to send the auth token to.
+ *
+ * startWebSocket() hands the Cognito access token to whatever URL this returns,
+ * in an Authorization header. `settings:save-ws-url` accepts that URL from the
+ * renderer and persists it, so an unvalidated value is a token-exfiltration
+ * primitive: anything that can reach that IPC channel — or edit the on-disk
+ * store — can redirect the credential to a host of its choosing.
+ *
+ * `wss:` only, except for an explicit loopback host so local development
+ * against a mock gateway still works. Plain `ws:` to a remote host would put
+ * the token on the wire in clear text.
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isAllowedWsUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'wss:') return true;
+    return (
+      parsed.protocol === 'ws:' &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+    );
+  } catch {
+    return false;
+  }
+}
+
+// The shipped gateway. Named rather than repeated so the two fallback returns
+// below cannot drift apart.
+const DEFAULT_WS_URL = 'wss://xy7bvlt6rh.execute-api.us-east-1.amazonaws.com/prod';
+
+/** @returns {string} */
+function getWsUrl() {
+  const stored = getStoredString('wsUrl');
+  if (stored && !isAllowedWsUrl(stored)) {
+    logger.error('Ignoring persisted wsUrl: not a wss:// endpoint', { stored });
+  } else if (stored) {
+    return stored;
+  }
+
+  // The env override goes through the SAME check as the persisted value. It
+  // used to bypass it entirely: validation covered `stored` on both read and
+  // write, so a wss:// guarantee looked enforced while WARMREACH_WS_URL — the
+  // branch actually taken whenever nothing is persisted, which is the common
+  // case — could point the Authorization-bearing socket at a plaintext ws://
+  // or attacker-chosen host.
+  const fromEnv = process.env.WARMREACH_WS_URL;
+  if (fromEnv && !isAllowedWsUrl(fromEnv)) {
+    logger.error('Ignoring WARMREACH_WS_URL: not a wss:// endpoint', { fromEnv });
+    return DEFAULT_WS_URL;
+  }
+  return fromEnv || DEFAULT_WS_URL;
+}
+/** @returns {string} */
 function getAppUrl() {
   return (
-    store.get('appUrl') ||
+    getStoredString('appUrl') ||
     process.env.WARMREACH_APP_URL ||
     'https://prod.d88r3mhl0c0db.amplifyapp.com'
   );
 }
-const BACKEND_PORT = parseInt(process.env.PORT, 10) || 3001;
+const BACKEND_PORT = envInt('PORT', 3001);
 
+/** @type {Tray | null} */
 let tray = null;
+/**
+ * The live agent socket, or null while signed out or mid-restart.
+ * restartWebSocket() nulls this before reconnecting, so every deref is guarded;
+ * typing the nullability makes an unguarded one a compile error.
+ * @type {WsClient | null}
+ */
 let wsClient = null;
 let wsConnected = false;
+/** @type {BrowserWindow | null} */
 let settingsWindow = null;
+/** @type {BrowserWindow | null} */
 let mainWindow = null;
 let usingFallbackWindow = false;
 
@@ -144,46 +223,60 @@ const APP_ICON_PATH = path.join(__dirname, 'electron-resources', 'icon.png');
 
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
-// Silence electron-updater's built-in logger — we surface failures via
-// the "Check for Updates" dialog instead. Without this, every failed
-// check (e.g. when no GitHub release exists yet) prints a stack trace.
+// electron-updater's own logger stays off: it prints a full stack trace for the
+// entirely benign "no release published yet" case, which is what got it
+// silenced originally. The tracker below logs the lifecycle events explicitly
+// instead, so failures are visible without that noise.
 autoUpdater.logger = null;
+
+// Logs every update-check outcome and keeps a coarse status for the tray
+// payload, so a broken delivery channel is distinguishable from a quiet one.
+const updateTracker = createUpdateStatusTracker({
+  autoUpdater,
+  onChange: () => broadcastStatus(),
+});
 
 autoUpdater.on('update-available', (info) => {
   tray?.setToolTip(`WarmReach Agent — Downloading update v${info.version}...`);
 });
 
-autoUpdater.on('update-downloaded', (info) => {
-  const response = dialog.showMessageBoxSync({
-    type: 'info',
-    title: 'Update Ready',
-    message: `WarmReach Agent v${info.version} has been downloaded.`,
-    detail: 'The update will be installed when you quit the app. Restart now?',
-    buttons: ['Restart Now', 'Later'],
-    defaultId: 0,
-  });
-  if (response === 0) {
-    autoUpdater.quitAndInstall();
-  }
-});
+// Electron's `dialog.showMessageBox` is overloaded with `(window, options)`
+// declared first, and TypeScript only relates the first overload of a source
+// set to a single-signature target — so `dialog` itself is not assignable to
+// the testability seam in updatePrompt.ts. A one-line adapter picks the
+// single-argument form explicitly, with no cast.
+autoUpdater.on(
+  'update-downloaded',
+  buildUpdateDownloadedHandler({
+    dialog: { showMessageBox: (options) => dialog.showMessageBox(options) },
+    autoUpdater,
+  })
+);
 
-autoUpdater.on('error', () => {
-  // Silently ignore update errors — non-critical
-});
+// The `error` event is logged and recorded by updateTracker above. No dialog:
+// a failed update check is not something the user can act on, and a modal on
+// every launch behind a corporate proxy is worse than the previous silence.
 
 // --- Status helpers ---
 
 function getStatus() {
   const controller = BrowserSessionManager.getBackoffController();
-  const status = controller?.getStatus() || { threatLevel: 0 };
-  const pauseStatus = status.pauseStatus || { paused: false, reason: null };
+  const status = controller?.getStatus();
+  const pauseStatus = status?.pauseStatus || { paused: false, reason: null };
   return {
     version: app.getVersion(),
     backendPort: BACKEND_PORT,
     wsConfigured: Boolean(getWsUrl() && secretStore.hasSecret('auth.accessToken')),
     wsConnected,
     automationPaused: Boolean(pauseStatus.paused),
-    threatLevel: status.threatLevel || 0,
+    threatLevel: status?.threatLevel || 0,
+    // Command results buffered against a socket that is down. A number that
+    // stays above zero means results are not reaching the backend, which
+    // otherwise looks identical to an idle agent.
+    wsOutbox: wsClient?.outboxSize ?? 0,
+    // Coarse only — an updater error message can carry release URLs and tokens,
+    // so it stays in the log and never crosses the IPC boundary.
+    ...updateTracker.snapshot(),
   };
 }
 
@@ -278,6 +371,7 @@ function updateTrayMenu() {
 
   const s = getStatus();
 
+  /** @type {Electron.MenuItemConstructorOptions[]} */
   const menuTemplate = [
     { label: `Automation: ${s.automationPaused ? 'PAUSED' : 'Running'}`, enabled: false },
   ];
@@ -315,7 +409,7 @@ function updateTrayMenu() {
   menuTemplate.push({
     label: 'Check for Updates',
     click: () => {
-      autoUpdater.checkForUpdates().catch((err) => {
+      autoUpdater.checkForUpdates().catch((/** @type {Error} */ err) => {
         dialog.showMessageBox({
           type: 'error',
           title: 'Update Check Failed',
@@ -326,13 +420,9 @@ function updateTrayMenu() {
     },
   });
   menuTemplate.push({ type: 'separator' });
-  menuTemplate.push({
-    label: 'Quit',
-    click: () => {
-      wsClient?.close();
-      app.quit();
-    },
-  });
+  // Teardown lives in the single `before-quit` handler, which every quit path
+  // raises — closing the socket here too would just be a second shutdown path.
+  menuTemplate.push({ label: 'Quit', click: () => app.quit() });
 
   tray.setContextMenu(Menu.buildFromTemplate(menuTemplate));
 }
@@ -353,16 +443,24 @@ function createTray() {
 // --- WebSocket ---
 
 function restartWebSocket() {
-  if (wsClient) {
-    try {
-      wsClient.close?.();
-    } catch {
-      /* best effort */
-    }
-    wsClient = null;
-    wsConnected = false;
+  const previous = wsClient;
+  // Take the buffer before close(), which clears it, and hand it to the
+  // replacement — otherwise a refresh timer firing during a backoff window
+  // would discard exactly the command results the outbox exists to preserve.
+  const pending = previous?.takeOutbox?.() ?? [];
+  wsConnected = false;
+  // No await between here and the reassignment inside startWebSocket(), so an
+  // async caller (a command's progress callback, say) can never observe the
+  // null. It stays null only when there is no token — i.e. signed out, where
+  // dropping the frame is the correct outcome.
+  wsClient = null;
+  const replacement = startWebSocket();
+  replacement?.adoptOutbox?.(pending);
+  try {
+    previous?.close?.();
+  } catch {
+    /* best effort */
   }
-  startWebSocket();
 }
 
 // --- Cognito refresh-token flow ---
@@ -372,6 +470,7 @@ function restartWebSocket() {
 // refresh token to mint a new id token before that window closes so the
 // WebSocket subscription stays alive without user interaction.
 
+/** @type {ReturnType<typeof setInterval> | null} */
 let refreshTimer = null;
 
 async function refreshIdToken() {
@@ -437,6 +536,9 @@ function scheduleTokenRefresh() {
 // Bridge for src/server.ts — the Express server runs in this same Node
 // process so it can hand tokens straight to the main module instead of
 // going through IPC.
+/**
+ * @param {{ idToken?: string, refreshToken?: string, cognitoClientId?: string, region?: string }} tokens
+ */
 globalThis.warmreachAuthSync = ({ idToken, refreshToken, cognitoClientId, region }) => {
   if (idToken) setAuthSecret('auth.accessToken', idToken);
   if (refreshToken) setAuthSecret('auth.refreshToken', refreshToken);
@@ -471,11 +573,17 @@ globalThis.warmreachAuthClear = () => {
   broadcastStatus();
 };
 
+/**
+ * Open the agent socket, if there is a token to open it with.
+ * Returns the new client so callers can act on it without re-reading the
+ * module binding, which TypeScript cannot see this function reassigning.
+ * @returns {WsClient | null}
+ */
 function startWebSocket() {
   const token = secretStore.getSecret('auth.accessToken');
   const wsUrl = getWsUrl();
   if (!token || !wsUrl) {
-    return;
+    return null;
   }
 
   wsClient = new WsClient({
@@ -492,9 +600,13 @@ function startWebSocket() {
         //   - searchPassword : LinkedIn password from CredentialStore
         // Don't overwrite an explicit value already in the payload.
         if (msg.payload && typeof msg.payload === 'object') {
+          // The frame is untrusted JSON off the socket; commandRouter validates
+          // the payload against its per-type schema before anything drives the
+          // browser (ADR-005). Here it is only a bag being augmented.
+          const payload = /** @type {Record<string, unknown>} */ (msg.payload);
           const currentToken = secretStore.getSecret('auth.accessToken');
-          if (currentToken && !msg.payload.jwtToken) {
-            msg.payload.jwtToken = currentToken;
+          if (currentToken && !payload.jwtToken) {
+            payload.jwtToken = currentToken;
           }
           // LinkedIn creds — only the `linkedin:*` command handlers consume
           // these, so scope the injection to them rather than attaching
@@ -503,18 +615,44 @@ function startWebSocket() {
           if (
             typeof msg.type === 'string' &&
             msg.type.startsWith('linkedin:') &&
-            !msg.payload.searchName &&
-            !msg.payload.linkedinCredentialsCiphertext &&
+            !payload.searchName &&
+            !payload.linkedinCredentialsCiphertext &&
             credentialStore.hasCredentials()
           ) {
             const creds = credentialStore.getCredentials();
             if (creds) {
-              msg.payload.searchName = creds.email;
-              msg.payload.searchPassword = creds.password;
+              payload.searchName = creds.email;
+              payload.searchPassword = creds.password;
             }
           }
         }
-        handleExecuteCommand(msg, (data) => wsClient.send(data));
+        // Guarded because `wsClient` is a module-level binding that
+        // restartWebSocket() replaces: an unguarded deref threw a TypeError
+        // inside the progress callback, and the router's catch block then
+        // threw identically. `void ... .catch()` rather than `await` — the
+        // message handler must not block on the command — but the promise is
+        // observed, so nothing can escape unhandled.
+        // handleExecuteCommand declares the validated frame shape; this is the
+        // raw one. It runs validateCommandPayload on entry and rejects a
+        // mismatch with a structured error, so the widening is what the
+        // boundary already assumes.
+        const frame = /** @type {Parameters<typeof handleExecuteCommand>[0]} */ (
+          /** @type {unknown} */ (msg)
+        );
+        void handleExecuteCommand(frame, (data) => {
+          if (!wsClient) {
+            logger.warn('Dropping agent frame: WebSocket client is not initialized', {
+              action: data?.action,
+            });
+            return false;
+          }
+          return wsClient.send(data);
+        }).catch((/** @type {Error} */ err) => {
+          logger.error('Command execution escaped the router', {
+            error: err?.message,
+            commandId: msg.commandId,
+          });
+        });
       }
     },
     onConnect: () => {
@@ -530,6 +668,7 @@ function startWebSocket() {
   });
 
   wsClient.connect();
+  return wsClient;
 }
 
 // --- IPC: settings window ---
@@ -546,26 +685,28 @@ ipcMain.handle('settings:save-credentials', (_e, email, password) => {
     credentialStore.setCredentials(email, password);
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 });
 ipcMain.handle('settings:clear-credentials', () => credentialStore.clearCredentials());
 ipcMain.handle('settings:get-ws-url', () => store.get('wsUrl') || '');
 ipcMain.handle('settings:save-ws-url', (_e, url) => {
-  store.set('wsUrl', url);
-  // Tear down the existing WS and reconnect against the new endpoint so
-  // the change applies immediately.
-  if (wsClient) {
-    try {
-      wsClient.close?.();
-    } catch {
-      /* best effort */
-    }
-    wsClient = null;
-    wsConnected = false;
+  // Reject here as well as on read: refusing to persist keeps the bad value out
+  // of the store entirely, so a later code path that forgets to validate cannot
+  // pick it up.
+  if (typeof url !== 'string' || !isAllowedWsUrl(url)) {
+    logger.error('Refusing to save wsUrl: not a wss:// endpoint', { url });
+    return { ok: false, error: 'WebSocket URL must be a wss:// endpoint' };
   }
-  startWebSocket();
+  store.set('wsUrl', url);
+  // Tear down the existing WS and reconnect against the new endpoint so the
+  // change applies immediately. Routed through restartWebSocket() so there is
+  // one restart path, with one null window and one outbox hand-off.
+  restartWebSocket();
   broadcastStatus();
+  // Same { ok } shape the sibling settings handlers use, so the renderer can
+  // tell a rejected URL from a saved one instead of silently believing it took.
+  return { ok: true };
 });
 
 // Auth tokens: pushed by the web app over loopback POST /auth/token
@@ -585,7 +726,7 @@ ipcMain.handle('main:check-updates', async () => {
       type: 'error',
       title: 'Update Check Failed',
       message: 'Could not check for updates.',
-      detail: err.message,
+      detail: err instanceof Error ? err.message : String(err),
     });
   }
 });
@@ -594,12 +735,25 @@ ipcMain.handle('main:toggle-pause', () => {
   updateTrayMenu();
   broadcastStatus();
 });
-ipcMain.handle('main:quit', () => {
-  wsClient?.close();
-  app.quit();
-});
+ipcMain.handle('main:quit', () => app.quit());
 
 // --- App lifecycle ---
+
+// The one shutdown path. Every quit route that can reach it — tray Quit, the
+// main:quit IPC handler, autoUpdater.quitAndInstall() — raises `before-quit`,
+// so registering here covers all of them. (The duplicate-launch app.quit() at
+// the top of this file runs before any of this module is wired and follows it
+// with process.exit(0); that process never launched a browser to orphan.)
+// Previously nothing closed the browser on quit, and the orphaned Chromium kept
+// the userDataDir profile lock held against the next launch.
+app.on(
+  'before-quit',
+  buildBeforeQuitHandler({
+    app,
+    getWsClient: () => wsClient,
+    cleanupBrowser: () => BrowserSessionManager.cleanup(),
+  })
+);
 
 app.whenReady().then(() => {
   let trayOk = false;
@@ -648,14 +802,21 @@ app.whenReady().then(() => {
   }
 
   setTimeout(() => {
-    autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+      updateTracker.recordFailure(err, 'startup check');
+    });
   }, 5000);
 });
 
-app.on('window-all-closed', (e) => {
-  // Tray platforms: keep running in background.
-  // No-tray platforms: closing the only window quits.
-  if (!usingFallbackWindow) {
-    e.preventDefault();
+app.on('window-all-closed', () => {
+  // Electron passes this listener no arguments (electron.d.ts declares
+  // `listener: () => void`), and merely subscribing is what suppresses the
+  // default quit-on-last-window-closed. The previous body called
+  // `e.preventDefault()` on that absent argument: on tray platforms it threw a
+  // TypeError inside Electron's emit, and on no-tray platforms — where the
+  // comment promised a quit — the branch was skipped, so the app stayed alive
+  // with no window and no tray. Both directions are handled explicitly now.
+  if (usingFallbackWindow) {
+    app.quit();
   }
 });

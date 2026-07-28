@@ -1,29 +1,38 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ResponseTimingInterceptor } from './responseTimingInterceptor.ts';
+import { ResponseTimingInterceptor } from './responseTimingInterceptor.js';
 
 // Mock logger
 vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
+/** Puppeteer page event handler captured from `page.on(event, handler)`. */
+type PageEventHandler = (payload: unknown) => void;
+
+/** The Page members ResponseTimingInterceptor attaches to. */
+const makePage = (callbacks: Record<string, PageEventHandler>) => ({
+  on: vi.fn((event: string, cb: PageEventHandler) => {
+    callbacks[event] = cb;
+  }),
+  off: vi.fn(),
+});
+
+/** The SignalDetector members ResponseTimingInterceptor calls. */
+const makeDetector = () => ({
+  recordResponseTiming: vi.fn(),
+  recordHttpStatus: vi.fn(),
+});
+
 describe('ResponseTimingInterceptor', () => {
   let interceptor: ResponseTimingInterceptor;
-  let mockPage: any;
-  let mockDetector: any;
-  let callbacks: Record<string, Function> = {};
+  let mockPage: ReturnType<typeof makePage>;
+  let mockDetector: ReturnType<typeof makeDetector>;
+  let callbacks: Record<string, PageEventHandler> = {};
 
   beforeEach(() => {
     callbacks = {};
-    mockPage = {
-      on: vi.fn((event, cb) => {
-        callbacks[event] = cb;
-      }),
-      off: vi.fn(),
-    };
-    mockDetector = {
-      recordResponseTiming: vi.fn(),
-      recordHttpStatus: vi.fn(),
-    };
+    mockPage = makePage(callbacks);
+    mockDetector = makeDetector();
     interceptor = new ResponseTimingInterceptor();
     vi.useFakeTimers();
     vi.setSystemTime(1000000);

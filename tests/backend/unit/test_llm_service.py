@@ -6,6 +6,13 @@ has no analyze_tone method, and no per-call timeout support.
 Pro-side additions in this PR (Phase 5 retry-decorator tests, skipped-test
 lint gates) are not ported because the community overlay exercises a
 different error surface — the retry/wrap semantics do not apply here.
+
+The shared retry policy in ``shared_services.openai_retry`` DOES apply to both
+editions, including its equal-jitter backoff (``backoff/2 + random(0,
+backoff/2)``, so concurrent invocations that hit the same 429 do not retry in
+lockstep). It is covered by ``tests/backend/unit/test_openai_retry.py``, which
+syncs verbatim — this file deliberately asserts nothing about backoff timing,
+which is why the jitter change needed no test edit here.
 """
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
@@ -451,28 +458,29 @@ class TestSynthesizeResearch:
         assert result['success'] is False
 
 
-class TestSanitizePrompt:
-    """Tests for _sanitize_prompt input validation."""
+class TestEscapePromptTemplate:
+    """Tests for _escape_prompt_template — format-string safety, not a
+    prompt-injection boundary."""
 
     def test_empty_string_returns_empty(self, service):
-        assert service._sanitize_prompt('') == ''
+        assert service._escape_prompt_template('') == ''
 
     def test_none_returns_empty(self, service):
-        assert service._sanitize_prompt(None) == ''
+        assert service._escape_prompt_template(None) == ''
 
     def test_truncates_at_max_length(self, service):
         long_text = 'a' * 3000
-        result = service._sanitize_prompt(long_text)
+        result = service._escape_prompt_template(long_text)
         assert len(result) == 2000
 
     def test_custom_max_length(self, service):
         text = 'a' * 500
-        result = service._sanitize_prompt(text, max_length=100)
+        result = service._escape_prompt_template(text, max_length=100)
         assert len(result) == 100
 
     def test_strips_control_characters(self, service):
         text = 'hello\x00world\x01test\x7f'
-        result = service._sanitize_prompt(text)
+        result = service._escape_prompt_template(text)
         assert '\x00' not in result
         assert '\x01' not in result
         assert '\x7f' not in result
@@ -481,29 +489,29 @@ class TestSanitizePrompt:
 
     def test_preserves_newlines_and_tabs(self, service):
         text = 'line1\nline2\ttab'
-        result = service._sanitize_prompt(text)
+        result = service._escape_prompt_template(text)
         assert '\n' in result
         assert '\t' in result
 
     def test_escapes_curly_braces(self, service):
         text = 'Hello {name} and {role}'
-        result = service._sanitize_prompt(text)
+        result = service._escape_prompt_template(text)
         assert '{{name}}' in result
         assert '{{role}}' in result
 
     def test_strips_whitespace(self, service):
         text = '   hello world   '
-        result = service._sanitize_prompt(text)
+        result = service._escape_prompt_template(text)
         assert result == 'hello world'
 
     def test_format_injection_prevented(self, service):
         malicious = '{__class__.__init__.__globals__}'
-        result = service._sanitize_prompt(malicious)
+        result = service._escape_prompt_template(malicious)
         assert '{' not in result or '{{' in result
 
     def test_normal_text_passes_through(self, service):
         text = 'Write a post about AI trends in 2024'
-        result = service._sanitize_prompt(text)
+        result = service._escape_prompt_template(text)
         assert result == text
 
 

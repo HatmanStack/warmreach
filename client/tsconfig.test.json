@@ -1,0 +1,131 @@
+{
+  // Type-checks the client's test files, which tsconfig.json excludes.
+  //
+  // A COUNTED RATCHET, not full coverage. The client has 79 test files: 56
+  // `.test.ts` and 23 `.test.js`. `include` lists the 42 that pass today (38
+  // `.test.ts` + 4 `.test.js`); the other 37 are enumerated below with their
+  // measured error counts. **Files are added to `include` as they are cleaned,
+  // and the list only ever grows.** Do not remove an entry to make a change
+  // pass.
+  //
+  // Relaxations vs the base config, each with the reason it is off:
+  //   noUncheckedIndexedAccess  off  -- `calls[0][1]` on a mock the test just
+  //                                     made is not a real nullability risk
+  //   noUnusedLocals            off  -- fixture scaffolding is not dead code
+  //   noUnusedParameters        off  -- stub signatures keep unused params
+  // `strict` stays ON. Production code keeps all three flags.
+  //
+  // `exclude: []` is load-bearing: `extends` inherits the base `exclude`, so
+  // without it tsconfig.json's `**/*.test.ts` and `**/*.test.js` exclusions win
+  // over `include` below and this config would check nothing at all.
+  //
+  // The `.test.js` files are listed one by one rather than by glob for the same
+  // reason the `.test.ts` ones are: only the clean ones are in scope, and the
+  // list is the ratchet. They are checkable at all only because Task 2 turned on
+  // `checkJs`, so leaving the rest out is a choice, not a limitation.
+  //
+  // DEFERRED, measured 2026-07-27 by adding each group to `include` and counting.
+  //
+  // (a) 18 `.test.ts` files, 505 errors, 366 of them TS7005/TS7034 implicit-any
+  //     locals in service mocks. These build large hand-rolled doubles for
+  //     LinkedInService, PuppeteerService and the messaging scraper; typing them
+  //     is its own piece of work, not a by-product of this phase.
+  //     74  src/domains/messaging/services/linkedinMessageScraperService.test.ts
+  //     56  src/domains/linkedin/controllers/linkedinInteractionController.test.ts
+  //     50  src/domains/profile/services/profileInitService.test.ts
+  //     40  src/domains/linkedin/services/localProfileScraper.test.ts
+  //     39  src/domains/navigation/services/linkedinNavigationService.test.ts
+  //     37  src/domains/linkedin/services/linkedinInteractionService.test.ts
+  //     33  src/domains/linkedin/utils/contactProcessor.test.ts
+  //     29  src/domains/linkedin/services/linkedinProfileOps.test.ts
+  //     23  src/domains/linkedin/services/linkedinConnectionOps.test.ts
+  //     23  src/domains/profile/services/profileScraping.test.ts
+  //     20  src/domains/linkedin/services/linkedinMessagingOps.test.ts
+  //     18  src/domains/linkedin/services/linkedinPostOps.test.ts
+  //     16  src/domains/linkedin/utils/linkCollector.test.ts
+  //     15  src/lifecycle/appShutdown.test.ts
+  //     10  src/domains/profile/services/profileIngestion.test.ts
+  //      9  src/domains/automation/services/puppeteerService.test.ts
+  //      7  src/domains/automation/utils/contentSignalAnalyzer.test.ts
+  //      6  src/domains/automation/utils/responseTimingInterceptor.test.ts
+  //
+  // (b) 19 `.test.js` files, 778 errors, 588 of them the same TS7005/TS7034
+  //     character. Converting or annotating these is a second piece of work
+  //     again -- note that linkedinConnectionService.test.js is in this set, and
+  //     it is the file that mocked an `upsertEdge` method the real service never
+  //     had, which is exactly the defect class this config exists to catch.
+  //    166  src/transport/wsClient.test.js
+  //    135  src/domains/linkedin/services/linkedinService.test.js
+  //    128  src/transport/commandRouter.test.js
+  //    103  src/domains/automation/utils/interactionQueue.test.js
+  //     56  src/domains/profile/controllers/profileInitController.test.js
+  //     43  src/domains/search/controllers/searchController.test.js
+  //     31  src/shared/services/controlPlaneService.test.js
+  //     30  src/domains/connections/services/linkedinConnectionService.test.js
+  //     21  src/shared/utils/jwtValidator.test.js
+  //     12  src/shared/utils/jwtValidator.integration.test.js
+  //     11  src/domains/profile/services/profileInitService.test.js
+  //     11  src/shared/utils/crypto.test.js
+  //      8  src/domains/search/utils/searchRequestValidator.test.js
+  //      8  src/shared/utils/credentialValidator.test.js
+  //      4  src/domains/search/utils/searchStateManager.test.js
+  //      4  src/domains/session/services/browserSessionManager.test.js
+  //      3  src/domains/profile/utils/profileInitMonitor.test.js
+  //      3  src/domains/profile/utils/profileMarkdownGenerator.test.js
+  //      1  src/domains/profile/utils/profileInitStateManager.test.js
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vitest/globals", "node"],
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": [
+    "src/test-utils/**/*",
+    "src/types/**/*.d.ts",
+    "src/credentials/configStore.test.ts",
+    "src/credentials/credentialStore.test.ts",
+    "src/domains/automation/utils/backoffController.test.ts",
+    "src/domains/automation/utils/fingerprintProfile.test.ts",
+    "src/domains/automation/utils/rateLimiter.test.ts",
+    "src/domains/automation/utils/seededRandom.test.ts",
+    "src/domains/automation/utils/selectorRegistry.test.ts",
+    "src/domains/automation/utils/selectorResolver.test.ts",
+    "src/domains/automation/utils/sessionMetrics.test.ts",
+    "src/domains/automation/utils/signalDetector.test.ts",
+    "src/domains/automation/utils/stealthScripts.test.ts",
+    "src/domains/github/controllers/githubController.test.ts",
+    "src/domains/github/services/githubApiService.test.ts",
+    "src/domains/github/services/githubOAuthService.test.ts",
+    "src/domains/linkedin/selectors/connectionSelectors.test.ts",
+    "src/domains/linkedin/selectors/feedSelectors.test.ts",
+    "src/domains/linkedin/selectors/index.test.ts",
+    "src/domains/linkedin/selectors/messagingSelectors.test.ts",
+    "src/domains/linkedin/selectors/navigationSelectors.test.ts",
+    "src/domains/linkedin/selectors/postSelectors.test.ts",
+    "src/domains/linkedin/selectors/profileSelectors.test.ts",
+    "src/domains/linkedin/selectors/searchSelectors.test.ts",
+    "src/domains/linkedin/services/commentConciergeOrchestrator.test.ts",
+    "src/domains/linkedin/services/contentExtractor.test.ts",
+    "src/domains/linkedin/services/linkedinCommentOps.test.ts",
+    "src/domains/linkedin/services/linkedinFeedScraper.test.ts",
+    "src/domains/linkedin/services/linkFollowingService.test.ts",
+    "src/domains/linkedin/services/mutualConnectionsCollector.test.ts",
+    "src/domains/linkedin/utils/linkedinErrorHandler.test.ts",
+    "src/domains/profile/services/profileBatchProcessing.test.ts",
+    "src/domains/ragstack/services/ragstackProxyService.test.ts",
+    "src/domains/storage/services/dynamoDBService.test.ts",
+    "src/lifecycle/updatePrompt.test.ts",
+    "src/lifecycle/updateStatus.test.ts",
+    "src/shared/middleware/rateLimiter.test.ts",
+    "src/shared/middleware/redisRateLimiter.test.ts",
+    "src/shared/services/notificationService.test.ts",
+    "src/shared/utils/logger.test.ts",
+    "src/domains/automation/utils/burstThrottleManager.test.js",
+    "src/domains/linkedin/utils/linkedinAuditLogger.test.js",
+    "src/shared/config/envHelpers.test.js",
+    "src/smoke.test.js"
+  ],
+  "exclude": []
+}

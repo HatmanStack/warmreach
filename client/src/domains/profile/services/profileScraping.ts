@@ -9,6 +9,7 @@ import { logger } from '#utils/logger.js';
 import { config } from '#shared-config/index.js';
 import { LinkedInErrorHandler } from '../../linkedin/utils/linkedinErrorHandler.js';
 import type { MasterIndex, ProfileInitService } from './profileInitService.js';
+import type { ProfileInitState } from '../types/profileInit.js';
 
 /**
  * Error details from categorization
@@ -24,20 +25,6 @@ interface ErrorDetails {
   httpStatus?: number;
   message?: string;
   suggestions?: string[];
-}
-
-/**
- * Profile init state (minimal needed for scraping)
- */
-interface ProfileInitState {
-  requestId?: string;
-  jwtToken?: string;
-  currentBatch?: number;
-  currentIndex?: number;
-  currentProcessingList?: string;
-  /** Consent flag (from the profile-init payload) enabling mutual collection. */
-  collectMutuals?: boolean;
-  [key: string]: unknown;
 }
 
 /**
@@ -137,7 +124,7 @@ export async function processConnection(
             });
 
             // Consented mutual-connections collection, piggybacked on this
-            // scrape (ADR-7). A strict no-op unless collectMutuals is set and a
+            // scrape (ADR-014). A strict no-op unless collectMutuals is set and a
             // collector is injected; never throws into the ingestion loop.
             await collectMutualConnections(service, connectionProfileId, state);
           } else if (!needsScrape) {
@@ -269,8 +256,8 @@ export async function processConnection(
  * Collect the mutual connections shared with a contact and persist each as a
  * private, per-user adjacency edge (contact <-> shared connection).
  *
- * Consent-gated (ADR-6) and piggybacked on the contact's profile scrape
- * (ADR-7): a strict no-op unless `state.collectMutuals` is true AND a collector
+ * Consent-gated (ADR-013) and piggybacked on the contact's profile scrape
+ * (ADR-014): a strict no-op unless `state.collectMutuals` is true AND a collector
  * is injected on the service. Tie strength is a neutral constant on the backend,
  * so only the discovered edge is sent. Never throws into the ingestion loop —
  * collection and per-edge persistence failures are logged and swallowed.

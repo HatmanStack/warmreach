@@ -90,6 +90,7 @@ describe('CommandService', () => {
         expect(mockPost).toHaveBeenCalledWith('linkedin-actions', {
           type,
           payload: { recipientProfileId: 'p1' },
+          idempotencyKey: expect.any(String),
         });
       }
     });
@@ -108,6 +109,71 @@ describe('CommandService', () => {
         'commands',
         expect.objectContaining({ type: 'linkedin:profile-init' })
       );
+    });
+  });
+
+  describe('idempotency key', () => {
+    const keyOf = (call: unknown[]) => (call[1] as { idempotencyKey?: string }).idempotencyKey;
+
+    it('reuses one key across retries of the same action, so a manual retry cannot duplicate it', async () => {
+      mockPost.mockResolvedValueOnce({
+        success: false,
+        error: { message: 'Dispatch unavailable' },
+      });
+      await expect(
+        commandService.dispatch('linkedin:add-connection', { recipientProfileId: 'p1' })
+      ).rejects.toThrow();
+
+      mockPost.mockResolvedValueOnce({ success: true, data: { commandId: 'c1' } });
+      await commandService.dispatch('linkedin:add-connection', { recipientProfileId: 'p1' });
+
+      expect(keyOf(mockPost.mock.calls[0]!)).toBe(keyOf(mockPost.mock.calls[1]!));
+      expect(keyOf(mockPost.mock.calls[0]!)).toBeTruthy();
+    });
+
+    it('issues a fresh key once an action has landed, so a deliberate repeat is not blocked', async () => {
+      mockPost.mockResolvedValue({ success: true, data: { commandId: 'c' } });
+
+      await commandService.dispatch('linkedin:follow-profile', { profileId: 'p2' });
+      await commandService.dispatch('linkedin:follow-profile', { profileId: 'p2' });
+
+      expect(keyOf(mockPost.mock.calls[0]!)).not.toBe(keyOf(mockPost.mock.calls[1]!));
+    });
+
+    it('gives distinct actions distinct keys', async () => {
+      mockPost.mockResolvedValue({ success: false, error: { message: 'boom' } });
+
+      await expect(
+        commandService.dispatch('linkedin:send-message', { recipientProfileId: 'a' })
+      ).rejects.toThrow();
+      await expect(
+        commandService.dispatch('linkedin:send-message', { recipientProfileId: 'b' })
+      ).rejects.toThrow();
+
+      expect(keyOf(mockPost.mock.calls[0]!)).not.toBe(keyOf(mockPost.mock.calls[1]!));
+    });
+
+    it('does not attach a key to unmetered /commands dispatches', async () => {
+      mockPost.mockResolvedValue({ success: true, data: { commandId: 'c' } });
+
+      await commandService.dispatch('linkedin:search', { query: 'x' });
+
+      expect(mockPost).toHaveBeenCalledWith('commands', {
+        type: 'linkedin:search',
+        payload: { query: 'x' },
+      });
+    });
+
+    it('does not grow the pending-key map without bound', async () => {
+      mockPost.mockResolvedValue({ success: false, error: { message: 'boom' } });
+
+      for (let i = 0; i < 120; i++) {
+        await expect(
+          commandService.dispatch('linkedin:add-connection', { recipientProfileId: `bulk-${i}` })
+        ).rejects.toThrow();
+      }
+
+      expect(commandService.pendingIdempotencyKeyCount).toBeLessThanOrEqual(50);
     });
   });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { SelectorRegistry, SelectorCascade, SelectorStrategy } from './selectorRegistry';
+import type { SelectorRegistry, SelectorCascade, SelectorStrategy } from './selectorRegistry.js';
 
 describe('selectorRegistry types', () => {
   it('should allow defining registry objects', () => {

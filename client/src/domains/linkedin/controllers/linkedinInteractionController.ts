@@ -41,10 +41,11 @@ const _controlPlaneService = new ControlPlaneService();
 
 /**
  * Helper to access the jwtToken property set by middleware on Express requests.
- * The middleware (in routes/linkedinInteractionRoutes.js) assigns req.jwtToken.
+ * The middleware (in routes/linkedinInteractionRoutes.js) assigns req.jwtToken;
+ * `src/types/express.d.ts` declares it, so this no longer needs a double-cast.
  */
 function getJwtToken(req: Request): string | undefined {
-  return (req as unknown as Record<string, unknown>).jwtToken as string | undefined;
+  return req.jwtToken;
 }
 
 /** Narrow an unknown caught value to an Error-like shape for logging. */
@@ -155,22 +156,11 @@ export class LinkedInInteractionController {
           controlPlaneService: _controlPlaneService,
         });
 
-        try {
-          await this._ensureLinkedInAuth(
-            linkedinService,
-            req.body?.linkedinCredentialsCiphertext,
-            'sendMessage'
-          );
-        } catch (loginErr: unknown) {
-          const loginError = toError(loginErr);
-          logger.error('LinkedIn login failed during message send', {
-            error: loginError.message,
-            stack: loginError.stack,
-          });
-          throw new Error(
-            `Login required but failed to authenticate to LinkedIn: ${loginError.message}`
-          );
-        }
+        await this._ensureLinkedInAuth(
+          linkedinService,
+          req.body?.linkedinCredentialsCiphertext,
+          'sendMessage'
+        );
 
         logger.info('Attempting to send LinkedIn message', {
           requestId,
@@ -313,22 +303,11 @@ export class LinkedInInteractionController {
           controlPlaneService: _controlPlaneService,
         });
 
-        try {
-          await this._ensureLinkedInAuth(
-            linkedinService,
-            req.body?.linkedinCredentialsCiphertext,
-            'addConnection'
-          );
-        } catch (loginErr: unknown) {
-          const loginError = toError(loginErr);
-          logger.error('LinkedIn login failed during connection request', {
-            error: loginError.message,
-            stack: loginError.stack,
-          });
-          throw new Error(
-            `Login required but failed to authenticate to LinkedIn: ${loginError.message}`
-          );
-        }
+        await this._ensureLinkedInAuth(
+          linkedinService,
+          req.body?.linkedinCredentialsCiphertext,
+          'addConnection'
+        );
 
         logger.info('Attempting to send LinkedIn connection request', {
           requestId,
@@ -531,22 +510,11 @@ export class LinkedInInteractionController {
           controlPlaneService: _controlPlaneService,
         });
 
-        try {
-          await this._ensureLinkedInAuth(
-            linkedinService,
-            req.body?.linkedinCredentialsCiphertext,
-            'followProfile'
-          );
-        } catch (loginErr: unknown) {
-          const loginError = toError(loginErr);
-          logger.error('LinkedIn login failed during follow profile', {
-            error: loginError.message,
-            stack: loginError.stack,
-          });
-          throw new Error(
-            `Login required but failed to authenticate to LinkedIn: ${loginError.message}`
-          );
-        }
+        await this._ensureLinkedInAuth(
+          linkedinService,
+          req.body?.linkedinCredentialsCiphertext,
+          'followProfile'
+        );
 
         logger.info('Attempting to follow LinkedIn profile', { requestId, profileId, userId });
         return await linkedinService.followProfile(profileId, { jwtToken: getJwtToken(req) });
@@ -622,7 +590,27 @@ export class LinkedInInteractionController {
   ): Promise<void> {
     // Auth/session lifecycle lives in the service (HIGH #19) — delegate to its
     // typed method instead of driving login from the controller.
-    await linkedinService.ensureAuthenticated(credentialsCiphertext ?? null, operationName);
+    //
+    // The logging and message wrapping live HERE rather than at each call site.
+    // They used to be duplicated in the three Express handlers and simply absent
+    // from the three *Direct handlers — so on the WS/commandRouter path, which is
+    // the primary transport, an auth failure surfaced whatever raw text
+    // ensureAuthenticated happened to throw and the operation-specific log line
+    // was lost, leaving only the router's generic `Command <id> failed`. Every
+    // caller already passes operationName, which is exactly what the message
+    // needs, so centralising it also stops a seventh call site drifting again.
+    try {
+      await linkedinService.ensureAuthenticated(credentialsCiphertext ?? null, operationName);
+    } catch (loginErr: unknown) {
+      const loginError = toError(loginErr);
+      logger.error(`LinkedIn login failed during ${operationName}`, {
+        error: loginError.message,
+        stack: loginError.stack,
+      });
+      throw new Error(
+        `Login required but failed to authenticate to LinkedIn: ${loginError.message}`
+      );
+    }
   }
 
   /**
@@ -721,20 +709,22 @@ export class LinkedInInteractionController {
       throw err;
     }
 
-    const meta = { type: 'send-message', requestId, userId, recipientProfileId };
-    const result = await linkedInInteractionQueue.enqueue(async () => {
-      const linkedinService = new LinkedInInteractionService({
-        controlPlaneService: _controlPlaneService,
-      });
+    // Not enqueued here: commandRouter serializes every browser-driving route
+    // at dispatch (its per-route `browser` flag). linkedInInteractionQueue has
+    // concurrency 1 and is not reentrant, so enqueueing again inside a job the
+    // router already enqueued would deadlock the command. The Express routes
+    // above still enqueue, because they do not pass through the router.
+    const linkedinService = new LinkedInInteractionService({
+      controlPlaneService: _controlPlaneService,
+    });
 
-      await this._ensureLinkedInAuth(
-        linkedinService,
-        payload.linkedinCredentialsCiphertext,
-        'sendMessageDirect'
-      );
+    await this._ensureLinkedInAuth(
+      linkedinService,
+      payload.linkedinCredentialsCiphertext,
+      'sendMessageDirect'
+    );
 
-      return await linkedinService.sendMessage(recipientProfileId, messageContent, userId);
-    }, meta);
+    const result = await linkedinService.sendMessage(recipientProfileId, messageContent, userId);
 
     return {
       statusCode: 200,
@@ -782,22 +772,20 @@ export class LinkedInInteractionController {
       throw err;
     }
 
-    const meta = { type: 'add-connection', requestId, userId, profileId };
-    const result = await linkedInInteractionQueue.enqueue(async () => {
-      const linkedinService = new LinkedInInteractionService({
-        controlPlaneService: _controlPlaneService,
-      });
+    // Serialized by commandRouter, not here — see sendMessageDirect.
+    const linkedinService = new LinkedInInteractionService({
+      controlPlaneService: _controlPlaneService,
+    });
 
-      await this._ensureLinkedInAuth(
-        linkedinService,
-        payload.linkedinCredentialsCiphertext,
-        'addConnectionDirect'
-      );
+    await this._ensureLinkedInAuth(
+      linkedinService,
+      payload.linkedinCredentialsCiphertext,
+      'addConnectionDirect'
+    );
 
-      return await linkedinService.executeConnectionWorkflow(profileId, '', {
-        jwtToken: payload.jwtToken,
-      });
-    }, meta);
+    const result = await linkedinService.executeConnectionWorkflow(profileId, '', {
+      jwtToken: payload.jwtToken,
+    });
 
     return {
       statusCode: 200,
@@ -847,20 +835,20 @@ export class LinkedInInteractionController {
       throw err;
     }
 
-    const meta = { type: 'follow-profile', requestId, userId, profileId };
-    const result = await linkedInInteractionQueue.enqueue(async () => {
-      const linkedinService = new LinkedInInteractionService({
-        controlPlaneService: _controlPlaneService,
-      });
+    // Serialized by commandRouter, not here — see sendMessageDirect.
+    const linkedinService = new LinkedInInteractionService({
+      controlPlaneService: _controlPlaneService,
+    });
 
-      await this._ensureLinkedInAuth(
-        linkedinService,
-        payload.linkedinCredentialsCiphertext,
-        'followProfileDirect'
-      );
+    await this._ensureLinkedInAuth(
+      linkedinService,
+      payload.linkedinCredentialsCiphertext,
+      'followProfileDirect'
+    );
 
-      return await linkedinService.followProfile(profileId, { jwtToken: payload.jwtToken });
-    }, meta);
+    const result = await linkedinService.followProfile(profileId, {
+      jwtToken: payload.jwtToken,
+    });
 
     return {
       statusCode: 200,

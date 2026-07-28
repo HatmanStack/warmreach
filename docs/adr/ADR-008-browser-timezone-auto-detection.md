@@ -8,7 +8,7 @@ Accepted
 
 Send-time recommendations and digest scheduling need the user's timezone. Asking the user to select a timezone at onboarding adds friction, and `Intl.DateTimeFormat().resolvedOptions().timeZone` is reliable across every browser the frontend supports.
 
-The cited site is `frontend/src/features/profile/contexts/UserProfileContext.tsx:55`:
+The cited site is `frontend/src/features/profile/contexts/UserProfileContext.tsx:91`:
 
 ```tsx
 // Auto-detect timezone and save if not yet set or changed (ADR-008)

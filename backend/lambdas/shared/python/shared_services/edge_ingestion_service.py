@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -9,10 +10,19 @@ from shared_services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
+# Imported through an alias and then re-bound under an explicit annotation. Binding
+# `None` onto the imported name directly made mypy infer the non-Optional type from
+# the successful import, which silently made the `is None` guard below unreachable —
+# the fallback the try/except exists to serve was never type-checked at all.
+_generate_profile_markdown: Callable[[dict[str, Any]], str] | None
 try:
-    from utils.profile_markdown import generate_profile_markdown
+    from utils.profile_markdown import generate_profile_markdown as _imported_markdown
+
+    _generate_profile_markdown = _imported_markdown
 except ImportError:
-    generate_profile_markdown = None
+    _generate_profile_markdown = None
+
+generate_profile_markdown: Callable[[dict[str, Any]], str] | None = _generate_profile_markdown
 
 
 class EdgeIngestionService(BaseService):

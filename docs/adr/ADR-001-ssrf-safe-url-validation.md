@@ -8,7 +8,7 @@ Accepted
 
 `DynamoDBAPIService` accepts user-supplied URLs (profile links, avatar URLs) that are later fetched from Lambda. A full DNS-resolving validator is vulnerable to DNS-rebinding and time-of-check/time-of-use races, and also adds network latency to a hot path.
 
-The cited site is `backend/lambdas/dynamodb-api/services/dynamodb_api_service.py:356`:
+The cited site is `backend/lambdas/dynamodb-api/services/dynamodb_api_service.py:401`:
 
 ```python
 def _is_safe_url(self, url: str) -> bool:

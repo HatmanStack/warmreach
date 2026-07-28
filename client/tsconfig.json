@@ -5,7 +5,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "allowJs": true,
-    "checkJs": false,
+    "checkJs": true,
     "strict": true,
     "outDir": "./dist",
     "rootDir": ".",
@@ -32,6 +32,6 @@
     },
     "baseUrl": "."
   },
-  "include": ["src/**/*", "config/**/*", "routes/**/*"],
+  "include": ["src/**/*", "config/**/*", "routes/**/*", "electron-main.js"],
   "exclude": ["node_modules", "dist", "**/*.test.js", "**/*.test.ts"]
 }

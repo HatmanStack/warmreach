@@ -484,9 +484,9 @@ class ChecklistUpdate(TypedDict, total=False):
 
 
 class OpportunityActionItem(TypedDict, total=False):
-    """USER#{sub} | ACTION#{uuid} — a durable proposed/executing agent action (ADR-1).
+    """USER#{sub} | ACTION#{uuid} — a durable proposed/executing agent action (ADR-016).
 
-    GSI1 keys (ADR-2): GSI1PK=USER#{sub}#ACTIONS, GSI1SK={status}#{notBefore}#{uuid}.
+    GSI1 keys (ADR-017): GSI1PK=USER#{sub}#ACTIONS, GSI1SK={status}#{notBefore}#{uuid}.
     """
 
     PK: str
@@ -511,7 +511,7 @@ class OpportunityActionItem(TypedDict, total=False):
 
 
 class AgentConfigItem(TypedDict, total=False):
-    """USER#{sub} | AGENTCFG#{opportunityId} or AGENTCFG#global (ADR-9).
+    """USER#{sub} | AGENTCFG#{opportunityId} or AGENTCFG#global (ADR-024).
 
     Per-opportunity autonomy config and the global agent controls. Distinct SK
     prefix keeps these siblings out of the begins_with(SK, 'OPPORTUNITY#') list.

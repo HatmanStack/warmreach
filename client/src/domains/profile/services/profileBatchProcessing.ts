@@ -14,6 +14,7 @@ import { processConnection, isConnectionLevelError } from './profileScraping.js'
 import fs from 'fs/promises';
 import path from 'path';
 import type { MasterIndex, ProfileInitService } from './profileInitService.js';
+import type { ProfileInitState } from '../types/profileInit.js';
 import type { ConnectionType } from '../../linkedin/services/linkedinService.js';
 
 /**
@@ -25,20 +26,6 @@ interface ErrorDetails {
   severity?: string;
   isRecoverable?: boolean;
   skipConnection?: boolean;
-}
-
-/**
- * Profile init state
- */
-interface ProfileInitState {
-  requestId?: string;
-  jwtToken?: string;
-  currentBatch?: number;
-  currentIndex?: number;
-  currentProcessingList?: string;
-  completedBatches?: number[];
-  recursionCount?: number;
-  [key: string]: unknown;
 }
 
 /**

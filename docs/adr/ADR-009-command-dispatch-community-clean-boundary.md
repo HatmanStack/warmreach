@@ -21,13 +21,14 @@ calls the same core.
 
 The invariant was originally cited in code as `ADR-8`. That marker collides with
 `docs/adr/ADR-008` (browser-side timezone auto-detection), which is unrelated:
-the code's informal `ADR-N` markers are the B-2 agent plan decision log, a
-different numbering scheme from this directory. This ADR gives the invariant a
-real record; its citations now use the three-digit `ADR-009` form. The B-2 plan's
-own `ADR-8` (pro/community sync boundary) and `ADR-9` (pro `AGENTCFG#global`
-config) are a distinct, broader decision — the code marks those `B-2 ADR-8` /
-`B-2 ADR-9` so they stay traceable to the plan log without colliding with this
-directory.
+the code's informal `ADR-N` markers were the agent plan's decision log, a
+different numbering scheme from this directory. This ADR gave the invariant a
+real record and its citations use the three-digit `ADR-009` form. The two
+neighbouring plan decisions — the pro/community sync boundary and the pro
+`AGENTCFG#global` config — have since been promoted here too, as
+[ADR-023](./ADR-023-pro-agent-logic-stays-out-of-verbatim-files.md) and
+[ADR-024](./ADR-024-agent-config-lives-on-agentcfg-items.md); no short-form
+numeric marker survives anywhere in the tree.
 
 The core states the rule in its own docstring
 (`backend/lambdas/shared/python/shared_services/command_dispatch_core.py`):
@@ -60,10 +61,9 @@ Because both gates funnel into the same agent-agnostic core but each reserves
 exactly once, a real LinkedIn action is metered exactly once and is never
 double-sent.
 
-The informal `ADR-N` markers elsewhere in the B-2 agent code (for example
-`ADR-B`, `ADR-4`) refer to the B-2 agent plan decision log under
-`docs/plans/2026-07-19-b2-open-claw/`, not to this `docs/adr` directory. Only the
-three-digit `ADR-NNN` form used here resolves to a file in `docs/adr`.
+Every decision the agent code cites now has a record in this directory, in the
+three-digit `ADR-NNN` form. `docs/plans/` is working notes and is excluded from
+the community edition, so it is not a citable target.
 
 ## Consequences
 
@@ -77,6 +77,6 @@ three-digit `ADR-NNN` form used here resolves to a file in `docs/adr`.
   agent-disconnected).
 - Any future change near the core must keep it free of pro/agent/quota imports;
   a static import check guards this in the core's test module.
-- The `ADR-8` marker for this boundary has been replaced in code by `ADR-009`,
-  which resolves to this file and no longer collides with the B-2 plan decision
-  log.
+- The `ADR-8` marker for this boundary was replaced in code by `ADR-009`, which
+  resolves to this file. `scripts/check-doc-tables.py` now fails any citation
+  that does not resolve, so the collision cannot recur.

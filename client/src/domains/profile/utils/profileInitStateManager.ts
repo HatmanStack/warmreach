@@ -1,4 +1,24 @@
-type ProfileInitParams = Record<string, any>;
+import type {
+  BatchProgressUpdate,
+  HealingParams,
+  ListCreationProgressUpdate,
+  ListCreationResumeParams,
+  ListCreationState,
+  ProfileInitState,
+  ProgressSummary,
+} from '../types/profileInit.js';
+
+/**
+ * Arguments accepted by {@link ProfileInitStateManager.buildInitialState}.
+ * Everything the state carries is optional here; the builder supplies defaults
+ * and passes any extra keys through untouched.
+ */
+export type ProfileInitParams = ProfileInitState;
+
+/** Master-index shape read by {@link createListCreationHealingState}. */
+interface MasterIndexFiles {
+  files?: Record<string, string[] | undefined>;
+}
 
 export class ProfileInitStateManager {
   static buildInitialState({
@@ -19,7 +39,7 @@ export class ProfileInitStateManager {
     userProfileId = null,
     sessionId = null,
     ...opts
-  }: ProfileInitParams): Record<string, unknown> {
+  }: ProfileInitParams): ProfileInitState {
     return {
       searchName,
       searchPassword,
@@ -44,14 +64,14 @@ export class ProfileInitStateManager {
 
   /**
    * Build state for healing/recovery scenarios
-   * @param {Object} existingState - Current state
-   * @param {Object} healingParams - Healing parameters
-   * @returns {Object} Updated state for healing
+   * @param existingState - Current state
+   * @param healingParams - Healing parameters
+   * @returns Updated state for healing
    */
   static buildHealingState(
-    existingState: Record<string, any>,
-    healingParams: Record<string, any>
-  ): Record<string, unknown> {
+    existingState: ProfileInitState,
+    healingParams: HealingParams
+  ): ProfileInitState {
     return {
       ...existingState,
       recursionCount: (existingState.recursionCount || 0) + 1,
@@ -69,14 +89,14 @@ export class ProfileInitStateManager {
 
   /**
    * Update state with batch processing progress
-   * @param {Object} state - Current state
-   * @param {Object} progress - Progress update
-   * @returns {Object} Updated state
+   * @param state - Current state
+   * @param progress - Progress update
+   * @returns Updated state
    */
   static updateBatchProgress(
-    state: Record<string, any>,
-    progress: Record<string, any>
-  ): Record<string, unknown> {
+    state: ProfileInitState,
+    progress: BatchProgressUpdate
+  ): ProfileInitState {
     return {
       ...state,
       currentProcessingList: progress.currentProcessingList || state.currentProcessingList,
@@ -92,10 +112,10 @@ export class ProfileInitStateManager {
 
   /**
    * Validate required state fields
-   * @param {Object} state - State to validate
+   * @param state - State to validate
    * @throws {Error} If validation fails
    */
-  static validateState(state: Record<string, any>): void {
+  static validateState(state: ProfileInitState): void {
     const hasPlain = !!(state.searchName && state.searchPassword);
     const hasCipher =
       typeof state.credentialsCiphertext === 'string' &&
@@ -138,33 +158,33 @@ export class ProfileInitStateManager {
 
   /**
    * Check if state indicates a healing scenario
-   * @param {Object} state - State to check
-   * @returns {boolean} True if healing is in progress
+   * @param state - State to check
+   * @returns True if healing is in progress
    */
-  static isHealingState(state: Record<string, any>): boolean {
+  static isHealingState(state: ProfileInitState): boolean {
     return !!(state.healPhase && state.healReason);
   }
 
   /**
    * Check if state indicates resumption from a previous session
-   * @param {Object} state - State to check
-   * @returns {boolean} True if resuming
+   * @param state - State to check
+   * @returns True if resuming
    */
-  static isResumingState(state: Record<string, any>): boolean {
+  static isResumingState(state: ProfileInitState): boolean {
     return !!(
       state.masterIndexFile ||
-      state.currentBatch > 0 ||
-      state.currentIndex > 0 ||
+      (state.currentBatch ?? 0) > 0 ||
+      (state.currentIndex ?? 0) > 0 ||
       (state.completedBatches && state.completedBatches.length > 0)
     );
   }
 
   /**
    * Get progress summary from state
-   * @param {Object} state - Current state
-   * @returns {Object} Progress summary
+   * @param state - Current state
+   * @returns Progress summary
    */
-  static getProgressSummary(state: Record<string, any>): Record<string, unknown> {
+  static getProgressSummary(state: ProfileInitState): ProgressSummary {
     const totalExpectedConnections = (
       Object.values(state.totalConnections || {}) as number[]
     ).reduce((sum: number, count: number) => sum + count, 0);
@@ -196,18 +216,18 @@ export class ProfileInitStateManager {
 
   /**
    * Create state for specific healing scenarios
-   * @param {Object} baseState - Base state
-   * @param {string} healPhase - Healing phase identifier
-   * @param {string} healReason - Reason for healing
-   * @param {Object} additionalParams - Additional healing parameters
-   * @returns {Object} Healing state
+   * @param baseState - Base state
+   * @param healPhase - Healing phase identifier
+   * @param healReason - Reason for healing
+   * @param additionalParams - Additional healing parameters
+   * @returns Healing state
    */
   static createHealingState(
-    baseState: Record<string, any>,
+    baseState: ProfileInitState,
     healPhase: string,
     healReason: string,
-    additionalParams: Record<string, any> = {}
-  ): Record<string, unknown> {
+    additionalParams: HealingParams = {}
+  ): ProfileInitState {
     return this.buildHealingState(baseState, {
       healPhase,
       healReason,
@@ -217,22 +237,22 @@ export class ProfileInitStateManager {
 
   /**
    * Create healing state for list creation scenarios
-   * @param {Object} baseState - Base state
-   * @param {string} connectionType - Type of connection being collected (ally, incoming, outgoing)
-   * @param {number} expansionAttempt - Current expansion attempt number
-   * @param {number} currentFileIndex - Current file index being written
-   * @param {Object} masterIndex - Current master index state
-   * @param {string} healReason - Reason for healing
-   * @returns {Object} List creation healing state
+   * @param baseState - Base state
+   * @param connectionType - Type of connection being collected (ally, incoming, outgoing)
+   * @param expansionAttempt - Current expansion attempt number
+   * @param currentFileIndex - Current file index being written
+   * @param masterIndex - Current master index state
+   * @param healReason - Reason for healing
+   * @returns List creation healing state
    */
   static createListCreationHealingState(
-    baseState: Record<string, any>,
+    baseState: ProfileInitState,
     connectionType: string,
     expansionAttempt: number,
     currentFileIndex: number,
-    masterIndex: Record<string, any>,
+    masterIndex: MasterIndexFiles,
     healReason: string
-  ): Record<string, unknown> {
+  ): ProfileInitState {
     return {
       ...baseState,
       recursionCount: (baseState.recursionCount || 0) + 1,
@@ -253,30 +273,30 @@ export class ProfileInitStateManager {
 
   /**
    * Update state with list creation progress
-   * @param {Object} state - Current state
-   * @param {Object} progress - Progress update
-   * @returns {Object} Updated state
+   * @param state - Current state
+   * @param progress - Progress update
+   * @returns Updated state
    */
   static updateListCreationProgress(
-    state: Record<string, any>,
-    progress: Record<string, any>
-  ): Record<string, unknown> {
+    state: ProfileInitState,
+    progress: ListCreationProgressUpdate
+  ): ProfileInitState {
+    const listCreationState: ListCreationState = state.listCreationState ?? {};
     return {
       ...state,
       currentProcessingList: progress.connectionType || state.currentProcessingList,
       listCreationState: {
-        ...state.listCreationState,
+        ...listCreationState,
         expansionAttempt:
           progress.expansionAttempt !== undefined
             ? progress.expansionAttempt
-            : state.listCreationState?.expansionAttempt,
+            : listCreationState.expansionAttempt,
         currentFileIndex:
           progress.currentFileIndex !== undefined
             ? progress.currentFileIndex
-            : state.listCreationState?.currentFileIndex,
-        lastSavedFile: progress.lastSavedFile || state.listCreationState?.lastSavedFile,
-        totalLinksCollected:
-          progress.totalLinksCollected || state.listCreationState?.totalLinksCollected,
+            : listCreationState.currentFileIndex,
+        lastSavedFile: progress.lastSavedFile || listCreationState.lastSavedFile,
+        totalLinksCollected: progress.totalLinksCollected || listCreationState.totalLinksCollected,
       },
       timestamp: new Date().toISOString(),
     };
@@ -284,40 +304,42 @@ export class ProfileInitStateManager {
 
   /**
    * Check if state indicates list creation healing
-   * @param {Object} state - State to check
-   * @returns {boolean} True if list creation healing is in progress
+   * @param state - State to check
+   * @returns True if list creation healing is in progress
    */
-  static isListCreationHealingState(state: Record<string, any>): boolean {
+  static isListCreationHealingState(state: ProfileInitState): boolean {
     return state.healPhase === 'list-creation' && !!state.listCreationState;
   }
 
   /**
    * Get list creation resume parameters from healing state
-   * @param {Object} state - Healing state
-   * @returns {Object} Resume parameters for list creation
+   * @param state - Healing state
+   * @returns Resume parameters for list creation
    */
-  static getListCreationResumeParams(state: Record<string, any>): Record<string, unknown> | null {
+  static getListCreationResumeParams(state: ProfileInitState): ListCreationResumeParams | null {
     if (!this.isListCreationHealingState(state)) {
       return null;
     }
+    // isListCreationHealingState guarantees listCreationState is set.
+    const listCreationState = state.listCreationState as ListCreationState;
 
     return {
-      connectionType: state.listCreationState.connectionType,
-      expansionAttempt: state.listCreationState.expansionAttempt || 0,
-      currentFileIndex: state.listCreationState.currentFileIndex || 0,
-      masterIndexFile: state.listCreationState.masterIndexFile,
-      lastSavedFile: state.listCreationState.lastSavedFile,
-      resumeFromExpansion: state.listCreationState.resumeFromExpansion || false,
-      totalLinksCollected: state.listCreationState.totalLinksCollected || 0,
+      connectionType: listCreationState.connectionType,
+      expansionAttempt: listCreationState.expansionAttempt || 0,
+      currentFileIndex: listCreationState.currentFileIndex || 0,
+      masterIndexFile: listCreationState.masterIndexFile,
+      lastSavedFile: listCreationState.lastSavedFile,
+      resumeFromExpansion: listCreationState.resumeFromExpansion || false,
+      totalLinksCollected: listCreationState.totalLinksCollected || 0,
     };
   }
 
   /**
    * Reset state for fresh start while preserving authentication
-   * @param {Object} state - Current state
-   * @returns {Object} Reset state
+   * @param state - Current state
+   * @returns Reset state
    */
-  static resetProcessingState(state: Record<string, any>): Record<string, unknown> {
+  static resetProcessingState(state: ProfileInitState): ProfileInitState {
     return {
       ...state,
       currentProcessingList: 'ally',

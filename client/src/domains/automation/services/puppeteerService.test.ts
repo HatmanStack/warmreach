@@ -3,10 +3,11 @@ import {
   PuppeteerService,
   BrowserLaunchTimeoutError,
   PUPPETEER_LAUNCH_TIMEOUT_MS,
-} from './puppeteerService';
-import * as fingerprintProfile from '../utils/fingerprintProfile';
+} from './puppeteerService.js';
+import * as fingerprintProfile from '../utils/fingerprintProfile.js';
 import config from '#shared-config/index.js';
 import { logger } from '#utils/logger.js';
+import { asPuppeteerBrowser } from '../../../test-utils/mocks.js';
 
 const mockPage = {
   setViewport: vi.fn(),
@@ -16,6 +17,8 @@ const mockPage = {
   on: vi.fn(),
   off: vi.fn(),
   setRequestInterception: vi.fn(),
+  // Present so the "does not call removeAllListeners" test can assert on it.
+  removeAllListeners: vi.fn(),
 };
 
 const mockBrowser = {
@@ -66,7 +69,7 @@ describe('PuppeteerService', () => {
     mockBrowser.close.mockResolvedValue(undefined);
 
     const puppeteer = await import('puppeteer');
-    vi.mocked(puppeteer.default.launch).mockResolvedValue(mockBrowser as any);
+    vi.mocked(puppeteer.default.launch).mockResolvedValue(asPuppeteerBrowser(mockBrowser));
 
     service = new PuppeteerService();
     config.puppeteer.enableFingerprintNoise = true;
@@ -77,7 +80,10 @@ describe('PuppeteerService', () => {
   });
 
   it('uses fingerprint profile if available', async () => {
-    const mockProfile = {
+    const mockProfile: fingerprintProfile.FingerprintProfile = {
+      version: 1,
+      createdAt: new Date().toISOString(),
+      seed: 'mock-seed',
       userAgent: 'Mock UA',
       canvasNoiseSeed: 123,
       audioNoiseSeed: 456,
@@ -89,7 +95,7 @@ describe('PuppeteerService', () => {
       rotatedAt: new Date().toISOString(),
       rotationIntervalDays: 30,
     };
-    vi.mocked(fingerprintProfile.loadOrCreateProfile).mockResolvedValue(mockProfile as any);
+    vi.mocked(fingerprintProfile.loadOrCreateProfile).mockResolvedValue(mockProfile);
 
     const page = await service.initialize();
 
@@ -129,7 +135,7 @@ describe('PuppeteerService', () => {
     const puppeteer = await import('puppeteer');
     await service.initialize();
 
-    const launchArg = vi.mocked(puppeteer.default.launch).mock.calls.at(-1)?.[0] as any;
+    const launchArg = vi.mocked(puppeteer.default.launch).mock.calls.at(-1)?.[0];
     // New headless (shares the real Chrome binary), not the easily-fingerprinted
     // chrome-headless-shell ('shell').
     expect(launchArg.headless).toBe(true);
@@ -160,8 +166,8 @@ describe('PuppeteerService', () => {
 
     const argsOfLastLaunch = async () => {
       const puppeteer = await import('puppeteer');
-      const call = vi.mocked(puppeteer.default.launch).mock.calls.at(-1)?.[0] as any;
-      return call.args as string[];
+      const call = vi.mocked(puppeteer.default.launch).mock.calls.at(-1)?.[0];
+      return call?.args ?? [];
     };
 
     beforeEach(() => {
@@ -263,12 +269,9 @@ describe('PuppeteerService', () => {
 
       await service.initialize();
 
-      // Add removeAllListeners mock to verify it's NOT called
-      (mockPage as any).removeAllListeners = vi.fn();
-
       await service.close();
 
-      expect((mockPage as any).removeAllListeners).not.toHaveBeenCalled();
+      expect(mockPage.removeAllListeners).not.toHaveBeenCalled();
     });
 
     it('passes the stored handler reference to page.off()', async () => {
@@ -339,7 +342,7 @@ describe('PuppeteerService', () => {
 
       const launchCall = vi.mocked(puppeteer.default.launch).mock.calls.at(-1);
       expect(launchCall).toBeTruthy();
-      expect((launchCall?.[0] as any).timeout).toBe(PUPPETEER_LAUNCH_TIMEOUT_MS);
+      expect(launchCall?.[0]?.timeout).toBe(PUPPETEER_LAUNCH_TIMEOUT_MS);
     });
 
     it('throws BrowserLaunchTimeoutError when puppeteer.launch hangs past the deadline', async () => {
@@ -361,6 +364,91 @@ describe('PuppeteerService', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe('late-arriving browser after a launch timeout (HIGH #7)', () => {
+    it('closes the browser that resolves after the timeout already won', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+          throw new Error('No profile');
+        });
+
+        // A launch that resolves only when we say so — after the race is lost.
+        let resolveLaunch: (browser: unknown) => void = () => {};
+        const puppeteer = await import('puppeteer');
+        vi.mocked(puppeteer.default.launch).mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              resolveLaunch = resolve;
+            }) as never
+        );
+
+        const initPromise = service.initialize().catch((e) => e);
+        await vi.advanceTimersByTimeAsync(PUPPETEER_LAUNCH_TIMEOUT_MS + 1);
+        const err = await initPromise;
+        expect(err).toBeInstanceOf(BrowserLaunchTimeoutError);
+
+        // The timeout won, so `this.browser` was never assigned and the
+        // catch -> this.close() teardown had nothing to close. Chromium is
+        // still coming.
+        expect(mockBrowser.close).not.toHaveBeenCalled();
+
+        const lateBrowser = { close: vi.fn().mockResolvedValue(undefined) };
+        resolveLaunch(lateBrowser);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(lateBrowser.close).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('produces no unhandled rejection when the losing launch later rejects', async () => {
+      vi.useFakeTimers();
+      const unhandled = vi.fn();
+      process.on('unhandledRejection', unhandled);
+      try {
+        vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+          throw new Error('No profile');
+        });
+
+        let rejectLaunch: (err: unknown) => void = () => {};
+        const puppeteer = await import('puppeteer');
+        vi.mocked(puppeteer.default.launch).mockImplementation(
+          () =>
+            new Promise((_resolve, reject) => {
+              rejectLaunch = reject;
+            }) as never
+        );
+
+        const initPromise = service.initialize().catch((e) => e);
+        await vi.advanceTimersByTimeAsync(PUPPETEER_LAUNCH_TIMEOUT_MS + 1);
+        await initPromise;
+
+        rejectLaunch(new Error('Chromium failed to start after all'));
+        await vi.advanceTimersByTimeAsync(0);
+        // Give the process a real tick to surface any unhandled rejection.
+        vi.useRealTimers();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(unhandled).not.toHaveBeenCalled();
+      } finally {
+        process.off('unhandledRejection', unhandled);
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not close the browser when the launch wins the race', async () => {
+      vi.mocked(fingerprintProfile.loadOrCreateProfile).mockImplementation(() => {
+        throw new Error('No profile');
+      });
+
+      await service.initialize();
+
+      expect(mockBrowser.close).not.toHaveBeenCalled();
+      expect(service.getBrowser()).toBe(mockBrowser);
     });
   });
 });

@@ -3,10 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OnboardingProvider, type OnboardingContextType } from './OnboardingContext';
 import { useOnboarding } from '../hooks/useOnboarding';
 
-// Mock lambdaApiService
+// Mock httpClient
 const mockPost = vi.fn().mockResolvedValue({ data: {} });
-vi.mock('@/shared/services', () => ({
-  lambdaApiService: {
+vi.mock('@/shared/utils/httpClient', () => ({
+  httpClient: {
     apiClient: { post: (...args: unknown[]) => mockPost(...args) },
   },
 }));

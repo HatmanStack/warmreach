@@ -4,12 +4,12 @@ import json
 import logging
 import os
 
-import boto3
 from botocore.exceptions import ClientError
 from errors.exceptions import NotFoundError, ServiceError, ValidationError
 from openai import OpenAI
 from services.llm_service import LLMService
 from shared_services.activity_writer import write_activity
+from shared_services.aws_clients import dynamodb_resource
 from shared_services.monetization import (
     FeatureFlagService,
     QuotaExceededError,
@@ -43,16 +43,14 @@ def _get_openai_client() -> OpenAI:
     bake the key in until cold start.
     """
     if _openai_secret is None:
-        raise RuntimeError(
-            'OPENAI_API_KEY_ARN is not configured — cannot build OpenAI client'
-        )
+        raise RuntimeError('OPENAI_API_KEY_ARN is not configured — cannot build OpenAI client')
     return OpenAI(api_key=_openai_secret.get_value(), timeout=OPENAI_TIMEOUT)
 
 
 # Optional: LLM Lambda can serve AI-only operations (generate, research) without DynamoDB.
 # Quota enforcement and usage tracking require DynamoDB but are skipped when table is None.
 table_name = os.environ.get('DYNAMODB_TABLE_NAME')
-table = boto3.resource('dynamodb').Table(table_name) if table_name else None
+table = dynamodb_resource().Table(table_name) if table_name else None
 
 # LLMService rebuilt periodically so rotated OpenAI keys propagate (mirrors
 # pro's pattern). Within the TTL window the cached service is reused for
@@ -74,6 +72,7 @@ def _get_llm_service() -> LLMService:
         )
         _llm_service_created_at = now
     return _llm_service
+
 
 OPS = {
     'generate_ideas',
@@ -133,6 +132,8 @@ def _release_reservations(user_id: str, op: str, reserved: bool, dr_reserved: bo
             _quota_service.release_deep_research(user_id, op, count=1)
         except Exception:
             logger.exception('release_deep_research failed for %s', op)
+
+
 _feature_flag_service = FeatureFlagService(table) if table else None
 
 

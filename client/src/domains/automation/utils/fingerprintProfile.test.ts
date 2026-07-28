@@ -7,11 +7,11 @@ import {
   loadOrCreateProfile,
   rotateProfile,
   getOSFamily,
-} from './fingerprintProfile';
+} from './fingerprintProfile.js';
 
 vi.mock('fs/promises');
 vi.mock('crypto', async () => {
-  const actual = (await vi.importActual('crypto')) as any;
+  const actual = await vi.importActual<typeof import('crypto')>('crypto');
   return {
     ...actual,
     randomBytes: vi.fn().mockImplementation((size) => {
@@ -21,6 +21,15 @@ vi.mock('crypto', async () => {
     }),
   };
 });
+
+/**
+ * `crypto.randomBytes` is overloaded (sync -> Buffer, async -> void). The mock
+ * only ever stands in for the sync form, so this picks that overload once
+ * rather than casting the return value at every call site.
+ */
+function mockRandomBytes() {
+  return vi.mocked<(size: number) => Buffer>(crypto.randomBytes);
+}
 
 describe('fingerprintProfile', () => {
   const mockProfileDir = '/mock/dir';
@@ -58,11 +67,11 @@ describe('fingerprintProfile', () => {
 
     it('is deterministic for the same seed', () => {
       const fixedSeed = Buffer.alloc(32, 1);
-      vi.mocked(crypto.randomBytes).mockReturnValue(fixedSeed as any);
+      mockRandomBytes().mockReturnValue(fixedSeed);
 
       const profile1 = generateFingerprintProfile();
 
-      vi.mocked(crypto.randomBytes).mockReturnValue(fixedSeed as any);
+      mockRandomBytes().mockReturnValue(fixedSeed);
       const profile2 = generateFingerprintProfile();
 
       expect(profile1).toEqual(profile2);
@@ -103,7 +112,7 @@ describe('fingerprintProfile', () => {
 
       // Mock rotation generating a DIFFERENT seed
       const newSeed = Buffer.alloc(32, 2);
-      vi.mocked(crypto.randomBytes).mockReturnValue(newSeed as any);
+      mockRandomBytes().mockReturnValue(newSeed);
 
       vi.mocked(fsPromises.access).mockResolvedValue();
       vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(existingProfile));

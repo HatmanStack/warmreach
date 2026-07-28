@@ -3,7 +3,7 @@
 
 > **DRAFT — NOT LEGAL ADVICE.** Not reviewed by a lawyer. The controller /
 > processor analysis in particular needs qualified review before publication —
-> see [README](README.md).
+> see `docs/legal/README.md`.
 
 **Version:** `2026-07-26.1`
 
@@ -76,7 +76,8 @@ transferred to and stored in the US.
 
 ## How long we keep it
 
-See [DATA_RETENTION.md](DATA_RETENTION.md).
+See the [Data Retention Policy](DATA_RETENTION.md), which is shown alongside
+this one and lists every category with its retention period.
 
 ## Your rights
 
@@ -104,10 +105,10 @@ remove:
 - **Backups.** Point-in-time recovery, where enabled, retains data for its
   window, so a deletion is not immediately reflected in backups.
 - **Records that you accepted these terms.** Whether these should survive an
-  erasure request is currently unresolved — see
-  [DATA_RETENTION.md](DATA_RETENTION.md).
+  erasure request is currently unresolved — see the
+  [Data Retention Policy](DATA_RETENTION.md).
 
-Full detail is in [DATA_RETENTION.md](DATA_RETENTION.md).
+Full detail is in the [Data Retention Policy](DATA_RETENTION.md).
 
 Depending on where you live you may have further rights under the GDPR, UK
 GDPR, or CCPA/CPRA, including correction, restriction of processing, objection

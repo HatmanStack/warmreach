@@ -1,12 +1,13 @@
 """EdgeQueryService - Query and metadata operations for user-profile edges."""
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
-import boto3
 from botocore.exceptions import ClientError
 from errors.exceptions import ExternalServiceError
 from models.enums import classify_conversion_likelihood
+from shared_services.aws_clients import dynamodb_resource
 from shared_services.base_service import BaseService
 from shared_services.dynamodb_types import ProfileMetadataItem
 from shared_services.edge_constants import encode_profile_id
@@ -25,7 +26,7 @@ class EdgeQueryService(BaseService):
     @property
     def _dynamodb_resource(self):
         if self._dynamodb_resource_override is None:
-            self._dynamodb_resource_override = boto3.resource('dynamodb')
+            self._dynamodb_resource_override = dynamodb_resource()
         return self._dynamodb_resource_override
 
     def get_connections_by_status(self, user_id: str, status: str | None = None) -> dict[str, Any]:
@@ -183,7 +184,7 @@ class EdgeQueryService(BaseService):
             params['ExclusiveStartKey'] = last_key
         return edges
 
-    def _format_connection_object(self, profile_id: str, profile_data: dict, edge_item: dict) -> dict:
+    def _format_connection_object(self, profile_id: str, profile_data: Mapping[str, Any], edge_item: dict) -> dict:
         """Format connection object for frontend consumption."""
         full_name = profile_data.get('name', '')
         name_parts = full_name.split(' ', 1) if full_name else ['', '']
@@ -261,7 +262,7 @@ class EdgeQueryService(BaseService):
             'score_computed_at': edge_item.get('scoreComputedAt'),
         }
 
-    def _calculate_conversion_likelihood(self, profile_data: dict, edge_item: dict) -> str:
+    def _calculate_conversion_likelihood(self, profile_data: Mapping[str, Any], edge_item: dict) -> str:
         """Calculate conversion likelihood using enum classification."""
         edge_data = {'date_added': edge_item.get('addedAt'), 'connection_attempts': edge_item.get('attempts', 0)}
         profile = {'headline': profile_data.get('headline'), 'summary': profile_data.get('summary')}

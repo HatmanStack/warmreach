@@ -8,7 +8,7 @@ Accepted
 
 The NewConnections tab displays "possible" contacts — profiles discovered through search or referral that have not been accepted into the user's network yet. These profiles are not ingested into RAGStack because ingestion is a paid, rate-limited operation reserved for connections the user has opted to track.
 
-The cited site is `frontend/src/features/connections/components/NewConnectionsTab.tsx:44`:
+The cited site is `frontend/src/features/connections/components/NewConnectionsTab.tsx:55`:
 
 ```tsx
 // Local search query state for client-side filtering

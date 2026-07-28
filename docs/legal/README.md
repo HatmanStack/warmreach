@@ -60,16 +60,16 @@ Flagged because engineering judgement is not sufficient on any of these:
    product logs in, which is a different posture again. The answer affects how
    these documents should be worded, but not whether the ban risk needs
    disclosing.
-2. **The third-party data position.** The product stores LLM-generated
+3. **The third-party data position.** The product stores LLM-generated
    inferences about people who never consented. Establishing whether the user,
    WarmReach, or both are controllers under GDPR determines who owes those
    people notice and rights — and the answer changes what the product must
    build next.
-3. **Whether a legitimate-interest basis is actually available** for processing
+4. **Whether a legitimate-interest basis is actually available** for processing
    connection data, or whether something else is required.
-4. **Consumer-protection rules on subscriptions** in each market being sold
+5. **Consumer-protection rules on subscriptions** in each market being sold
    into (cancellation, renewal notice, refunds).
-5. **Whether the "no refunds for LinkedIn account restriction" position is
+6. **Whether the "no refunds for LinkedIn account restriction" position is
    enforceable**, or whether it is void as an unfair term in some jurisdictions.
 
 ## Engineering notes

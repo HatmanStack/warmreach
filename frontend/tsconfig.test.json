@@ -1,0 +1,46 @@
+{
+  // Type-checks the test files, which tsconfig.app.json excludes.
+  //
+  // Relaxations vs the app config, with the reason each is off and what turning
+  // it back on costs. Measured 2026-07-27 against this tree, one flag at a time,
+  // over the 157 test files this config puts in scope:
+  //   noUncheckedIndexedAccess  off  +136 errors -- `rows[0].name` in a fixture
+  //                                                 the test just built is not a
+  //                                                 real nullability risk
+  //   noUnusedLocals            off   +16 errors -- fixture scaffolding
+  //   noUnusedParameters        off    +1 error  -- a stub signature
+  //   all three on                   +153 errors
+  // The config is at 0 errors as it stands. `strict` itself stays ON: this
+  // config exists so a test asserting against a stale interface fails, and that
+  // does not depend on the index/unused flags. Production code keeps all three.
+  //
+  // These are re-measured numbers. The first version of this comment recorded
+  // 156/25/3 and "253 strict", which was 69 (the residual that sized the
+  // clean-up) plus the three deltas -- a sum, not a measurement, and these
+  // errors do not add. Turn a flag on and count before acting on any of them.
+  //
+  // `exclude: []` is load-bearing. `extends` inherits the base `exclude`, so
+  // without this line tsconfig.app.json's `src/**/*.test.ts(x)` exclusions win
+  // over the `include` below and this config checks nothing at all.
+  //
+  // `types` must be listed explicitly because naming it at all replaces the
+  // default "every @types package" behaviour: vitest/globals for describe/it,
+  // node for `global` in setupTests.ts. src/vite-env.d.ts is included for
+  // `import.meta.env`, which production modules pulled in by tests rely on.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "types": ["vitest/globals", "node"],
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/test-utils/**/*",
+    "src/setupTests.ts",
+    "src/vite-env.d.ts"
+  ],
+  "exclude": []
+}

@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { StickyNote, Pencil, Trash2, Plus } from 'lucide-react';
@@ -145,6 +151,7 @@ const ConnectionNotesModal: React.FC<ConnectionNotesModalProps> = ({
         <div className="space-y-2">
           <Textarea
             data-testid="new-note-input"
+            aria-label="New note"
             value={newNoteContent}
             onChange={(e) => setNewNoteContent(e.target.value)}
             placeholder="Add a note about this connection..."
@@ -192,6 +199,7 @@ const ConnectionNotesModal: React.FC<ConnectionNotesModalProps> = ({
                 <div className="space-y-2">
                   <Textarea
                     data-testid="edit-note-input"
+                    aria-label="Edit note text"
                     value={editContent}
                     onChange={(e) => setEditContent(e.target.value)}
                     className="bg-white/5 border-white/20 text-white min-h-[60px]"
@@ -246,6 +254,7 @@ const ConnectionNotesModal: React.FC<ConnectionNotesModalProps> = ({
                         onClick={() => startEditing(note)}
                         className="text-slate-400 hover:text-blue-300 p-1 transition-colors"
                         title="Edit note"
+                        aria-label="Edit note"
                         disabled={isSubmitting}
                       >
                         <Pencil className="h-3.5 w-3.5" />
@@ -255,6 +264,7 @@ const ConnectionNotesModal: React.FC<ConnectionNotesModalProps> = ({
                         onClick={() => handleDeleteNote(note.id)}
                         className="text-slate-400 hover:text-red-300 p-1 transition-colors"
                         title="Delete note"
+                        aria-label="Delete note"
                         disabled={isSubmitting}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -267,10 +277,13 @@ const ConnectionNotesModal: React.FC<ConnectionNotesModalProps> = ({
           ))}
         </div>
 
-        {/* AI disclaimer */}
-        <p className="text-xs text-slate-500 mt-4 text-center">
+        {/* AI disclaimer. This is the dialog's DialogDescription rather than a
+            plain <p>: Radix wires it to DialogContent's aria-describedby, so a
+            screen reader announces it with the dialog instead of leaving the
+            dialog undescribed. Same text, same position. */}
+        <DialogDescription className="text-xs text-slate-500 mt-4 text-center">
           Notes you add are used to personalize AI-generated messages for this connection.
-        </p>
+        </DialogDescription>
       </DialogContent>
     </Dialog>
   );

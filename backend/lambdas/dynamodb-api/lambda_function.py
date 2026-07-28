@@ -4,10 +4,10 @@ import logging
 import os
 from typing import Any
 
-import boto3
 from botocore.exceptions import ClientError
 from services.dynamodb_api_service import DynamoDBApiService
 from shared_services.activity_writer import write_activity
+from shared_services.aws_clients import dynamodb_resource
 from shared_services.request_utils import api_response, extract_user_id
 
 # Configure logging
@@ -17,7 +17,7 @@ logger.setLevel(logging.INFO)
 # Initialize AWS clients at module level (outside handler) for Lambda best practice:
 # This allows connection reuse across warm invocations, reducing cold start latency.
 # See: https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html
-dynamodb = boto3.resource('dynamodb')
+dynamodb = dynamodb_resource()
 
 # Environment variables
 TABLE_NAME = os.environ['DYNAMODB_TABLE_NAME']
@@ -302,9 +302,9 @@ def lambda_handler(event: dict[str, Any], context) -> dict[str, Any]:
 
             # Handle operation-based GET requests via routing table
             operation = (event.get('queryStringParameters') or {}).get('operation')
-            handler = GET_HANDLERS.get(operation) if operation else None
-            if handler:
-                return handler(event, user_id)
+            get_handler = GET_HANDLERS.get(operation) if isinstance(operation, str) else None
+            if get_handler:
+                return get_handler(event, user_id)
 
             if not user_id:
                 logger.error('No user ID found in JWT token for profile GET')
@@ -321,9 +321,12 @@ def lambda_handler(event: dict[str, Any], context) -> dict[str, Any]:
         operation = body.get('operation')
 
         # Dispatch via POST routing table
-        handler = POST_HANDLERS.get(operation)
-        if handler:
-            return handler(body, user_id, event)
+        # Distinct names: GET and POST handlers have different arities, and reusing
+        # one `handler` binding made mypy infer the GET signature for both, hiding
+        # the arity mismatch behind an unchecked union.
+        post_handler = POST_HANDLERS.get(operation) if isinstance(operation, str) else None
+        if post_handler:
+            return post_handler(body, user_id, event)
 
         return _resp(
             400,
@@ -340,7 +343,7 @@ def lambda_handler(event: dict[str, Any], context) -> dict[str, Any]:
     except Exception as e:
         # Intentionally catch broad Exception as top-level handler for Lambda.
         # This ensures malformed requests don't crash the Lambda and always return valid HTTP.
-        logger.error(f'Error processing request: {str(e)}')
+        logger.error('Error processing request: %s', str(e))
         return _resp(500, {'error': 'Internal server error'}, event)
 
 

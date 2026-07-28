@@ -4,17 +4,20 @@ vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
-import { RagstackProxyService } from './ragstackProxyService.js';
+import { RagstackProxyService, type HttpClient } from './ragstackProxyService.js';
 
 describe('RagstackProxyService', () => {
   let service: RagstackProxyService;
-  let mockHttpClient: { get: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn> };
+  let mockHttpClient: {
+    get: ReturnType<typeof vi.fn<HttpClient['get']>>;
+    post: ReturnType<typeof vi.fn<HttpClient['post']>>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockHttpClient = {
-      get: vi.fn(),
-      post: vi.fn(),
+      get: vi.fn<HttpClient['get']>(),
+      post: vi.fn<HttpClient['post']>(),
     };
     service = new RagstackProxyService({
       apiBaseUrl: 'https://api.example.com/',
@@ -70,8 +73,10 @@ describe('RagstackProxyService', () => {
         metadata: {},
       });
 
-      const callHeaders = mockHttpClient.post.mock.calls[0][2].headers;
-      expect(callHeaders.Authorization).toBeUndefined();
+      const callHeaders = mockHttpClient.post.mock.calls[0]?.[2]?.headers as
+        | Record<string, unknown>
+        | undefined;
+      expect(callHeaders?.Authorization).toBeUndefined();
     });
 
     it('returns success false on network error', async () => {
@@ -123,8 +128,10 @@ describe('RagstackProxyService', () => {
 
       await service.fetchProfile({ profileId: 'profile-1' });
 
-      const callHeaders = mockHttpClient.get.mock.calls[0][1].headers;
-      expect(callHeaders.Authorization).toBeUndefined();
+      const callHeaders = mockHttpClient.get.mock.calls[0]?.[1]?.headers as
+        | Record<string, unknown>
+        | undefined;
+      expect(callHeaders?.Authorization).toBeUndefined();
     });
   });
 

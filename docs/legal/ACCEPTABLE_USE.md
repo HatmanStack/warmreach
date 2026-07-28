@@ -1,7 +1,7 @@
 # Acceptable Use Policy
 
 > **DRAFT — NOT LEGAL ADVICE.** Not reviewed by a lawyer. See
-> [README](README.md).
+> `docs/legal/README.md`.
 
 **Version:** `2026-07-26.1`
 

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { SelectorResolver, SelectorNotFoundError } from './selectorResolver.js';
 import { SelectorRegistry } from './selectorRegistry.js';
 import { createMockPage } from '../../../setupTests.js';
+import { asPuppeteerPage } from '../../../test-utils/mocks.js';
 
 vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -22,7 +23,7 @@ describe('SelectorResolver', () => {
     page.$.mockResolvedValueOnce(mockElement);
 
     const resolver = new SelectorResolver(mockRegistry);
-    const result = await resolver.resolve(page as any, 'test:point');
+    const result = await resolver.resolve(asPuppeteerPage(page), 'test:point');
 
     expect(result).toBe(mockElement);
     expect(page.$).toHaveBeenCalledWith('button[aria-label="test"]');
@@ -36,7 +37,7 @@ describe('SelectorResolver', () => {
     page.$.mockResolvedValueOnce(mockElement);
 
     const resolver = new SelectorResolver(mockRegistry);
-    const result = await resolver.resolve(page as any, 'test:point');
+    const result = await resolver.resolve(asPuppeteerPage(page), 'test:point');
 
     expect(result).toBe(mockElement);
     expect(page.$).toHaveBeenCalledWith('button[aria-label="test"]');
@@ -49,7 +50,7 @@ describe('SelectorResolver', () => {
     page.$.mockResolvedValue(null);
 
     const resolver = new SelectorResolver(mockRegistry);
-    const result = await resolver.resolve(page as any, 'test:point');
+    const result = await resolver.resolve(asPuppeteerPage(page), 'test:point');
 
     expect(result).toBeNull();
     expect(page.$).toHaveBeenCalledTimes(2);
@@ -61,9 +62,9 @@ describe('SelectorResolver', () => {
 
     const resolver = new SelectorResolver(mockRegistry);
 
-    await expect(resolver.resolveRequired(page as any, 'test:point')).rejects.toThrowError(
-      SelectorNotFoundError
-    );
+    await expect(
+      resolver.resolveRequired(asPuppeteerPage(page), 'test:point')
+    ).rejects.toThrowError(SelectorNotFoundError);
   });
 
   it('resolveAll returns results from first successful strategy', async () => {
@@ -73,7 +74,7 @@ describe('SelectorResolver', () => {
     page.$$.mockResolvedValueOnce(mockElements); // second succeeds
 
     const resolver = new SelectorResolver(mockRegistry);
-    const result = await resolver.resolveAll(page as any, 'test:point');
+    const result = await resolver.resolveAll(asPuppeteerPage(page), 'test:point');
 
     expect(result).toBe(mockElements);
     expect(page.$$).toHaveBeenCalledTimes(2);
@@ -86,7 +87,7 @@ describe('SelectorResolver', () => {
     page.waitForSelector.mockResolvedValueOnce(mockElement);
 
     const resolver = new SelectorResolver(mockRegistry);
-    const result = await resolver.resolveWithWait(page as any, 'test:point');
+    const result = await resolver.resolveWithWait(asPuppeteerPage(page), 'test:point');
 
     expect(result).toBe(mockElement);
     expect(page.waitForSelector).toHaveBeenCalledTimes(2);
@@ -101,7 +102,7 @@ describe('SelectorResolver', () => {
     const page = createMockPage();
     const resolver = new SelectorResolver(mockRegistry);
 
-    await expect(resolver.resolve(page as any, 'unknown:point')).rejects.toThrowError(
+    await expect(resolver.resolve(asPuppeteerPage(page), 'unknown:point')).rejects.toThrowError(
       /Unknown interaction point/
     );
   });
@@ -112,7 +113,7 @@ describe('SelectorResolver', () => {
     page.$.mockResolvedValueOnce(mockElement);
 
     const resolver = new SelectorResolver(mockRegistry);
-    const result = await resolver.resolveWithParams(page as any, 'test:params', {
+    const result = await resolver.resolveWithParams(asPuppeteerPage(page), 'test:params', {
       paramName: 'Save',
     });
 
@@ -136,7 +137,7 @@ describe('SelectorResolver', () => {
       page.$$.mockResolvedValue([handle]);
 
       const resolver = new SelectorResolver(mockRegistry);
-      const result = await resolver.resolveVisibleWithWait(page as any, 'test:point', {
+      const result = await resolver.resolveVisibleWithWait(asPuppeteerPage(page), 'test:point', {
         timeout: 1000,
       });
 
@@ -151,7 +152,7 @@ describe('SelectorResolver', () => {
       page.$$.mockResolvedValueOnce([hidden]).mockResolvedValueOnce([visible]);
 
       const resolver = new SelectorResolver(mockRegistry);
-      const result = await resolver.resolveVisibleWithWait(page as any, 'test:point', {
+      const result = await resolver.resolveVisibleWithWait(asPuppeteerPage(page), 'test:point', {
         timeout: 1000,
       });
 
@@ -165,7 +166,7 @@ describe('SelectorResolver', () => {
 
       const resolver = new SelectorResolver(mockRegistry);
       await expect(
-        resolver.resolveVisibleWithWait(page as any, 'test:point', { timeout: 50 })
+        resolver.resolveVisibleWithWait(asPuppeteerPage(page), 'test:point', { timeout: 50 })
       ).rejects.toThrowError(SelectorNotFoundError);
     });
   });
@@ -177,7 +178,7 @@ describe('SelectorResolver', () => {
       page.$.mockResolvedValueOnce(el);
 
       const resolver = new SelectorResolver(mockRegistry);
-      const result = await resolver.resolvePresentWithWait(page as any, 'test:point', {
+      const result = await resolver.resolvePresentWithWait(asPuppeteerPage(page), 'test:point', {
         timeout: 1000,
       });
 
@@ -190,7 +191,7 @@ describe('SelectorResolver', () => {
 
       const resolver = new SelectorResolver(mockRegistry);
       await expect(
-        resolver.resolvePresentWithWait(page as any, 'test:point', { timeout: 50 })
+        resolver.resolvePresentWithWait(asPuppeteerPage(page), 'test:point', { timeout: 50 })
       ).rejects.toThrowError(SelectorNotFoundError);
     });
   });
@@ -201,7 +202,7 @@ describe('SelectorResolver', () => {
       page.$.mockResolvedValueOnce({}); // preferred (aria) matches
 
       const resolver = new SelectorResolver(mockRegistry);
-      await resolver.resolve(page as any, 'test:point');
+      await resolver.resolve(asPuppeteerPage(page), 'test:point');
 
       const entry = resolver
         .getSelectorHealthReport()
@@ -221,7 +222,7 @@ describe('SelectorResolver', () => {
       // Preferred (aria) misses, fallback (css) matches. A single win is NOT
       // enough to promote — that would let a fluke reorder the cascade forever.
       page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
-      await resolver.resolve(page as any, 'test:point');
+      await resolver.resolve(asPuppeteerPage(page), 'test:point');
       expect(health()?.promotedStrategy).toBeNull();
       expect(health()?.fallbackMatches).toBe(1);
 
@@ -229,7 +230,7 @@ describe('SelectorResolver', () => {
       for (let i = 0; i < 2; i++) {
         page.$.mockReset();
         page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
-        await resolver.resolve(page as any, 'test:point');
+        await resolver.resolve(asPuppeteerPage(page), 'test:point');
       }
       expect(health()?.promotedStrategy).toBe('css');
       expect(health()?.fallbackMatches).toBe(3);
@@ -237,7 +238,7 @@ describe('SelectorResolver', () => {
       // Next resolve tries the promoted css FIRST — a single $ call resolves it.
       page.$.mockReset();
       page.$.mockResolvedValueOnce({});
-      const result = await resolver.resolve(page as any, 'test:point');
+      const result = await resolver.resolve(asPuppeteerPage(page), 'test:point');
       expect(result).toBeTruthy();
       expect(page.$).toHaveBeenCalledTimes(1);
       expect(page.$).toHaveBeenCalledWith('.test-btn');
@@ -251,7 +252,7 @@ describe('SelectorResolver', () => {
       for (let i = 0; i < 3; i++) {
         page.$.mockReset();
         page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
-        await resolver.resolve(page as any, 'test:point');
+        await resolver.resolve(asPuppeteerPage(page), 'test:point');
       }
       expect(
         resolver.getSelectorHealthReport().find((h) => h.interactionPoint === 'test:point')
@@ -262,7 +263,7 @@ describe('SelectorResolver', () => {
       // which matches — reclaiming the front and clearing the promotion.
       page.$.mockReset();
       page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
-      await resolver.resolve(page as any, 'test:point');
+      await resolver.resolve(asPuppeteerPage(page), 'test:point');
 
       expect(
         resolver.getSelectorHealthReport().find((h) => h.interactionPoint === 'test:point')
@@ -278,7 +279,7 @@ describe('SelectorResolver', () => {
       for (let i = 0; i < 3; i++) {
         page.$.mockReset();
         page.$.mockResolvedValueOnce(null).mockResolvedValueOnce({});
-        await resolver.resolve(page as any, 'test:point');
+        await resolver.resolve(asPuppeteerPage(page), 'test:point');
       }
 
       expect(mockRegistry['test:point'][0].strategy).toBe('aria');
@@ -289,9 +290,9 @@ describe('SelectorResolver', () => {
       page.$.mockResolvedValue(null);
 
       const resolver = new SelectorResolver(mockRegistry);
-      await expect(resolver.resolveRequired(page as any, 'test:point')).rejects.toThrowError(
-        SelectorNotFoundError
-      );
+      await expect(
+        resolver.resolveRequired(asPuppeteerPage(page), 'test:point')
+      ).rejects.toThrowError(SelectorNotFoundError);
 
       const entry = resolver
         .getSelectorHealthReport()

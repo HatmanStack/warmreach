@@ -14,9 +14,11 @@ Premium features (network graph visualization, relationship strength scoring, wa
 
 ### Community vs Pro
 
-Community edition includes: LinkedIn automation, RAGStack integration, AI content generation, credential management, heal & restore, and the full serverless backend.
+Community edition includes: LinkedIn automation, RAGStack integration, AI content generation, credential management, self-healing automation runs, and the full serverless backend.
 
-Pro adds: network graph visualization, relationship strength scoring, cluster detection, warm intro paths, message intelligence, reply probability, tone analysis, best time to send, advanced analytics, priority inference, managed Puppeteer, billing/tier management, and usage quotas.
+Pro adds: network graph visualization, relationship strength scoring, cluster detection, warm intro paths, message intelligence, reply probability, best time to send, advanced analytics, priority inference, the opportunity tracker and its autonomous agent, goal intelligence, the weekly digest, billing/tier management, and usage quotas.
+
+Two corrections to what that list used to say. **Tone analysis is not Pro-only** — `analyze_tone` is routed by this edition's `llm` handler and its flag is enabled here (`docs/API_REFERENCE.md` says the same). And "managed Puppeteer" was never built in either edition; it is a rejected idea, because cloud IPs conflict with the detection-avoidance the automation depends on.
 
 The `shared_services/monetization.py` module contains no-op stubs. All Lambda code imports from this module. In Pro, it re-exports real quota/feature-flag/tier services; here it returns permissive defaults for core features only.
 
@@ -83,9 +85,13 @@ npm run electron:build
 
 Feature-based organization with barrel exports:
 
+Ten feature directories:
+
 - `features/auth/` - Cognito authentication
 - `features/connections/` - LinkedIn connection management
+- `features/legal/` - In-app legal texts and the acceptance gate
 - `features/messages/` - Messaging system
+- `features/onboarding/` - First-run onboarding flow
 - `features/posts/` - Post creation with AI
 - `features/profile/` - User profile management
 - `features/search/` - LinkedIn search
@@ -111,62 +117,83 @@ Electron tray app + Express backend with domain-driven architecture:
 - `src/transport/` - WebSocket client + command router
 - `src/auth/` - Electron Cognito authentication (libsodium Sealbox encryption)
 - `src/credentials/` - LinkedIn credential store + settings window
-- `src/domains/` - Business logic by domain (automation, connections, linkedin, messaging, navigation, profile, ragstack, search, session, storage, workflow)
+- `src/domains/` - Business logic by domain, 10 directories (automation, connections, linkedin, messaging, navigation, profile, ragstack, search, session, storage)
 - `src/shared/` - Config, middleware, services, utils
 - `src/server.js` - Express server entry point (local dev)
 
-Queue-based LinkedIn interaction processing with session preservation and heal/restore capabilities.
+Queue-based LinkedIn interaction processing with session preservation and an in-process self-healing retry loop: a recoverable failure raises `HealingRequiredError`, and the run-with-healing loop re-invokes the phase from its resume state with a fresh browser, capped at `MAX_HEALING_ATTEMPTS` (3).
 
 ### AWS Backend (`backend/`)
 
 SAM template (`template.yaml`) defines:
 
-- **ProfilesTable**: DynamoDB single-table design (PK/SK + GSI1, TTL enabled)
+- **ProfilesTable**: DynamoDB single-table design (PK/SK + GSI1 and GSI3, TTL enabled — see [ARCHITECTURE.md](docs/ARCHITECTURE.md#global-secondary-indexes))
 - **WebSocket API**: API Gateway V2 for real-time command dispatch
 - **HttpApi**: API Gateway V2 with Cognito JWT authorizer
 - **Cognito**: User pool with email-based auth
 - **Lambda Functions** (Python 3.13):
-  - `websocket-connect/disconnect/default/` - WebSocket lifecycle + message routing
-  - `command-dispatch/` - Command creation and dispatch to agent
-  - `linkedin-action-gate/` - Quota-gated LinkedIn action dispatch (claim-before-send)
-  - `edge-crud/` - Edge data processing (CRUD, notes, activity)
-  - `ragstack-ops/` - RAGStack search, ingest, status proxy
-  - `analytics-insights/` - Insights, analytics, and scoring operations
-  - `dynamodb-api/` - User settings/profile CRUD (Pro additionally ships a
-    separate `billing-api` Lambda on `POST /billing`; this edition has no
-    billing surface)
-  - `llm/` - OpenAI LLM operations (quota-metered)
-  - `client-downloads/` - Per-platform desktop client download URLs (public, no JWT auth)
 
-Lambdas share code via `lambdas/shared/python/`:
+| Function               | Purpose                                                                    |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `command-dispatch`     | Command creation + WebSocket dispatch to the Electron agent                |
+| `linkedin-action-gate` | `POST /linkedin-actions` gated LinkedIn action dispatch (claim-before-send) |
+| `dynamodb-api`         | User settings, profile CRUD, notifications                                 |
+| `edge-crud`            | Edge CRUD, notes, activity, lifecycle, tagging                             |
+| `ragstack-ops`         | RAGStack search, ingest, status proxy                                      |
+| `llm`                  | OpenAI AI operations                                                       |
+| `research-reconciler`  | Scheduled deep-research poll/reconcile (reuses `lambdas/llm/`)             |
+| `client-downloads`     | `GET /client-downloads` per-platform download URLs (public, no JWT auth)   |
+| `websocket-*`          | WebSocket lifecycle + message routing                                      |
 
-- `shared_services/base_service.py` - Base class for all service layers
-- `shared_services/circuit_breaker.py` - Circuit breaker pattern (public API: `on_success()`/`on_failure()`)
-- `shared_services/command_dispatch_core.py` - Community-clean command-creation core (record, rate-limit, dispatch)
-- `shared_services/data_rights_service.py` - GDPR/CCPA data export and account erasure
-- `shared_services/dynamodb_types.py` - TypedDict definitions for DynamoDB item schemas
-- `shared_services/edge_constants.py` - Edge-related constants
-- `shared_services/edge_data_service.py` - Edge CRUD operations
-- `shared_services/edge_ingestion_service.py` - Edge ingestion operations
-- `shared_services/edge_message_service.py` - Edge message operations
-- `shared_services/edge_note_service.py` - Edge note operations
-- `shared_services/edge_query_service.py` - Edge query operations
-- `shared_services/edge_status_service.py` - Edge status operations
-- `shared_services/handler_utils.py` - Lambda routing, feature gating, lazy service init
-- `shared_services/ingestion_service.py` - Profile data ingestion
-- `shared_services/legal_acceptance_service.py` - Legal document acceptance and the automation gate
-- `shared_services/llm_cost.py` - OpenAI token accounting and cost attribution
-- `shared_services/message_utils.py` - Shared message analysis utilities
-- `shared_services/model_config.py` - Central registry of OpenAI model ids (env-overridable)
-- `shared_services/monetization.py` - Community edition stubs (all features enabled)
-- `shared_services/observability.py` - Correlation context and logging
-- `shared_services/protocols.py` - Typing-only Protocol DI contracts for handler utilities
-- `shared_services/ragstack_client.py` - RAGStack GraphQL client with circuit breaker + retry
-- `shared_services/ragstack_proxy_service.py` - RAGStack search, ingest, and status proxy
-- `shared_services/request_utils.py` - User ID extraction, CORS headers, API response formatting
-- `shared_services/ssm_cache.py` - SSM SecureString parameter caching with TTL
-- `shared_services/websocket_service.py` - WebSocket @connections API helper
-- `errors/` - Shared exception classes (`ServiceError`, `ValidationError`, etc.)
+Lambdas share code via `lambdas/shared/python/`. Every module that reaches this
+edition:
+
+| Module                            | Purpose                                                                            |
+| --------------------------------- | ---------------------------------------------------------------------------------- |
+| `activity_service.py`             | Activity timeline query from DynamoDB                                              |
+| `activity_writer.py`              | Fire-and-forget activity record writing                                            |
+| `adjacency_service.py`            | Contact-to-contact adjacency store; no route persists to it here (ADR-015)         |
+| `analytics_service.py`            | Dashboard aggregation (funnel, growth, engagement, usage)                          |
+| `aws_clients.py`                  | Shared boto3 DynamoDB resource/client factories with explicit timeouts             |
+| `base_service.py`                 | Base class for service layers                                                      |
+| `circuit_breaker.py`              | Circuit breaker pattern                                                            |
+| `cluster_detection_service.py`    | Attribute-based connection clustering                                              |
+| `command_dispatch_core.py`        | Community-clean command-creation core (record, rate-limit, dispatch)               |
+| `data_rights_service.py`          | GDPR/CCPA data export and account erasure                                          |
+| `dynamodb_types.py`               | TypedDict definitions for DynamoDB item schemas                                    |
+| `edge_constants.py`               | Edge-related constants                                                             |
+| `edge_data_service.py`            | Edge CRUD operations (user-profile relationships) in DynamoDB                      |
+| `edge_ingestion_service.py`       | Edge ingestion operations                                                          |
+| `edge_message_service.py`         | Edge message operations                                                            |
+| `edge_note_service.py`            | Edge note operations                                                               |
+| `edge_opportunity_service.py`     | Edge opportunity tagging and staging                                               |
+| `edge_query_service.py`           | Edge query operations                                                              |
+| `edge_status_service.py`          | Edge status operations                                                             |
+| `handler_utils.py`                | Shared handler utilities for Lambda routing, feature gating, and lazy service init |
+| `ingestion_service.py`            | Profile data ingestion                                                             |
+| `insight_cache_service.py`        | Insight caching with deduplicated 7-day TTL pattern                                |
+| `legal_acceptance_service.py`     | Legal document acceptance records and the automation gate                          |
+| `llm_cost.py`                     | OpenAI token accounting and per-user cost attribution                              |
+| `message_intelligence_service.py` | Messaging pattern analysis                                                         |
+| `message_utils.py`                | Shared message analysis utilities (response rate computation)                      |
+| `model_config.py`                 | Central registry of OpenAI model ids (env-overridable)                             |
+| `monetization.py`                 | No-op quota and feature-flag stubs (this edition has no billing)                   |
+| `observability.py`                | Correlation context and structured logging                                         |
+| `openai_retry.py`                 | Shared transient-error retry wrapper for OpenAI calls                              |
+| `priority_inference_service.py`   | Connection engagement priority ranking                                             |
+| `protocols.py`                    | Typing-only Protocol DI contracts for handler utilities                            |
+| `ragstack_client.py`              | RAGStack GraphQL client (circuit breaker + retry)                                  |
+| `ragstack_proxy_service.py`       | RAGStack search, ingest, and status proxy operations                               |
+| `relationship_scoring_service.py` | Connection scoring (frequency, recency, reciprocity)                               |
+| `reply_probability_service.py`    | Reply probability estimation from historical patterns                              |
+| `request_utils.py`                | User ID extraction, CORS headers, and API response formatting                      |
+| `send_time_service.py`            | Send-time recommendations from response patterns                                   |
+| `ssm_cache.py`                    | SSM SecureString parameter caching with TTL                                        |
+| `warm_intro_paths_service.py`     | Interface-compatible stub; the Pro service does the pathfinding (ADR-011)          |
+| `websocket_service.py`            | WebSocket @connections API helper                                                  |
+
+`errors/` holds the shared exception classes (`ServiceError`, `ValidationError`,
+and siblings).
 
 ### RAGStack-Lambda (separate nested stack)
 
@@ -179,9 +206,9 @@ Optional nested stack from [RAGStack-Lambda](https://github.com/HatmanStack/RAGS
 ### Test Structure
 
 - **Frontend**: `frontend/src/**/*.test.{ts,tsx}` - Vitest + Testing Library
-- **Client**: `client/src/**/*.test.js` - Vitest
+- **Client**: `client/src/**/*.test.{js,ts}` - Vitest
 - **Backend**: `tests/backend/unit/` - pytest with moto (AWS mocking)
-  - Coverage target: 75% (fail-under in pytest.ini)
+  - Coverage target: 82% (fail-under in pytest.ini)
   - `conftest.py` provides: DynamoDB table fixture, S3 bucket fixture, Lambda module loader (`load_lambda_module()`), service class loader (`load_service_class()`), factory fixtures (`create_test_edge()`, `create_test_profile()`, `create_authenticated_event()`)
 - **E2E**: Playwright (`npm run test:e2e`)
 
@@ -199,7 +226,7 @@ Optional nested stack from [RAGStack-Lambda](https://github.com/HatmanStack/RAGS
 
 Required `.env` variables (see `.env.example`):
 
-- `VITE_API_URL`, `VITE_COGNITO_*`, `VITE_WEBSOCKET_URL` - Frontend config
+- `VITE_API_GATEWAY_URL`, `VITE_COGNITO_*`, `VITE_WEBSOCKET_URL` - Frontend config
 - `OPENAI_API_KEY_ARN` (SSM SecureString ARN) - AI config
 - AWS credentials for SAM deployment
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createBatchFiles, processBatch } from './profileBatchProcessing';
+import { createBatchFiles, processBatch } from './profileBatchProcessing.js';
 import { processConnection } from './profileScraping.js';
-import type { ProfileInitService } from './profileInitService';
+import type { MasterIndex, ProfileInitService } from './profileInitService.js';
 
 vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
@@ -58,22 +58,33 @@ vi.mock('./profileScraping.js', () => ({
   isConnectionLevelError: vi.fn().mockReturnValue(false),
 }));
 
+/** The ProfileInitService members these functions touch. */
+const makeService = () => ({
+  batchSize: 100,
+  dynamoDBService: {
+    checkEdgeExists: vi.fn().mockResolvedValue(false),
+    getEdgeState: vi.fn().mockResolvedValue({ exists: false, status: null }),
+    saveImportCheckpoint: vi.fn().mockResolvedValue({}),
+  },
+  burstThrottleManager: {
+    waitForNext: vi.fn().mockResolvedValue({ delayed: false, delayMs: 0 }),
+  },
+});
+
+/**
+ * Widen the double at the call boundary. Keeping `mockService` at its own type
+ * is what lets `.mockResolvedValue(...)` and `batchSize = 2` stay checked;
+ * declaring it as ProfileInitService up front loses both.
+ */
+const asService = (service: ReturnType<typeof makeService>): ProfileInitService =>
+  service as unknown as ProfileInitService;
+
 describe('profileBatchProcessing', () => {
-  let mockService: any;
+  let mockService: ReturnType<typeof makeService>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockService = {
-      batchSize: 100,
-      dynamoDBService: {
-        checkEdgeExists: vi.fn().mockResolvedValue(false),
-        getEdgeState: vi.fn().mockResolvedValue({ exists: false, status: null }),
-        saveImportCheckpoint: vi.fn().mockResolvedValue({}),
-      },
-      burstThrottleManager: {
-        waitForNext: vi.fn().mockResolvedValue({ delayed: false, delayMs: 0 }),
-      },
-    } as unknown as ProfileInitService;
+    mockService = makeService();
   });
 
   describe('createBatchFiles', () => {
@@ -82,10 +93,15 @@ describe('profileBatchProcessing', () => {
         metadata: {},
         files: {},
         processingState: { completedBatches: [] },
-      } as any;
+      } as unknown as MasterIndex;
 
       const connections = ['p1', 'p2', 'p3'];
-      const result = await createBatchFiles(mockService, 'ally', connections, masterIndex);
+      const result = await createBatchFiles(
+        asService(mockService),
+        'ally',
+        connections,
+        masterIndex
+      );
 
       expect(result).toHaveLength(1); // 3 connections, batchSize=100, so 1 batch
       expect(masterIndex.files['allyConnections']).toHaveLength(1);
@@ -97,10 +113,15 @@ describe('profileBatchProcessing', () => {
         metadata: {},
         files: {},
         processingState: { completedBatches: [] },
-      } as any;
+      } as unknown as MasterIndex;
 
       const connections = ['p1', 'p2', 'p3'];
-      const result = await createBatchFiles(mockService, 'outgoing', connections, masterIndex);
+      const result = await createBatchFiles(
+        asService(mockService),
+        'outgoing',
+        connections,
+        masterIndex
+      );
 
       expect(result).toHaveLength(2); // ceil(3/2) = 2 batches
     });
@@ -109,7 +130,7 @@ describe('profileBatchProcessing', () => {
   describe('processBatch', () => {
     it('should process all connections in a batch', async () => {
       const state = { requestId: 'req1' };
-      const result = await processBatch(mockService, 'data/batch.json', state);
+      const result = await processBatch(asService(mockService), 'data/batch.json', state);
 
       expect(result.processed).toBe(2); // p1, p2
       expect(result.errors).toBe(0);
@@ -123,7 +144,7 @@ describe('profileBatchProcessing', () => {
         status: 'ally',
       });
       const state = { requestId: 'req1' };
-      const result = await processBatch(mockService, 'data/batch.json', state);
+      const result = await processBatch(asService(mockService), 'data/batch.json', state);
 
       expect(result.skipped).toBe(2);
       expect(result.processed).toBe(0);
@@ -139,7 +160,7 @@ describe('profileBatchProcessing', () => {
         status: 'possible',
       });
       const state = { requestId: 'req1' };
-      const result = await processBatch(mockService, 'data/batch.json', state);
+      const result = await processBatch(asService(mockService), 'data/batch.json', state);
 
       expect(result.skipped).toBe(0);
       expect(result.processed).toBe(2);
@@ -156,14 +177,14 @@ describe('profileBatchProcessing', () => {
 
     it('should use burst throttle between connections', async () => {
       const state = { requestId: 'req1' };
-      await processBatch(mockService, 'data/batch.json', state);
+      await processBatch(asService(mockService), 'data/batch.json', state);
 
       expect(mockService.burstThrottleManager.waitForNext).toHaveBeenCalledTimes(2);
     });
 
     it('should save checkpoint after each connection', async () => {
       const state = { requestId: 'req1' };
-      await processBatch(mockService, 'data/batch.json', state);
+      await processBatch(asService(mockService), 'data/batch.json', state);
 
       expect(mockService.dynamoDBService.saveImportCheckpoint).toHaveBeenCalledTimes(2);
     });
@@ -176,7 +197,7 @@ describe('profileBatchProcessing', () => {
 
       const state = { requestId: 'req1', collectMutuals: true };
 
-      await expect(processBatch(mockService, 'data/batch.json', state)).rejects.toThrow(
+      await expect(processBatch(asService(mockService), 'data/batch.json', state)).rejects.toThrow(
         '429 backoff abort'
       );
       expect(processConnection).toHaveBeenCalledTimes(1);

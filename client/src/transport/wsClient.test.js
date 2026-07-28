@@ -166,6 +166,162 @@ describe('WsClient', () => {
     });
   });
 
+  describe('outbound buffering across a reconnect (HIGH #5)', () => {
+    it('buffers a frame produced while the socket is not OPEN and reports it did not send', () => {
+      client.connect();
+      // Socket exists but has not opened yet — mid-backoff equivalent.
+      const sent = client.send({ action: 'result', commandId: 'cmd-1' });
+
+      expect(sent).toBe(false);
+      expect(client.outboxSize).toBe(1);
+      expect(mockWsInstances[0]._sentData).toBeUndefined();
+    });
+
+    it('returns true and does not buffer when the socket is OPEN', () => {
+      client.connect();
+      mockWsInstances[0]._simulateOpen();
+
+      expect(client.send({ action: 'result', commandId: 'cmd-1' })).toBe(true);
+      expect(client.outboxSize).toBe(0);
+    });
+
+    it('flushes buffered frames in FIFO order on reconnect, before onConnect fires', () => {
+      client.connect();
+      mockWsInstances[0]._simulateOpen();
+      mockWsInstances[0]._simulateClose(1006, 'abnormal');
+
+      // Results produced while the socket is down.
+      client.send({ action: 'result', commandId: 'cmd-1' });
+      client.send({ action: 'result', commandId: 'cmd-2' });
+      expect(client.outboxSize).toBe(2);
+
+      // A result frame must be on the wire by the time onConnect runs, so a
+      // consumer that reacts to onConnect never observes a half-flushed outbox.
+      let outboxAtConnect = null;
+      onConnect.mockImplementation(() => {
+        outboxAtConnect = client.outboxSize;
+      });
+
+      vi.advanceTimersByTime(1000);
+      const reconnected = mockWsInstances[1];
+      reconnected._simulateOpen();
+
+      expect(reconnected._sentData).toHaveLength(2);
+      expect(JSON.parse(reconnected._sentData[0]).commandId).toBe('cmd-1');
+      expect(JSON.parse(reconnected._sentData[1]).commandId).toBe('cmd-2');
+      expect(client.outboxSize).toBe(0);
+      expect(outboxAtConnect).toBe(0);
+    });
+
+    it('drops the oldest frames when the outbox overflows', () => {
+      client.connect();
+
+      for (let i = 0; i < 105; i++) {
+        client.send({ action: 'result', commandId: `cmd-${i}` });
+      }
+
+      expect(client.outboxSize).toBe(100);
+
+      vi.advanceTimersByTime(1000);
+      mockWsInstances[0]._simulateOpen();
+
+      const sent = mockWsInstances[0]._sentData.map((f) => JSON.parse(f).commandId);
+      // The five oldest were dropped; the newest 100 survive in order.
+      expect(sent).toHaveLength(100);
+      expect(sent[0]).toBe('cmd-5');
+      expect(sent[99]).toBe('cmd-104');
+    });
+
+    it('never buffers heartbeats', () => {
+      client.connect();
+      mockWsInstances[0]._simulateOpen();
+      mockWsInstances[0]._simulateClose(1006);
+
+      // The heartbeat timer is stopped on close, so drive send() directly.
+      expect(client.send({ action: 'heartbeat', ts: Date.now() })).toBe(false);
+      expect(client.outboxSize).toBe(0);
+    });
+
+    it('clears the outbox on close() and buffers nothing afterwards', () => {
+      client.connect();
+      client.send({ action: 'result', commandId: 'cmd-1' });
+      expect(client.outboxSize).toBe(1);
+
+      client.close();
+      expect(client.outboxSize).toBe(0);
+
+      expect(client.send({ action: 'result', commandId: 'cmd-2' })).toBe(false);
+      expect(client.outboxSize).toBe(0);
+    });
+
+    it('hands its buffered frames to a replacement client (MEDIUM #23)', () => {
+      // restartWebSocket() builds a new WsClient on token refresh. Without a
+      // hand-off, a 50-minute refresh timer firing during a backoff window
+      // would silently discard exactly the results the outbox exists to keep.
+      client.connect();
+      client.send({ action: 'result', commandId: 'cmd-1' });
+      client.send({ action: 'result', commandId: 'cmd-2' });
+
+      const pending = client.takeOutbox();
+      expect(pending).toHaveLength(2);
+      expect(client.outboxSize).toBe(0);
+
+      const replacement = new WsClient({
+        url: 'wss://test.example.com',
+        token: 'fresh-jwt',
+        onMessage,
+      });
+      replacement.send({ action: 'result', commandId: 'cmd-3' });
+      replacement.adoptOutbox(pending);
+
+      // Inherited frames are older, so they go ahead of anything already queued.
+      replacement.connect();
+      mockWsInstances[1]._simulateOpen();
+      const sent = mockWsInstances[1]._sentData.map((f) => JSON.parse(f).commandId);
+      expect(sent).toEqual(['cmd-1', 'cmd-2', 'cmd-3']);
+
+      replacement.close();
+    });
+
+    it('keeps an adopted outbox within the bound, dropping the oldest', () => {
+      const replacement = new WsClient({ url: 'wss://test.example.com', token: 't', onMessage });
+      for (let i = 0; i < 60; i++) replacement.send({ action: 'result', commandId: `new-${i}` });
+      replacement.adoptOutbox(
+        Array.from({ length: 60 }, (_, i) => JSON.stringify({ commandId: `old-${i}` }))
+      );
+
+      expect(replacement.outboxSize).toBe(100);
+      replacement.close();
+    });
+
+    it('re-queues the unsent tail at the head when the socket dies mid-flush', () => {
+      client.connect();
+      client.send({ action: 'result', commandId: 'cmd-1' });
+      client.send({ action: 'result', commandId: 'cmd-2' });
+      client.send({ action: 'result', commandId: 'cmd-3' });
+
+      const ws = mockWsInstances[0];
+      let writes = 0;
+      ws.send = function (data) {
+        writes += 1;
+        if (writes === 2) {
+          // Socket dies part-way through the flush.
+          this.readyState = 3;
+          throw new Error('socket closed');
+        }
+        this._sentData = this._sentData || [];
+        this._sentData.push(data);
+      };
+
+      ws._simulateOpen();
+
+      // cmd-1 made it; cmd-2 and cmd-3 are still queued, in order.
+      expect(ws._sentData).toHaveLength(1);
+      expect(JSON.parse(ws._sentData[0]).commandId).toBe('cmd-1');
+      expect(client.outboxSize).toBe(2);
+    });
+  });
+
   describe('reconnection', () => {
     it('schedules reconnect on close', () => {
       client.connect();

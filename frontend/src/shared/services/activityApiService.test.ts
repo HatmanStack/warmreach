@@ -70,7 +70,6 @@ describe('ActivityApiService', () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: false,
         error: { message: 'Failed to fetch timeline' },
-        data: null,
       });
 
       await expect(activityApiService.getActivityTimeline()).rejects.toThrow(ApiError);

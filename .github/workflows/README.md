@@ -1,5 +1,24 @@
 # GitHub Actions Workflows
 
+## Inventory
+
+Every workflow in this directory, with what fires it and what it is for. Three are WarmReach Pro only and are absent from the community edition — they are marked, because a table that silently drops rows per edition is how the last inventory went stale.
+
+| Workflow                    | Trigger                                                                   | Purpose                                                                     |
+| --------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `ci.yml`                    | push/PR to `main`, ignoring `docs/**` and `*.md`                          | The main gate: lint, typecheck, test, build, and the repo invariant checks   |
+| `docs-lint.yml`             | push/PR touching any linted markdown surface or its config                | markdownlint and lychee. **Blocking** in both editions                      |
+| `docs-api.yml`              | push/PR touching source, typedoc, or mkdocs config                        | Builds the generated API docs (typedoc + mkdocstrings)                      |
+| `doc-consistency.yml`       | push/PR touching the template, shared services, or the two reference docs | Runs `scripts/check-doc-tables.py` — **Pro only**                           |
+| `claude.yml`                | `@claude` in an issue, PR comment, or review                              | AI code assistance; gated on `author_association`                           |
+| `dependabot-auto-merge.yml` | any Dependabot pull request                                               | Auto-merges non-major dependency bumps                                      |
+| `release.yml`               | push to `main` touching `CHANGELOG.md`, or manual dispatch                | Reads the version from the changelog and cuts the GitHub release            |
+| `release-sync.yml`          | `workflow_call` from `release.yml`, or manual dispatch                    | Mirrors the release onto the community repo — **Pro only**                  |
+| `electron-release.yml`      | `workflow_call` from `release.yml`                                        | Builds and signs the Linux / macOS / Windows desktop clients                |
+| `sync-public.yml`           | push to `main` matching the source whitelist                              | Publishes this repository to the community edition — **Pro only**           |
+
+`sync-public.yml` holds a write deploy key and ends in a push, so it is the one workflow whose failure mode is unrecoverable. `scripts/check-sync-leak.sh` runs inside it, against the exact tree it is about to publish.
+
 ## Claude Code Action
 
 This repository uses the official [Anthropic Claude Code GitHub Action](https://github.com/anthropics/claude-code-action) for AI-powered code assistance.

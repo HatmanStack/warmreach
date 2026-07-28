@@ -5,7 +5,98 @@
  * suitable for RAGStack ingestion.
  */
 
+/** A dated role or study entry rendered into a markdown section. */
+interface DatedEntry {
+  title?: string;
+  company?: string;
+  employment_type?: string;
+  start_date?: string;
+  end_date?: string;
+  description?: string;
+}
+
+/** An education entry. */
+interface EducationEntry {
+  school?: string;
+  degree?: string;
+  field_of_study?: string;
+  start_date?: string;
+  end_date?: string;
+  description?: string;
+}
+
+/** A recent-activity entry. */
+interface ActivityEntry {
+  text?: string;
+  timestamp?: string;
+}
+
+/**
+ * Input to {@link generateProfileMarkdown}. Deliberately the raw shape: the
+ * caller reads it straight off a DynamoDB item, so every field arrives
+ * untrusted and is narrowed here rather than asserted at the boundary. Before
+ * this, the sections took `Record<string, any>` and a numeric `start_date`
+ * would reach `.localeCompare` and throw mid-ingestion.
+ */
+export type ProfileForMarkdown = Record<string, unknown>;
+
 const MAX_ABOUT_LENGTH = 5000;
+
+/** Narrow an untrusted value to a string, or drop it. */
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** Narrow an untrusted value to a plain object, or drop it. */
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/** Narrow an untrusted value to an array of plain objects, or drop it. */
+function asRecords(value: unknown): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((entry): entry is Record<string, unknown> => asRecord(entry) !== undefined);
+}
+
+/** Narrow an untrusted value to a string array, dropping non-string members. */
+function asStrings(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
+/** Project an untrusted record onto {@link DatedEntry}. */
+function toDatedEntry(raw: Record<string, unknown>): DatedEntry {
+  return {
+    title: asString(raw.title),
+    company: asString(raw.company),
+    employment_type: asString(raw.employment_type),
+    start_date: asString(raw.start_date),
+    end_date: asString(raw.end_date),
+    description: asString(raw.description),
+  };
+}
+
+/** Project an untrusted record onto {@link EducationEntry}. */
+function toEducationEntry(raw: Record<string, unknown>): EducationEntry {
+  return {
+    school: asString(raw.school),
+    degree: asString(raw.degree),
+    field_of_study: asString(raw.field_of_study),
+    start_date: asString(raw.start_date),
+    end_date: asString(raw.end_date),
+    description: asString(raw.description),
+  };
+}
+
+/** Project an untrusted record onto {@link ActivityEntry}. */
+function toActivityEntry(raw: Record<string, unknown>): ActivityEntry {
+  return {
+    text: asString(raw.text),
+    timestamp: asString(raw.timestamp),
+  };
+}
 
 /**
  * Escapes special markdown characters in text
@@ -29,7 +120,7 @@ function escapeMarkdown(text: string): string {
  * @param {string} endDate - End date (or 'Present')
  * @returns {string} Formatted date range
  */
-function formatDateRange(startDate: Record<string, any>, endDate: Record<string, any>): string {
+function formatDateRange(startDate?: string, endDate?: string): string {
   const start = startDate || 'Unknown';
   const end = endDate || 'Present';
   return `${start} - ${end}`;
@@ -40,7 +131,7 @@ function formatDateRange(startDate: Record<string, any>, endDate: Record<string,
  * @param {Object} currentPosition - Current position data
  * @returns {string} Markdown string
  */
-function generateCurrentPositionSection(currentPosition: Record<string, any>): string {
+function generateCurrentPositionSection(currentPosition?: DatedEntry): string {
   if (!currentPosition) return '';
 
   const lines = ['## Current Position'];
@@ -72,7 +163,7 @@ function generateCurrentPositionSection(currentPosition: Record<string, any>): s
  * @param {Array} experience - Array of experience entries
  * @returns {string} Markdown string
  */
-function generateExperienceSection(experience: Record<string, any>[]): string {
+function generateExperienceSection(experience?: DatedEntry[]): string {
   if (!experience || !Array.isArray(experience) || experience.length === 0) {
     return '';
   }
@@ -118,7 +209,7 @@ function generateExperienceSection(experience: Record<string, any>[]): string {
  * @param {Array} education - Array of education entries
  * @returns {string} Markdown string
  */
-function generateEducationSection(education: Record<string, any>[]): string {
+function generateEducationSection(education?: EducationEntry[]): string {
   if (!education || !Array.isArray(education) || education.length === 0) {
     return '';
   }
@@ -157,7 +248,7 @@ function generateEducationSection(education: Record<string, any>[]): string {
  * @param {Array} skills - Array of skill strings
  * @returns {string} Markdown string
  */
-function generateSkillsSection(skills: string[]): string {
+function generateSkillsSection(skills?: string[]): string {
   if (!skills || !Array.isArray(skills) || skills.length === 0) {
     return '';
   }
@@ -171,7 +262,7 @@ function generateSkillsSection(skills: string[]): string {
  * @param {Array} recentActivity - Array of { text, timestamp } objects
  * @returns {string} Markdown string
  */
-function generateActivitySection(recentActivity: Record<string, any>): string {
+function generateActivitySection(recentActivity?: ActivityEntry[]): string {
   if (!recentActivity || !Array.isArray(recentActivity) || recentActivity.length === 0) {
     return '';
   }
@@ -197,30 +288,34 @@ function generateActivitySection(recentActivity: Record<string, any>): string {
  * @param {Object} profile - Profile object matching profileTextSchema
  * @returns {string} Formatted markdown string
  */
-export function generateProfileMarkdown(profile: Record<string, any>): string {
+export function generateProfileMarkdown(profile: ProfileForMarkdown): string {
   if (!profile || typeof profile !== 'object') {
     throw new Error('Profile must be a non-null object');
   }
 
-  if (!profile.name) {
+  const name = asString(profile.name);
+  if (!name) {
     throw new Error('Profile must have a name');
   }
 
   const sections = [];
 
   // Header with name
-  sections.push(`# ${escapeMarkdown(profile.name)}`);
+  sections.push(`# ${escapeMarkdown(name)}`);
 
   // Metadata block
   const metadata = [];
-  if (profile.headline) {
-    metadata.push(`**Headline:** ${escapeMarkdown(profile.headline)}`);
+  const headline = asString(profile.headline);
+  const location = asString(profile.location);
+  const profileId = asString(profile.profile_id);
+  if (headline) {
+    metadata.push(`**Headline:** ${escapeMarkdown(headline)}`);
   }
-  if (profile.location) {
-    metadata.push(`**Location:** ${escapeMarkdown(profile.location)}`);
+  if (location) {
+    metadata.push(`**Location:** ${escapeMarkdown(location)}`);
   }
-  if (profile.profile_id) {
-    metadata.push(`**Profile ID:** ${profile.profile_id}`);
+  if (profileId) {
+    metadata.push(`**Profile ID:** ${profileId}`);
   }
 
   if (metadata.length > 0) {
@@ -228,8 +323,8 @@ export function generateProfileMarkdown(profile: Record<string, any>): string {
   }
 
   // About section
-  if (profile.about) {
-    let about = profile.about;
+  let about = asString(profile.about);
+  if (about) {
     if (about.length > MAX_ABOUT_LENGTH) {
       about = about.substring(0, MAX_ABOUT_LENGTH) + '...';
     }
@@ -237,31 +332,40 @@ export function generateProfileMarkdown(profile: Record<string, any>): string {
   }
 
   // Current position
-  const currentPositionSection = generateCurrentPositionSection(profile.current_position);
+  const currentPosition = asRecord(profile.current_position);
+  const currentPositionSection = generateCurrentPositionSection(
+    currentPosition && toDatedEntry(currentPosition)
+  );
   if (currentPositionSection) {
     sections.push(currentPositionSection);
   }
 
   // Experience
-  const experienceSection = generateExperienceSection(profile.experience);
+  const experienceSection = generateExperienceSection(
+    asRecords(profile.experience)?.map(toDatedEntry)
+  );
   if (experienceSection) {
     sections.push(experienceSection);
   }
 
   // Education
-  const educationSection = generateEducationSection(profile.education);
+  const educationSection = generateEducationSection(
+    asRecords(profile.education)?.map(toEducationEntry)
+  );
   if (educationSection) {
     sections.push(educationSection);
   }
 
   // Skills
-  const skillsSection = generateSkillsSection(profile.skills);
+  const skillsSection = generateSkillsSection(asStrings(profile.skills));
   if (skillsSection) {
     sections.push(skillsSection);
   }
 
   // Recent Activity
-  const activitySection = generateActivitySection(profile.recent_activity);
+  const activitySection = generateActivitySection(
+    asRecords(profile.recent_activity)?.map(toActivityEntry)
+  );
   if (activitySection) {
     sections.push(activitySection);
   }

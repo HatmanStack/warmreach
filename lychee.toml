@@ -29,4 +29,11 @@ exclude_path = [
   ".aws-sam",
   "dist",
   "coverage",
+  # The community-edition overlays. Their relative links (7 in
+  # .sync/overlays/README.md alone) are written for the community repo ROOT,
+  # where the overlay lands after the sync copies it. From .sync/overlays/ they
+  # resolve to nothing, so checking them here reports 7 false failures and
+  # checking them properly means checking the staged tree. markdownlint DOES
+  # cover these files; only link resolution is deferred.
+  ".sync/overlays",
 ]

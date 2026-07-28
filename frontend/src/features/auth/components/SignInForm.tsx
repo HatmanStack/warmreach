@@ -77,6 +77,7 @@ export function SignInForm({
                 className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                 onClick={onTogglePassword}
                 disabled={isLoading}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
               >
                 {showPassword ? (
                   <EyeOff className="h-4 w-4 text-slate-400" />

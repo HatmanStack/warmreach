@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -18,11 +17,20 @@ from shared_services.model_config import MODEL_ANALYSIS, MODEL_DEEP_RESEARCH, MO
 # implementation lives in the shared layer so it is reused everywhere; re-exported
 # at module level (MAX_RETRIES / RETRY_BACKOFF_BASE_S / _retry_openai_call) for
 # parity with the pro edition.
-from shared_services.openai_retry import (  # noqa: F401 — re-exported for parity
+from shared_services.openai_retry import (  # noqa: F401
     MAX_RETRIES,
     RETRY_BACKOFF_BASE_S,
-    retry_openai_call as _retry_openai_call,
+    retry_openai_call,
 )
+
+# Bound explicitly rather than aliased in the import. A `noqa: F401` on the
+# import suppresses the diagnostic but not ruff's isort fix, which still deletes
+# an unused aliased member when it normalises the block — so `ruff check --fix`
+# over this tree used to silently drop the parity re-export. An assignment is a
+# real use. (Written without the leading hash on purpose: ruff parses every
+# occurrence of that directive, prose included, and warns that the surrounding
+# sentence is a malformed one.)
+_retry_openai_call = retry_openai_call
 
 try:
     from prompts import (
@@ -147,7 +155,6 @@ def build_update_expression(set_parts: list[str], remove_parts: list[str]) -> st
     return ' '.join(clauses)
 
 
-
 def parse_iso_datetime(value):
     """Parse a stored ISO timestamp string; return None if missing/unparseable.
 
@@ -229,9 +236,7 @@ class LLMService(BaseService):
             idx_set, idx_remove, idx_values = research_index_parts(status, now_iso)
             self.table.update_item(
                 Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'},
-                UpdateExpression=build_update_expression(
-                    ['#s = :s', 'updated_at = :ts', *idx_set], idx_remove
-                ),
+                UpdateExpression=build_update_expression(['#s = :s', 'updated_at = :ts', *idx_set], idx_remove),
                 ExpressionAttributeNames={'#s': 'status'},
                 ExpressionAttributeValues={':s': status, ':ts': now_iso, **idx_values},
             )
@@ -262,7 +267,7 @@ class LLMService(BaseService):
                 if other_job_id != keep_job_id:
                     self._set_research_status(user_id, other_job_id, 'abandoned')
         except Exception as e:
-            logger.warning(f'Could not supersede prior research for {user_id}: {e}')
+            logger.warning('Could not supersede prior research for %s: %s', user_id, e)
 
     def _attach_research_response_id(self, user_id: str, job_id: str, response_id: str) -> None:
         """Persist openai_response_id + flip to in_progress after a successful kickoff.
@@ -276,14 +281,10 @@ class LLMService(BaseService):
         if not self.table:
             return
         try:
-            ip_set, ip_remove, ip_values = research_index_parts(
-                'in_progress', datetime.now(UTC).isoformat()
-            )
+            ip_set, ip_remove, ip_values = research_index_parts('in_progress', datetime.now(UTC).isoformat())
             self.table.update_item(
                 Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'},
-                UpdateExpression=build_update_expression(
-                    ['openai_response_id = :rid', '#s = :s', *ip_set], ip_remove
-                ),
+                UpdateExpression=build_update_expression(['openai_response_id = :rid', '#s = :s', *ip_set], ip_remove),
                 ExpressionAttributeNames={'#s': 'status'},
                 ExpressionAttributeValues={
                     ':rid': response_id,
@@ -293,9 +294,13 @@ class LLMService(BaseService):
             )
         except Exception as e:
             logger.error(
-                f'CRITICAL: could not persist openai_response_id {response_id} for research '
-                f'job {job_id} (user {user_id}): {e}; the OpenAI job is running but the row '
-                f'stays "starting" until recovered'
+                'CRITICAL: could not persist openai_response_id %s for research '
+                'job %s (user %s): %s; the OpenAI job is running but the row '
+                'stays "starting" until recovered',
+                response_id,
+                job_id,
+                user_id,
+                e,
             )
 
     def generate_ideas(self, user_profile: dict, prompt: str, job_id: str, user_id: str) -> dict[str, Any]:
@@ -321,7 +326,7 @@ class LLMService(BaseService):
                 user_data = self._format_user_profile_context(user_profile)
 
             llm_prompt = LINKEDIN_IDEAS_PROMPT.format(
-                user_data=user_data, raw_ideas=self._sanitize_prompt(prompt or '')
+                user_data=user_data, raw_ideas=self._escape_prompt_template(prompt or '')
             )
 
             response = self.openai_client.responses.create(
@@ -335,9 +340,9 @@ class LLMService(BaseService):
             # Routed through _extract_response_content so a truncated reply
             # raises rather than parsing as an empty idea list.
             content = self._extract_response_content(response)
-            logger.info(f'generate_ideas response: content_length={len(content)}')
+            logger.info('generate_ideas response: content_length=%s', len(content))
             ideas = self._parse_ideas(content)
-            logger.info(f'generate_ideas parsed {len(ideas)} ideas')
+            logger.info('generate_ideas parsed %s ideas', len(ideas))
 
             # Store in DynamoDB for future reference (24h TTL)
             if self.table and ideas:
@@ -362,10 +367,10 @@ class LLMService(BaseService):
             # user would be told nothing useful.
             raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
-            logger.error(f'OpenAI API error in generate_ideas: {e}')
+            logger.error('OpenAI API error in generate_ideas: %s', e)
             return {'success': False, 'error': 'Failed to generate ideas'}
         except Exception as e:
-            logger.error(f'Error in generate_ideas: {e}')
+            logger.error('Error in generate_ideas: %s', e)
             return {'success': False, 'error': 'Failed to generate ideas'}
 
     def _parse_ideas(self, content: str) -> list[str]:
@@ -430,7 +435,7 @@ class LLMService(BaseService):
         if user_data and user_data.get('name') != PROFILE_PLACEHOLDER_NAME:
             formatted_user_data = self._format_user_profile_context(user_data)
 
-        formatted_topics = '\n'.join([f'- {self._sanitize_prompt(idea, 500)}' for idea in selected_ideas])
+        formatted_topics = '\n'.join([f'- {self._escape_prompt_template(idea, 500)}' for idea in selected_ideas])
 
         research_prompt = LINKEDIN_RESEARCH_PROMPT.format(topics=formatted_topics, user_data=formatted_user_data)
 
@@ -456,11 +461,11 @@ class LLMService(BaseService):
             # user would be told nothing useful.
             raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
-            logger.error(f'OpenAI API error in research_selected_ideas: {e}')
+            logger.error('OpenAI API error in research_selected_ideas: %s', e)
             self._set_research_status(user_id, job_id, 'failed')
             return {'success': False, 'error': 'Failed to research selected ideas'}
         except Exception as e:
-            logger.error(f'Error in research_selected_ideas: {e}')
+            logger.error('Error in research_selected_ideas: %s', e)
             self._set_research_status(user_id, job_id, 'failed')
             return {'success': False, 'error': 'Failed to research selected ideas'}
 
@@ -510,7 +515,10 @@ class LLMService(BaseService):
                     found_kind = prefix
                     break
 
-            if not item:
+            # `found_kind` is only ever set alongside `item`, but checking both
+            # states the coupling instead of leaving it to the reader — and to the
+            # type checker, which cannot correlate two separate locals.
+            if not item or found_kind is None:
                 return {'success': False}
 
             # If item has an openai_response_id but no content, poll OpenAI directly
@@ -526,7 +534,7 @@ class LLMService(BaseService):
             return {'success': False}
 
         except Exception as e:
-            logger.error(f'Error in get_research_result: {e}')
+            logger.error('Error in get_research_result: %s', e)
             return {'success': False}
 
     def _check_openai_response(self, user_id: str, job_id: str, response_id: str, kind: str) -> dict[str, Any]:
@@ -540,7 +548,7 @@ class LLMService(BaseService):
         try:
             resp = self.openai_client.responses.retrieve(response_id)
             status = getattr(resp, 'status', None)
-            logger.info(f'OpenAI response status for {response_id}: {status}')
+            logger.info('OpenAI response status for %s: %s', response_id, status)
 
             if status in ('failed', 'cancelled', 'expired', 'incomplete'):
                 terminal = 'cancelled' if status == 'cancelled' else 'failed'
@@ -553,7 +561,7 @@ class LLMService(BaseService):
             content = self._extract_response_content(resp)
 
             if not content or not content.strip():
-                logger.error(f'OpenAI response {response_id} completed but returned empty content')
+                logger.error('OpenAI response %s completed but returned empty content', response_id)
                 # Terminal: don't let pollers/reconciler re-check a dead job.
                 self._set_research_status(user_id, job_id, 'failed')
                 return {
@@ -580,7 +588,7 @@ class LLMService(BaseService):
             return {'success': True, 'content': content}
 
         except Exception as e:
-            logger.error(f'Error checking OpenAI response: {e}')
+            logger.error('Error checking OpenAI response: %s', e)
             return {'success': False}
 
     def get_active_research(self, user_id: str) -> dict[str, Any]:
@@ -615,7 +623,7 @@ class LLMService(BaseService):
                     break
                 query_kwargs['ExclusiveStartKey'] = last
         except Exception as e:
-            logger.error(f'get_active_research query failed for {user_id}: {e}')
+            logger.error('get_active_research query failed for %s: %s', user_id, e)
             return {'success': False}
 
         active = [i for i in items if i.get('status') in ('starting', 'in_progress')]
@@ -692,7 +700,7 @@ class LLMService(BaseService):
             resp = self.table.get_item(Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'})
             item = resp.get('Item')
         except Exception as e:
-            logger.error(f'cancel_research lookup failed for {user_id}/{job_id}: {e}')
+            logger.error('cancel_research lookup failed for %s/%s: %s', user_id, job_id, e)
             return {'success': False}
         if not item:
             return {'success': False, 'error': 'Research job not found'}
@@ -710,7 +718,7 @@ class LLMService(BaseService):
             except Exception as e:
                 # The job may already be completed/failed on OpenAI, in which case
                 # cancel 404s/409s. Not fatal — we still mark our row cancelled.
-                logger.info(f'OpenAI cancel for {response_id} was a no-op or failed: {e}')
+                logger.info('OpenAI cancel for %s was a no-op or failed: %s', response_id, e)
 
         # Flip the row to 'cancelled'. Unlike the best-effort _set_research_status,
         # surface a failure here: if this write is lost the OpenAI job may still
@@ -719,14 +727,12 @@ class LLMService(BaseService):
         try:
             self.table.update_item(
                 Key={'PK': f'USER#{user_id}', 'SK': f'RESEARCH#{job_id}'},
-                UpdateExpression=build_update_expression(
-                    ['#s = :s', 'updated_at = :ts'], ['GSI3PK', 'GSI3SK']
-                ),
+                UpdateExpression=build_update_expression(['#s = :s', 'updated_at = :ts'], ['GSI3PK', 'GSI3SK']),
                 ExpressionAttributeNames={'#s': 'status'},
                 ExpressionAttributeValues={':s': 'cancelled', ':ts': datetime.now(UTC).isoformat()},
             )
         except Exception as e:
-            logger.error(f'cancel_research could not record cancellation for {user_id}/{job_id}: {e}')
+            logger.error('cancel_research could not record cancellation for %s/%s: %s', user_id, job_id, e)
             return {'success': False, 'error': 'Failed to record cancellation'}
         return {'success': True}
 
@@ -758,7 +764,7 @@ class LLMService(BaseService):
 
         # Try output_text first (standard responses)
         if hasattr(response, 'output_text') and response.output_text:
-            logger.info(f'Extracted content from output_text, length={len(response.output_text)}')
+            logger.info('Extracted content from output_text, length=%s', len(response.output_text))
             return response.output_text
 
         # Fallback: extract text from output array (deep research responses)
@@ -774,7 +780,7 @@ class LLMService(BaseService):
                     text_parts.append(item.text)
             if text_parts:
                 content = '\n'.join(text_parts)
-                logger.info(f'Extracted content from output array, length={len(content)}')
+                logger.info('Extracted content from output array, length=%s', len(content))
                 return content
 
         logger.warning('No content found in OpenAI response (neither output_text nor output array)')
@@ -816,7 +822,7 @@ class LLMService(BaseService):
                 user_data=user_data,
                 research_content=research_text,
                 post_content=post_text,
-                ideas_content=self._sanitize_prompt(str(ideas_content) if ideas_content else '', 3000),
+                ideas_content=self._escape_prompt_template(str(ideas_content) if ideas_content else '', 3000),
             )
 
             response = self.openai_client.responses.create(
@@ -854,10 +860,10 @@ class LLMService(BaseService):
             # user would be told nothing useful.
             raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
-            logger.error(f'OpenAI API error in synthesize_research: {e}')
+            logger.error('OpenAI API error in synthesize_research: %s', e)
             return {'success': False, 'error': 'Failed to synthesize research into post'}
         except Exception as e:
-            logger.error(f'Error in synthesize_research: {e}')
+            logger.error('Error in synthesize_research: %s', e)
             return {'success': False, 'error': 'Failed to synthesize research into post'}
 
     def generate_message(
@@ -926,7 +932,7 @@ class LLMService(BaseService):
             if message_history:
                 for msg in message_history[:10]:  # Limit to last 10 messages
                     role = msg.get('type', 'unknown')
-                    content = self._sanitize_prompt(msg.get('content', ''), 500)
+                    content = self._escape_prompt_template(msg.get('content', ''), 500)
                     history_text += f'{role}: {content}\n'
             if not history_text:
                 history_text = 'No previous messages.'
@@ -934,12 +940,12 @@ class LLMService(BaseService):
             llm_prompt = GENERATE_MESSAGE_PROMPT.format(
                 sender_data=sender_data or 'No sender profile provided.',
                 recipient_name=recipient_name or 'Unknown',
-                recipient_position=self._sanitize_prompt(recipient_position, 200),
-                recipient_company=self._sanitize_prompt(recipient_company, 200),
-                recipient_headline=self._sanitize_prompt(recipient_headline, 300),
-                recipient_tags=self._sanitize_prompt(recipient_tags, 500),
+                recipient_position=self._escape_prompt_template(recipient_position, 200),
+                recipient_company=self._escape_prompt_template(recipient_company, 200),
+                recipient_headline=self._escape_prompt_template(recipient_headline, 300),
+                recipient_tags=self._escape_prompt_template(recipient_tags, 500),
                 recipient_context=recipient_context or 'No additional context available.',
-                conversation_topic=self._sanitize_prompt(conversation_topic, 1000),
+                conversation_topic=self._escape_prompt_template(conversation_topic, 1000),
                 message_history=history_text,
             )
 
@@ -964,10 +970,10 @@ class LLMService(BaseService):
             # user would be told nothing useful.
             raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
-            logger.error(f'OpenAI API error in generate_message: {e}')
+            logger.error('OpenAI API error in generate_message: %s', e)
             return {'generatedMessage': '', 'confidence': 0, 'error': 'Failed to generate message'}
         except Exception as e:
-            logger.error(f'Error in generate_message: {e}')
+            logger.error('Error in generate_message: %s', e)
             return {'generatedMessage': '', 'confidence': 0, 'error': 'Failed to generate message'}
 
     def _generate_icebreaker(
@@ -991,17 +997,17 @@ class LLMService(BaseService):
                 for note in connection_notes:
                     content = note.get('content', '') if isinstance(note, dict) else str(note)
                     if content:
-                        note_lines.append(f'- {self._sanitize_prompt(content, 500)}')
+                        note_lines.append(f'- {self._escape_prompt_template(content, 500)}')
                 if note_lines:
                     notes_text = '\n'.join(note_lines)
 
             llm_prompt = GENERATE_ICEBREAKER_PROMPT.format(
                 sender_data=sender_data or 'No sender profile provided.',
                 recipient_name=recipient_name or 'Unknown',
-                recipient_position=self._sanitize_prompt(recipient_position, 200),
-                recipient_company=self._sanitize_prompt(recipient_company, 200),
-                recipient_headline=self._sanitize_prompt(recipient_headline, 300),
-                recipient_tags=self._sanitize_prompt(recipient_tags, 500),
+                recipient_position=self._escape_prompt_template(recipient_position, 200),
+                recipient_company=self._escape_prompt_template(recipient_company, 200),
+                recipient_headline=self._escape_prompt_template(recipient_headline, 300),
+                recipient_tags=self._escape_prompt_template(recipient_tags, 500),
                 recipient_context=recipient_context or 'No additional context available.',
                 connection_notes=notes_text,
             )
@@ -1030,10 +1036,10 @@ class LLMService(BaseService):
             # user would be told nothing useful.
             raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
-            logger.error(f'OpenAI API error in generate_icebreaker: {e}')
+            logger.error('OpenAI API error in generate_icebreaker: %s', e)
             return {'icebreakers': [], 'error': 'Failed to generate icebreakers'}
         except Exception as e:
-            logger.error(f'Error in generate_icebreaker: {e}')
+            logger.error('Error in generate_icebreaker: %s', e)
             return {'icebreakers': [], 'error': 'Failed to generate icebreakers'}
 
     @staticmethod
@@ -1062,7 +1068,7 @@ class LLMService(BaseService):
             # Format sample messages for the prompt (up to 20, truncated to 200 chars)
             formatted_samples = []
             for msg in sample_messages[:20]:
-                content = self._sanitize_prompt(str(msg.get('content', ''))[:200], 200)
+                content = self._escape_prompt_template(str(msg.get('content', ''))[:200], 200)
                 got_response = 'got response' if msg.get('got_response') else 'no response'
                 formatted_samples.append(f'- [{got_response}] {content}')
 
@@ -1110,10 +1116,10 @@ class LLMService(BaseService):
             # user would be told nothing useful.
             raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
-            logger.error(f'OpenAI API error in analyze_message_patterns: {e}')
+            logger.error('OpenAI API error in analyze_message_patterns: %s', e)
             return {'insights': [], 'analyzedAt': datetime.now(UTC).isoformat(), 'error': str(e)}
         except Exception as e:
-            logger.error(f'Error in analyze_message_patterns: {e}')
+            logger.error('Error in analyze_message_patterns: %s', e)
             return {'insights': [], 'analyzedAt': datetime.now(UTC).isoformat(), 'error': str(e)}
 
     def analyze_tone(self, draft_text, recipient_name='', recipient_position='', relationship_status=''):
@@ -1131,10 +1137,10 @@ class LLMService(BaseService):
         """
         try:
             prompt = ANALYZE_TONE_PROMPT.format(
-                draft_text=self._sanitize_prompt(draft_text),
-                recipient_name=self._sanitize_prompt(recipient_name, 200),
-                recipient_position=self._sanitize_prompt(recipient_position, 200),
-                relationship_status=self._sanitize_prompt(relationship_status, 100),
+                draft_text=self._escape_prompt_template(draft_text),
+                recipient_name=self._escape_prompt_template(recipient_name, 200),
+                recipient_position=self._escape_prompt_template(recipient_position, 200),
+                relationship_status=self._escape_prompt_template(relationship_status, 100),
             )
 
             response = self.openai_client.responses.create(
@@ -1153,15 +1159,15 @@ class LLMService(BaseService):
             # user would be told nothing useful.
             raise
         except (openai.APIError, openai.APITimeoutError, openai.RateLimitError) as e:
-            logger.error(f'OpenAI API error in analyze_tone: {e}')
+            logger.error('OpenAI API error in analyze_tone: %s', e)
             return {'error': 'Tone analysis failed'}
         except Exception as e:
-            logger.error(f'Error in analyze_tone: {e}')
+            logger.error('Error in analyze_tone: %s', e)
             return {'error': 'Tone analysis failed'}
 
     def _parse_tone_response(self, response_text: str) -> dict[str, Any]:
         """Parse structured tone analysis response into a dict."""
-        defaults = {
+        defaults: dict[str, Any] = {
             'professionalism': 5,
             'warmth': 5,
             'clarity': 5,
@@ -1173,7 +1179,7 @@ class LLMService(BaseService):
         if not response_text:
             return defaults
 
-        result = {}
+        result: dict[str, Any] = {}
 
         score_fields = {
             'PROFESSIONALISM': 'professionalism',
@@ -1234,7 +1240,7 @@ class LLMService(BaseService):
             return '\n'.join(parts)
 
         except Exception as e:
-            logger.debug(f'Could not fetch profile context for {connection_id}: {e}')
+            logger.debug('Could not fetch profile context for %s: %s', connection_id, e)
             return ''
 
     # Private helpers
@@ -1257,8 +1263,24 @@ class LLMService(BaseService):
             parts.append(f'{key}: {value}')
         return '\n'.join(parts) + ('\n' if parts else '')
 
-    def _sanitize_prompt(self, text: str, max_length: int = 2000) -> str:
-        """Sanitize user-provided prompt text to prevent injection attacks."""
+    def _escape_prompt_template(self, text: str, max_length: int = 2000) -> str:
+        """Make user-supplied text safe to interpolate into a ``.format()`` prompt.
+
+        Bounds the length, strips control characters (newlines and tabs
+        survive), and doubles ``{`` / ``}`` so the value cannot be read as a
+        format placeholder — which would otherwise raise ``KeyError`` on the
+        surrounding ``.format()`` call, or splice one of the template's other
+        arguments into the middle of the user's text.
+
+        That is format-string safety. It is **not** a prompt-injection boundary,
+        and the distinction is deliberate rather than pedantic: text that reaches
+        a model can still instruct that model, and no amount of escaping changes
+        that. Nor do the usual surrounding mitigations apply here — every call in
+        this service passes one flattened ``input`` string with no system/user
+        role separation, and ``research_selected_ideas`` hands the model
+        web-search and code-interpreter tools. Treat anything the model returns
+        from a prompt built with this helper as untrusted input.
+        """
         if not text:
             return ''
         # Truncate to max length

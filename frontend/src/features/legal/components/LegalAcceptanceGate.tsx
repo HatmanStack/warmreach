@@ -2,7 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useLegalAcceptance } from '../hooks/useLegalAcceptance';
-import { documentBody, type LegalDocumentId } from '../documents';
+import {
+  documentBody,
+  REFERENCE_DOCUMENT_IDS,
+  REFERENCE_DOCUMENT_TITLES,
+  type LegalReferenceDocumentId,
+  type ReadableDocumentId,
+} from '../documents';
 
 /**
  * Blocking acknowledgment of the legal documents.
@@ -29,7 +35,7 @@ export const LegalAcceptanceGate: React.FC = () => {
     isAccepting,
     acceptError,
   } = useLegalAcceptance();
-  const [openDocument, setOpenDocument] = useState<LegalDocumentId | null>(null);
+  const [openDocument, setOpenDocument] = useState<ReadableDocumentId | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -109,7 +115,8 @@ export const LegalAcceptanceGate: React.FC = () => {
 
   const firstOutstanding = outstanding[0];
   if (!firstOutstanding) return null;
-  const active = openDocument ?? firstOutstanding.documentId;
+  const active: ReadableDocumentId = openDocument ?? firstOutstanding.documentId;
+  const activeReference = REFERENCE_DOCUMENT_IDS.find((id) => id === active);
   const activeDoc = outstanding.find((d) => d.documentId === active) ?? firstOutstanding;
 
   return (
@@ -134,23 +141,42 @@ export const LegalAcceptanceGate: React.FC = () => {
           </p>
         </div>
 
-        {outstanding.length > 1 && (
-          <div className="flex flex-wrap gap-2 border-b px-6 py-3">
-            {outstanding.map((doc) => (
-              <button
-                key={doc.documentId}
-                onClick={() => setOpenDocument(doc.documentId)}
-                className={`rounded-md px-3 py-1.5 text-sm ${
-                  doc.documentId === active
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                }`}
-              >
-                {doc.title}
-              </button>
-            ))}
-          </div>
-        )}
+        {/*
+          Reference documents are always tabbed, even when a single document is
+          outstanding: the privacy policy's whole retention section is a pointer
+          to one of them, so without a way to open it the reader is being asked
+          to accept a policy with a hole in it. They are display only — nothing
+          here reaches the acceptance payload below.
+        */}
+        <div className="flex flex-wrap gap-2 border-b px-6 py-3">
+          {outstanding.map((doc) => (
+            <button
+              key={doc.documentId}
+              onClick={() => setOpenDocument(doc.documentId)}
+              className={`rounded-md px-3 py-1.5 text-sm ${
+                doc.documentId === active
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
+              }`}
+            >
+              {doc.title}
+            </button>
+          ))}
+          {REFERENCE_DOCUMENT_IDS.map((id: LegalReferenceDocumentId) => (
+            <button
+              key={id}
+              onClick={() => setOpenDocument(id)}
+              data-testid={`legal-reference-tab-${id}`}
+              className={`rounded-md px-3 py-1.5 text-sm ${
+                id === active
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
+              }`}
+            >
+              {REFERENCE_DOCUMENT_TITLES[id]} (reference)
+            </button>
+          ))}
+        </div>
 
         <div
           className="prose prose-sm dark:prose-invert max-w-none flex-1 overflow-y-auto p-6"
@@ -197,7 +223,9 @@ export const LegalAcceptanceGate: React.FC = () => {
           </button>
 
           <p className="text-center text-xs text-muted-foreground">
-            Currently viewing: {activeDoc.title} (version {activeDoc.version})
+            {activeReference
+              ? `Currently viewing: ${REFERENCE_DOCUMENT_TITLES[activeReference]} — reference only, not part of this acceptance`
+              : `Currently viewing: ${activeDoc.title} (version ${activeDoc.version})`}
           </p>
         </div>
       </div>

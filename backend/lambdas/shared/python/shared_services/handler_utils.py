@@ -24,6 +24,87 @@ logger = logging.getLogger(__name__)
 _DEV_MODE_WARNED = False
 
 
+class PartialScanError(Exception):
+    """Raised when one or more :func:`parallel_scan` segments failed.
+
+    Carries both halves of the outcome: ``items`` are the rows the *surviving*
+    segments finished paginating, and ``errors`` are the per-segment exceptions.
+
+    The point of the type is that the caller has to choose. Returning partial
+    data under the normal return type would turn a loud failure into a quiet
+    wrong answer — an admin metric or a reconciler sweep computed over a subset
+    of the table, with nothing to distinguish it from a complete one. Raising
+    without the items would throw away every other segment's completed work,
+    which is the most expensive possible way to fail.
+    """
+
+    def __init__(self, items: list[dict], errors: list[BaseException]):
+        self.items = items
+        self.errors = errors
+        super().__init__(
+            f'{len(errors)} of the parallel scan segments failed; '
+            f'{len(items)} items were collected from the segments that succeeded'
+        )
+
+
+class ScanResult(list):
+    """A :func:`parallel_scan` result that also reports whether it is complete.
+
+    Subclasses ``list`` deliberately: every existing caller treats the return
+    value as a list and keeps working unchanged, while a caller that passes
+    ``max_items`` can ask ``result.truncated`` instead of guessing from the
+    length. ``len(result) == max_items`` is not the same question — a table that
+    happens to hold exactly ``max_items`` rows is complete, not truncated.
+    """
+
+    def __init__(self, items: Any = (), *, truncated: bool = False):
+        super().__init__(items)
+        self.truncated = truncated
+
+
+class _ItemBudget:
+    """Thread-safe global item cap shared by every parallel-scan segment.
+
+    The cap has to be global rather than per-segment: DynamoDB distributes rows
+    across segments unevenly, so ``max_items // total_segments`` would either
+    over-collect or stop a busy segment while idle ones still had budget.
+    """
+
+    def __init__(self, max_items: int | None):
+        import threading
+
+        self._remaining = max_items
+        self._lock = threading.Lock()
+        self.truncated = False
+
+    @property
+    def exhausted(self) -> bool:
+        return self._remaining is not None and self._remaining <= 0
+
+    def mark_truncated(self) -> None:
+        self.truncated = True
+
+    def take(self, page: list[dict]) -> list[dict]:
+        """Return the prefix of ``page`` that fits in the remaining budget.
+
+        Marks the budget truncated only when rows were actually dropped. A page
+        that exactly consumes the last of the budget has lost nothing, and a
+        segment that returns an empty page after another exhausted the budget has
+        lost nothing either — reporting either as truncated would raise a false
+        alarm on every exact-fit scan.
+        """
+        if self._remaining is None:
+            return page
+        with self._lock:
+            if len(page) <= self._remaining:
+                self._remaining -= len(page)
+                return page
+            accepted = page[: max(self._remaining, 0)]
+            self._remaining = 0
+            self.truncated = True
+            return accepted
+
+
 def parse_days(body: dict | None, default: int = 30, max_: int = 365) -> int:
     """Parse a ``days`` field from an incoming JSON body with clamping.
 
@@ -52,7 +133,7 @@ def sanitize_request_context(request_context: dict | None) -> dict:
     """Remove sensitive fields from requestContext before logging."""
     if not request_context:
         return {}
-    sanitized = {}
+    sanitized: dict[str, Any] = {}
     sensitive_keys = {'authorizer', 'authorization'}
     for key, value in request_context.items():
         if key.lower() in sensitive_keys:
@@ -213,7 +294,8 @@ def parallel_scan(
     *,
     total_segments: int = 4,
     scan_kwargs: dict | None = None,
-) -> list[dict]:
+    max_items: int | None = None,
+) -> ScanResult:
     """Run a DynamoDB parallel scan and return all items across segments.
 
     Fans out ``total_segments`` concurrent scans using a thread pool. Each
@@ -228,9 +310,22 @@ def parallel_scan(
         scan_kwargs: Additional kwargs passed through to ``table.scan``
             (e.g. ``FilterExpression``, ``ProjectionExpression``,
             ``ExpressionAttributeValues``, ``ExpressionAttributeNames``).
+        max_items: Stop collecting once this many items have been accumulated
+            across all segments, and set ``truncated`` on the result. Enforced
+            per page rather than after collection, so the surplus rows are never
+            materialised — an unbounded accumulation behind a small Lambda OOMs
+            before it times out, which is a cliff rather than a slowdown. ``None``
+            (the default) leaves the scan unbounded, exactly as before.
 
     Returns:
-        Flat list of items collected from every segment.
+        :class:`ScanResult` — a list of the items collected from every segment,
+        carrying ``truncated`` so a caller that capped the scan can say so
+        instead of inferring it from the length.
+
+    Raises:
+        PartialScanError: at least one segment failed. The exception carries the
+            items the other segments did collect, so a caller that can act on
+            partial data may, and one that cannot still fails.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -240,24 +335,61 @@ def parallel_scan(
     base_kwargs.pop('Segment', None)
     base_kwargs.pop('TotalSegments', None)
 
+    budget = _ItemBudget(max_items)
+
     def _scan_segment(segment: int) -> list[dict]:
         items: list[dict] = []
         params = {**base_kwargs, 'Segment': segment, 'TotalSegments': total_segments}
         while True:
+            if budget.exhausted:
+                # Another segment consumed the budget while this one still had a
+                # cursor open, or before it read anything at all. Either way this
+                # segment cannot prove it was empty, so the answer is reported as
+                # incomplete. That is conservative in the safe direction: the one
+                # false positive is a multi-segment scan whose remaining segments
+                # happened to hold nothing, and over-reporting "you may be seeing
+                # part of the data" beats silently under-reporting it.
+                budget.mark_truncated()
+                break
             response = table.scan(**params)
-            items.extend(response.get('Items', []))
+            items.extend(budget.take(response.get('Items', [])))
             last_key = response.get('LastEvaluatedKey')
             if not last_key:
+                break
+            if budget.exhausted:
+                # More rows exist behind this cursor and there is no budget left
+                # for them: the answer is genuinely incomplete, which a caller
+                # that stopped exactly at the end of the table is not.
+                budget.mark_truncated()
                 break
             params['ExclusiveStartKey'] = last_key
         return items
 
     all_items: list[dict] = []
+    errors: list[BaseException] = []
     with ThreadPoolExecutor(max_workers=total_segments) as executor:
         futures = [executor.submit(_scan_segment, i) for i in range(total_segments)]
         for future in as_completed(futures):
-            all_items.extend(future.result())
-    return all_items
+            # Collect results and failures separately. Calling future.result()
+            # inline re-raised on the first failure and discarded every other
+            # segment's completed pagination — throwing away the expensive part
+            # of the work in order to report the failure.
+            error = future.exception()
+            if error is not None:
+                errors.append(error)
+            else:
+                all_items.extend(future.result())
+    if errors:
+        logger.error(
+            '%s of %s parallel scan segments failed; %s items collected from the rest',
+            len(errors),
+            total_segments,
+            len(all_items),
+        )
+        raise PartialScanError(all_items, errors)
+    if budget.truncated:
+        logger.warning('parallel scan capped at max_items=%s; the result is incomplete', max_items)
+    return ScanResult(all_items, truncated=budget.truncated)
 
 
 def make_goal_intelligence_service(table: Any) -> Any:

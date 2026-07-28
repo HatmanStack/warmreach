@@ -118,9 +118,17 @@ export function buildTierInfo(overrides: Partial<TierInfo> = {}): TierInfo {
       priority_support: true,
       unlimited_messages: true,
     },
+    // TierQuotas is a flat name -> limit map, matching what tier_service.py
+    // actually returns (daily/hourly/monthly_linkedin_interactions, li_actions).
+    // The previous fixture used {used, limit} objects under quota names the
+    // backend has never emitted; nothing could have matched it.
     quotas: {
-      messages_sent: { used: 10, limit: 100 },
-      profiles_scraped: { used: 5, limit: 50 },
+      daily_linkedin_interactions: 50,
+      hourly_linkedin_interactions: 15,
+      monthly_linkedin_interactions: 500,
+    },
+    rateLimits: {
+      linkedin_interactions_per_minute: 5,
     },
     ...overrides,
   };

@@ -12,6 +12,11 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 // Helper to parse boolean-like env values
+/**
+ * @param {string | undefined | null} value
+ * @param {boolean} [defaultValue]
+ * @returns {boolean}
+ */
 const parseBoolean = (value, defaultValue = false) => {
   if (value === undefined || value === null) return defaultValue;
   const normalized = String(value).trim().toLowerCase();
@@ -19,6 +24,36 @@ const parseBoolean = (value, defaultValue = false) => {
   if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
   return defaultValue;
 };
+
+/**
+ * Read an integer environment variable.
+ *
+ * Replaces the hand-written env reads that were the whole of this file's
+ * `checkJs` fallout: `process.env.X` is
+ * `string | undefined` and `parseInt` takes `string`. Behaviour is unchanged --
+ * an unset, empty, unparseable or zero value yields the fallback, exactly as
+ * `|| fallback` did -- with one deliberate hardening: an explicit radix, so a
+ * value like "0x10" reads as 0 rather than 16.
+ *
+ * Every variable this file reads is an optional tuning knob with a working
+ * default, so this helper does not throw on a missing value. A loud-failure
+ * variant was written and then removed: nothing in this file needs one, and an
+ * exported helper with no call sites is the same debt Phase 1 deleted when it
+ * removed the unadopted `api_error` (bb19b592).
+ *
+ * @param {string} name
+ * @param {number} fallback
+ * @returns {number}
+ */
+export const envInt = (name, fallback) => parseInt(process.env[name] ?? '', 10) || fallback;
+
+/**
+ * Read a floating-point environment variable. See {@link envInt}.
+ * @param {string} name
+ * @param {number} fallback
+ * @returns {number}
+ */
+export const envFloat = (name, fallback) => parseFloat(process.env[name] ?? '') || fallback;
 
 // Hard-coded safety ceilings — cannot be exceeded via env vars.
 // These protect LinkedIn's ecosystem and the project's reputation.
@@ -32,7 +67,7 @@ export const RATE_LIMIT_CEILINGS = {
 
 export const config = {
   // Server
-  port: parseInt(process.env.PORT) || 3001,
+  port: envInt('PORT', 3001),
   nodeEnv: process.env.NODE_ENV || 'development',
 
   // CORS
@@ -49,17 +84,17 @@ export const config = {
     baseUrl: parseBoolean(process.env.LINKEDIN_TESTING_MODE, false)
       ? process.env.LINKEDIN_BASE_URL || 'http://localhost:3333'
       : process.env.LINKEDIN_BASE_URL || 'https://www.linkedin.com',
-    recencyHours: parseInt(process.env.RECENCY_HOURS) || 6,
-    recencyDays: parseInt(process.env.RECENCY_DAYS) || 5,
-    recencyWeeks: parseInt(process.env.RECENCY_WEEKS) || 3,
-    historyToCheck: parseInt(process.env.HISTORY_TO_CHECK) || 4,
-    threshold: parseInt(process.env.THRESHOLD) || 8,
-    pageNumberStart: parseInt(process.env.PAGE_NUMBER_START) || 1,
-    pageNumberEnd: parseInt(process.env.PAGE_NUMBER_END) || 100,
+    recencyHours: envInt('RECENCY_HOURS', 6),
+    recencyDays: envInt('RECENCY_DAYS', 5),
+    recencyWeeks: envInt('RECENCY_WEEKS', 3),
+    historyToCheck: envInt('HISTORY_TO_CHECK', 4),
+    threshold: envInt('THRESHOLD', 8),
+    pageNumberStart: envInt('PAGE_NUMBER_START', 1),
+    pageNumberEnd: envInt('PAGE_NUMBER_END', 100),
     // Dev/testing cap on how many connections per list (ally/incoming/outgoing)
     // profile-init ingests. 0 = no cap (ingest the entire list). Set e.g. 10 to
     // start small while iterating instead of pulling the full network.
-    maxConnectionsPerType: parseInt(process.env.PROFILE_INIT_MAX_CONNECTIONS) || 0,
+    maxConnectionsPerType: envInt('PROFILE_INIT_MAX_CONNECTIONS', 0),
     // Dev toggle: when true, profile-init re-scrapes connections even if an edge
     // already exists (normally an existing edge short-circuits the scrape). Lets
     // us re-run scraping against the same connections while iterating on
@@ -80,10 +115,10 @@ export const config = {
   puppeteer: {
     // Accept a variety of truthy/falsey strings; default to true if not specified
     headless: parseBoolean(process.env.HEADLESS, true),
-    slowMo: parseInt(process.env.SLOW_MO) || 50,
+    slowMo: envInt('SLOW_MO', 50),
     viewport: {
-      width: parseInt(process.env.VIEWPORT_WIDTH) || 1200,
-      height: parseInt(process.env.VIEWPORT_HEIGHT) || 1200,
+      width: envInt('VIEWPORT_WIDTH', 1200),
+      height: envInt('VIEWPORT_HEIGHT', 1200),
     },
     // Anti-fingerprint config
     userDataDir: process.env.PUPPETEER_USER_DATA_DIR || '',
@@ -100,101 +135,95 @@ export const config = {
 
   // Timeouts
   timeouts: {
-    default: parseInt(process.env.DEFAULT_TIMEOUT) || 30000,
-    navigation: parseInt(process.env.NAVIGATION_TIMEOUT) || 50000,
-    login: parseInt(process.env.LOGIN_SECURITY_TIMEOUT) || 0,
+    default: envInt('DEFAULT_TIMEOUT', 30000),
+    navigation: envInt('NAVIGATION_TIMEOUT', 50000),
+    login: envInt('LOGIN_SECURITY_TIMEOUT', 0),
   },
 
   // LinkedIn Interactions
   linkedinInteractions: {
     // Session Management (Requirement 6.5)
-    sessionTimeout: parseInt(process.env.LINKEDIN_SESSION_TIMEOUT) || 3600000, // 1 hour
-    sessionHealthCheckInterval: parseInt(process.env.SESSION_HEALTH_CHECK_INTERVAL) || 300000, // 5 minutes
-    maxSessionErrors: parseInt(process.env.MAX_SESSION_ERRORS) || 5,
-    sessionRecoveryTimeout: parseInt(process.env.SESSION_RECOVERY_TIMEOUT) || 60000, // 1 minute
+    sessionTimeout: envInt('LINKEDIN_SESSION_TIMEOUT', 3600000), // 1 hour
+    sessionHealthCheckInterval: envInt('SESSION_HEALTH_CHECK_INTERVAL', 300000), // 5 minutes
+    maxSessionErrors: envInt('MAX_SESSION_ERRORS', 5),
+    sessionRecoveryTimeout: envInt('SESSION_RECOVERY_TIMEOUT', 60000), // 1 minute
 
     // Concurrency Control (Requirement 4.4)
-    maxConcurrentInteractions: parseInt(process.env.MAX_CONCURRENT_INTERACTIONS) || 3,
-    maxConcurrentSessions: parseInt(process.env.MAX_CONCURRENT_SESSIONS) || 1,
-    interactionQueueSize: parseInt(process.env.INTERACTION_QUEUE_SIZE) || 50,
+    maxConcurrentInteractions: envInt('MAX_CONCURRENT_INTERACTIONS', 3),
+    maxConcurrentSessions: envInt('MAX_CONCURRENT_SESSIONS', 1),
+    interactionQueueSize: envInt('INTERACTION_QUEUE_SIZE', 50),
 
     // Rate Limiting (Requirement 9.4)
-    rateLimitWindow: parseInt(process.env.RATE_LIMIT_WINDOW) || 60000, // 1 minute
-    rateLimitMax: Math.min(
-      parseInt(process.env.RATE_LIMIT_MAX) || 10,
-      RATE_LIMIT_CEILINGS.rateLimitMax
-    ),
+    rateLimitWindow: envInt('RATE_LIMIT_WINDOW', 60000), // 1 minute
+    rateLimitMax: Math.min(envInt('RATE_LIMIT_MAX', 10), RATE_LIMIT_CEILINGS.rateLimitMax),
     dailyInteractionLimit: Math.min(
-      parseInt(process.env.DAILY_INTERACTION_LIMIT) || 500,
+      envInt('DAILY_INTERACTION_LIMIT', 500),
       RATE_LIMIT_CEILINGS.dailyInteractionLimit
     ),
     hourlyInteractionLimit: Math.min(
-      parseInt(process.env.HOURLY_INTERACTION_LIMIT) || 100,
+      envInt('HOURLY_INTERACTION_LIMIT', 100),
       RATE_LIMIT_CEILINGS.hourlyInteractionLimit
     ),
 
     // Retry Configuration (Requirement 4.4)
-    retryAttempts: parseInt(process.env.INTERACTION_RETRY_ATTEMPTS) || 3,
-    retryBaseDelay: parseInt(process.env.INTERACTION_RETRY_BASE_DELAY) || 1000, // 1 second
-    retryMaxDelay: parseInt(process.env.INTERACTION_RETRY_MAX_DELAY) || 300000, // 5 minutes
-    retryJitterFactor: parseFloat(process.env.RETRY_JITTER_FACTOR) || 0.1,
+    retryAttempts: envInt('INTERACTION_RETRY_ATTEMPTS', 3),
+    retryBaseDelay: envInt('INTERACTION_RETRY_BASE_DELAY', 1000), // 1 second
+    retryMaxDelay: envInt('INTERACTION_RETRY_MAX_DELAY', 300000), // 5 minutes
+    retryJitterFactor: envFloat('RETRY_JITTER_FACTOR', 0.1),
 
     // Human Behavior Simulation (Requirement 9.4)
-    humanDelayMin: parseInt(process.env.HUMAN_DELAY_MIN) || 1000,
-    humanDelayMax: parseInt(process.env.HUMAN_DELAY_MAX) || 3000,
+    humanDelayMin: envInt('HUMAN_DELAY_MIN', 1000),
+    humanDelayMax: envInt('HUMAN_DELAY_MAX', 3000),
     actionsPerMinute: Math.min(
-      parseInt(process.env.ACTIONS_PER_MINUTE) || 8,
+      envInt('ACTIONS_PER_MINUTE', 8),
       RATE_LIMIT_CEILINGS.actionsPerMinute
     ),
-    actionsPerHour: Math.min(
-      parseInt(process.env.ACTIONS_PER_HOUR) || 100,
-      RATE_LIMIT_CEILINGS.actionsPerHour
-    ),
+    actionsPerHour: Math.min(envInt('ACTIONS_PER_HOUR', 100), RATE_LIMIT_CEILINGS.actionsPerHour),
 
     // Typing Simulation
-    typingSpeedMin: parseInt(process.env.TYPING_SPEED_MIN) || 80, // WPM equivalent in ms
-    typingSpeedMax: parseInt(process.env.TYPING_SPEED_MAX) || 150,
-    typingPauseChance: parseFloat(process.env.TYPING_PAUSE_CHANCE) || 0.1, // 10% chance
-    typingPauseMin: parseInt(process.env.TYPING_PAUSE_MIN) || 500,
-    typingPauseMax: parseInt(process.env.TYPING_PAUSE_MAX) || 2000,
+    typingSpeedMin: envInt('TYPING_SPEED_MIN', 80), // WPM equivalent in ms
+    typingSpeedMax: envInt('TYPING_SPEED_MAX', 150),
+    typingPauseChance: envFloat('TYPING_PAUSE_CHANCE', 0.1), // 10% chance
+    typingPauseMin: envInt('TYPING_PAUSE_MIN', 500),
+    typingPauseMax: envInt('TYPING_PAUSE_MAX', 2000),
 
     // Mouse and Scroll Simulation
-    mouseMovementSteps: parseInt(process.env.MOUSE_MOVEMENT_STEPS) || 5,
-    mouseMovementDelay: parseInt(process.env.MOUSE_MOVEMENT_DELAY) || 100,
-    scrollStepSize: parseInt(process.env.SCROLL_STEP_SIZE) || 120,
-    scrollDelay: parseInt(process.env.SCROLL_DELAY) || 200,
+    mouseMovementSteps: envInt('MOUSE_MOVEMENT_STEPS', 5),
+    mouseMovementDelay: envInt('MOUSE_MOVEMENT_DELAY', 100),
+    scrollStepSize: envInt('SCROLL_STEP_SIZE', 120),
+    scrollDelay: envInt('SCROLL_DELAY', 200),
 
     // Suspicious Activity Detection
-    suspiciousActivityThreshold: parseInt(process.env.SUSPICIOUS_ACTIVITY_THRESHOLD) || 3,
-    suspiciousActivityWindow: parseInt(process.env.SUSPICIOUS_ACTIVITY_WINDOW) || 300000, // 5 minutes
-    cooldownMinDuration: parseInt(process.env.COOLDOWN_MIN_DURATION) || 30000, // 30 seconds
-    cooldownMaxDuration: parseInt(process.env.COOLDOWN_MAX_DURATION) || 300000, // 5 minutes
+    suspiciousActivityThreshold: envInt('SUSPICIOUS_ACTIVITY_THRESHOLD', 3),
+    suspiciousActivityWindow: envInt('SUSPICIOUS_ACTIVITY_WINDOW', 300000), // 5 minutes
+    cooldownMinDuration: envInt('COOLDOWN_MIN_DURATION', 30000), // 30 seconds
+    cooldownMaxDuration: envInt('COOLDOWN_MAX_DURATION', 300000), // 5 minutes
 
     // Operation Timeouts
-    navigationTimeout: parseInt(process.env.LINKEDIN_NAVIGATION_TIMEOUT) || 30000,
-    elementWaitTimeout: parseInt(process.env.ELEMENT_WAIT_TIMEOUT) || 10000,
-    messageComposeTimeout: parseInt(process.env.MESSAGE_COMPOSE_TIMEOUT) || 15000,
-    postCreationTimeout: parseInt(process.env.POST_CREATION_TIMEOUT) || 20000,
-    connectionRequestTimeout: parseInt(process.env.CONNECTION_REQUEST_TIMEOUT) || 15000,
+    navigationTimeout: envInt('LINKEDIN_NAVIGATION_TIMEOUT', 30000),
+    elementWaitTimeout: envInt('ELEMENT_WAIT_TIMEOUT', 10000),
+    messageComposeTimeout: envInt('MESSAGE_COMPOSE_TIMEOUT', 15000),
+    postCreationTimeout: envInt('POST_CREATION_TIMEOUT', 20000),
+    connectionRequestTimeout: envInt('CONNECTION_REQUEST_TIMEOUT', 15000),
 
     // Content Limits
-    maxMessageLength: parseInt(process.env.MAX_MESSAGE_LENGTH) || 8000,
-    maxPostLength: parseInt(process.env.MAX_POST_LENGTH) || 3000,
-    maxConnectionMessageLength: parseInt(process.env.MAX_CONNECTION_MESSAGE_LENGTH) || 300,
+    maxMessageLength: envInt('MAX_MESSAGE_LENGTH', 8000),
+    maxPostLength: envInt('MAX_POST_LENGTH', 3000),
+    maxConnectionMessageLength: envInt('MAX_CONNECTION_MESSAGE_LENGTH', 300),
 
     // Browser Configuration
-    browserLaunchTimeout: parseInt(process.env.BROWSER_LAUNCH_TIMEOUT) || 30000,
-    pageLoadTimeout: parseInt(process.env.PAGE_LOAD_TIMEOUT) || 30000,
-    browserIdleTimeout: parseInt(process.env.BROWSER_IDLE_TIMEOUT) || 1800000, // 30 minutes
+    browserLaunchTimeout: envInt('BROWSER_LAUNCH_TIMEOUT', 30000),
+    pageLoadTimeout: envInt('PAGE_LOAD_TIMEOUT', 30000),
+    browserIdleTimeout: envInt('BROWSER_IDLE_TIMEOUT', 1800000), // 30 minutes
 
     // Error Handling
-    maxConsecutiveErrors: parseInt(process.env.MAX_CONSECUTIVE_ERRORS) || 5,
-    errorCooldownDuration: parseInt(process.env.ERROR_COOLDOWN_DURATION) || 60000, // 1 minute
+    maxConsecutiveErrors: envInt('MAX_CONSECUTIVE_ERRORS', 5),
+    errorCooldownDuration: envInt('ERROR_COOLDOWN_DURATION', 60000), // 1 minute
 
     // Monitoring and Logging
     performanceLoggingEnabled: process.env.PERFORMANCE_LOGGING_ENABLED === 'true',
     auditLoggingEnabled: process.env.AUDIT_LOGGING_ENABLED !== 'false', // Default true
-    metricsCollectionInterval: parseInt(process.env.METRICS_COLLECTION_INTERVAL) || 60000, // 1 minute
+    metricsCollectionInterval: envInt('METRICS_COLLECTION_INTERVAL', 60000), // 1 minute
 
     // Feature Flags
     enableMessageSending: process.env.ENABLE_MESSAGE_SENDING !== 'false', // Default true

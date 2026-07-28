@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Authentication Errors', () => {
   test('should show validation errors for empty fields', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/auth');
     
     await page.getByTestId('sign-in-button').click();
     
@@ -22,7 +22,7 @@ test.describe('Authentication Errors', () => {
 
   test('should show error for expired session', async ({ page }) => {
     // 1. Sign in
-    await page.goto('/');
+    await page.goto('/auth');
     await page.getByTestId('email-input').fill('testuser@example.com');
     await page.getByTestId('password-input').fill('TestPass123!');
     await page.getByTestId('sign-in-button').click();

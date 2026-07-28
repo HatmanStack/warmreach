@@ -340,5 +340,29 @@ describe('generateProfileMarkdown', () => {
       const markdown = generateProfileMarkdown(profile);
       expect(markdown).toContain('2023-01 - Present');
     });
+
+    it('drops a non-string date instead of throwing on it', () => {
+      // The profile arrives untrusted off a DynamoDB item. A numeric
+      // start_date used to reach `.localeCompare` in the experience sort and
+      // throw a TypeError mid-ingestion.
+      const profile = createMockProfile({
+        experience: [
+          { company: 'Test Co', title: 'Engineer', start_date: 2023 },
+          { company: 'Other Co', title: 'Dev', start_date: '2020-01' },
+        ],
+      });
+
+      const markdown = generateProfileMarkdown(profile);
+      expect(markdown).toContain('Test Co');
+      expect(markdown).toContain('Other Co');
+    });
+
+    it('drops non-string skills instead of rendering them', () => {
+      const profile = createMockProfile({ skills: ['TypeScript', 42, null, 'Puppeteer'] });
+
+      const markdown = generateProfileMarkdown(profile);
+      expect(markdown).toContain('## Skills');
+      expect(markdown).toContain('TypeScript, Puppeteer');
+    });
   });
 });

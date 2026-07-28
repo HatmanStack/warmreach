@@ -184,7 +184,7 @@ export async function navigateToMessaging(
     const page = session.getPage();
 
     let messageButton: ElementHandle | null = null;
-    let foundSelector = 'messaging:message-button';
+    const foundSelector = 'messaging:message-button';
     try {
       messageButton = await linkedinResolver.resolveWithWait(page, 'messaging:message-button', {
         timeout: 3000,

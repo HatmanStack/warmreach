@@ -9,7 +9,7 @@ import logging
 import os
 import time
 
-import boto3
+from shared_services.aws_clients import dynamodb_resource
 from shared_services.observability import setup_correlation_context
 
 logger = logging.getLogger()
@@ -24,7 +24,7 @@ if not os.environ.get('COGNITO_CLIENT_ID'):
         'COGNITO_CLIENT_ID not set — cross-application JWT reuse check is disabled. This MUST be set in production.'
     )
 
-dynamodb = boto3.resource('dynamodb')
+dynamodb = dynamodb_resource()
 table = dynamodb.Table(TABLE_NAME)
 
 # Cognito JWKS cache (ADR-A: explicit fail-fast timeout with a single retry;
@@ -91,6 +91,7 @@ def _validate_jwt(token: str) -> dict | None:
     """
     try:
         import jwt
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
     except ImportError:
         logger.error('PyJWT not installed - JWT validation will fail')
         return None
@@ -117,8 +118,14 @@ def _validate_jwt(token: str) -> dict | None:
             logger.warning('No matching key found in JWKS for kid: %s', kid)
             return None
 
-        # Construct RSA public key object
+        # Construct RSA public key object. from_jwk() can return a *private* key
+        # for a JWK carrying private material; Cognito's JWKS never does, but
+        # verifying a token against a private key would be a signing key confusion
+        # bug, so it is rejected rather than assumed away.
         public_key = jwt.algorithms.RSAAlgorithm.from_jwk(matching_key)
+        if not isinstance(public_key, RSAPublicKey):
+            logger.warning('JWKS entry for kid %s did not yield an RSA public key', kid)
+            return None
 
         # Decode with explicit algorithm restriction (fix for CVE-2025-61152)
         claims = jwt.decode(

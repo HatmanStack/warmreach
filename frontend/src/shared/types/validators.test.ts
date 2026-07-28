@@ -282,7 +282,9 @@ describe('Validators', () => {
         null,
         { invalid: 'data' },
       ];
-      // @ts-expect-error - testing invalid array with null
+      // `validateConnections` takes unknown[], so a null member needs no
+      // suppression — the directive was unused, which TS2578 flags once test
+      // files are type-checked.
       const result = validateConnections(raw, { sanitize: true });
       expect(result.validConnections).toHaveLength(1);
       expect(result.errors.length).toBeGreaterThanOrEqual(1);

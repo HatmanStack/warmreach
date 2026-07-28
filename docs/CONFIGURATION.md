@@ -44,6 +44,40 @@ These values are typically populated after deploying the infrastructure with SAM
 | `VITE_STRIPE_PRO_PRICE_ID`     | Stripe price ID for Pro tier checkout. Must appear in the backend's `StripePriceTierMap`.     | `price_pro_monthly`     |
 | `VITE_TELEMETRY_ENDPOINT`      | Endpoint for frontend error telemetry. Optional; telemetry disabled when unset.               | `/api/telemetry/error`  |
 | `VITE_API_TIMEOUT_MS`          | API request timeout in milliseconds. Clamped to `[5000, 120000]`.                             | `30000`                 |
+| `VITE_ALLOW_MOCK_AUTH`         | Allow the localStorage mock-auth fallback in a **production** build. See below.               | _(unset)_               |
+| `VITE_DISABLE_ONBOARDING`      | Set to `'true'` to suppress the onboarding overlay. A local development convenience.          | _(unset)_               |
+
+#### `VITE_ALLOW_MOCK_AUTH` — read this before setting it
+
+This is the flag that decides whether a production build may fall back to a
+full-access localStorage session when Cognito is not configured. Leave it unset
+in any Pro production build.
+
+The guard is `frontend/src/config/appConfig.ts:36`:
+
+```ts
+export const isMockAuthAllowed =
+  import.meta.env.VITE_ALLOW_MOCK_AUTH === 'true' || Boolean(import.meta.env.DEV);
+```
+
+Three consequences follow from that one line:
+
+- `npm run dev` already allows mock auth through Vite's `DEV` flag, so local
+  development never needs the variable.
+- A production build with missing or misconfigured Cognito env and the flag
+  unset **fails closed** — no token, no access — and logs the reason from
+  `AuthContext.tsx:152`. That is the intended behaviour, not a bug to work
+  around by setting this.
+- The community edition ships without Cognito and relies on mock auth, so that
+  edition sets it to `true` deliberately.
+
+The E2E CI job also sets it, because it runs a production build with no Cognito
+pool. That is the same reasoning, not a contradiction: a build nobody can sign
+in to cannot be tested.
+
+`VITE_DISABLE_ONBOARDING` is read at
+`frontend/src/features/onboarding/components/OnboardingOverlay.tsx:21` and
+compared against the literal string `'true'`.
 
 ### RAGStack
 
@@ -221,8 +255,16 @@ The admin dashboard (`admin/`) uses Vite environment variables for AWS service c
 | `VITE_API_GATEWAY_URL` | Base URL of the deployed API Gateway (same as frontend) |
 | `VITE_COGNITO_USER_POOL_ID` | Cognito User Pool ID for admin authentication |
 | `VITE_COGNITO_USER_POOL_WEB_CLIENT_ID` | Cognito User Pool Client ID for admin authentication |
+| `VITE_ADMIN_USER_SUB` | Cognito `sub` of the admin user. **Client-side gate only.** |
 
 Create `admin/.env` from `admin/.env.example` with deployment-specific values.
+
+`VITE_ADMIN_USER_SUB` is defence in depth, not the gate. The real check is the
+server-side `ADMIN_USER_SUB` comparison in the `admin-metrics` Lambda, which
+answers `403` to any other caller. The client-side copy exists so the dashboard
+does not render an admin shell it cannot populate; leaving it unset makes the
+dashboard refuse rather than open, but setting it to someone else's `sub` grants
+nothing, because the API still refuses.
 
 ### Cognito Configuration Parity
 
@@ -238,43 +280,85 @@ This guide covers the most important variables. See `.env.example` for the compl
 
 ## Feature Flags
 
-The tier system defines two tiers, `free` and `paid`. Flags are persisted on the user's `TIER#current` DynamoDB item and read by `FeatureFlagService`. Defaults for each tier come from `FREE_TIER_FEATURES` (`backend/lambdas/shared/python/shared_services/tier_service.py`) and `PAID_TIER_FEATURES` (`backend/lambdas/shared/python/shared_services/billing_service.py`).
+Flags are persisted on the user's `TIER#current` DynamoDB item and read by `FeatureFlagService`.
+
+The tier system defines **four** tokens, not two. Three are sellable tiers and one is a back-compat alias:
+
+| Token     | Symbol             | Feature defaults        | Meaning                                                                          |
+| --------- | ------------------ | ----------------------- | -------------------------------------------------------------------------------- |
+| `free`    | `FREE_TIER`        | `FREE_TIER_FEATURES`    | The unpaid default, auto-provisioned on first gated request                      |
+| `starter` | `STARTER_TIER`     | `STARTER_TIER_FEATURES` | Paid. Pro minus the two features whose cost is unbounded per use — see below     |
+| `pro`     | `PRO_TIER`         | `PRO_TIER_FEATURES`     | Paid. Everything                                                                 |
+| `paid`    | `LEGACY_PAID_TIER` | `PRO_TIER_FEATURES`     | Pre-split subscribers, written before `starter`/`pro` existed. Treated as `pro` |
+
+`FREE_TIER_FEATURES` lives in `backend/lambdas/shared/python/shared_services/tier_service.py`; the other three, plus the `TIER_FEATURES` token-to-defaults map, live in `backend/lambdas/shared/python/shared_services/billing_service.py`. `PRO_TIER_FEATURES` is a copy of the module-private `_PRO_TIER_FEATURES`, and `STARTER_TIER_FEATURES` is that same dict with `_STARTER_EXCLUDED_FEATURES` forced to `False`.
+
+An existing `paid` subscriber keeps full Pro entitlements and is not downgraded by the split. `LEGACY_PAID_TIER` exists to guarantee that and is removable once those rows are migrated.
 
 When adding a flag, update this table, `feature_flag_service.py` tier definitions, `monetization_stubs.py`, and the stubs overlay at `.sync/overlays/backend/lambdas/shared/python/shared_services/monetization.py`. CI enforces parity via `tests/backend/unit/test_monetization_parity.py` (Phase 5 Task 3).
 
-| Flag                            | Free  | Paid | Notes                                                  |
-| ------------------------------- | ----- | ---- | ------------------------------------------------------ |
-| `ai_messaging`                  | true  | true | Community feature; AI-assisted message generation.     |
-| `bulk_operations`               | false | true | Community feature; bulk connection/message operations. |
-| `advanced_analytics`            | false | true | Community feature; analytics dashboard aggregates.     |
-| `priority_support`              | false | true | Community entitlement.                                 |
-| `deep_research`                 | false | true | Community feature; deep-research LLM path.             |
-| `relationship_strength_scoring` | false | true | Community feature.                                     |
-| `message_intelligence`          | false | true | Community feature; messaging pattern analysis.         |
-| `tone_analysis`                 | —     | true | Community feature. Not present on free tier defaults.  |
-| `best_time_to_send`             | —     | true | Community feature. Not present on free tier defaults.  |
-| `reply_probability`             | —     | true | Community feature. Not present on free tier defaults.  |
-| `priority_inference`            | —     | true | Community feature. Not present on free tier defaults.  |
-| `cluster_detection`             | —     | true | Community feature. Not present on free tier defaults.  |
-| `warm_intro_paths`              | false | true | Community feature.                                     |
-| `network_graph_visualization`   | false | true | Community feature.                                     |
-| `influence_mapping`             | false | true | Pro-only.                                              |
-| `network_gap_analysis`          | false | true | Pro-only.                                              |
-| `first_contact_icebreakers`     | false | true | Pro-only.                                              |
-| `opportunity_tracker`           | false | true | Pro-only.                                              |
-| `weekly_digest`                 | false | true | Pro-only; SES email fan-out.                           |
-| `goal_intelligence`             | false | true | Pro-only.                                              |
-| `opportunity_agent`             | false | true | Pro-only; B-2 "Open Claw" autonomous action agent.     |
-| `portfolio_metrics`             | false | true | Pro-only; GitHub portfolio integration.                |
-| `comment_concierge`             | —     | true | Pro-only. Not present on free tier defaults.           |
-| `proactive_followup`            | —     | true | Pro-only. Not present on free tier defaults.           |
-| `network_pulse`                 | —     | true | Pro-only. Not present on free tier defaults.           |
-| `enrichment_export`             | —     | true | Pro-only. Not present on free tier defaults.           |
-| `multi_platform_contacts`       | —     | true | Pro-only. Not present on free tier defaults.           |
-| `blog_link_following`           | —     | true | Pro-only. Not present on free tier defaults.           |
-| `prompt_quality_feedback`       | —     | true | Pro-only. Not present on free tier defaults.           |
+The table below is hand-maintained, so re-derive it rather than trusting it. From
+the repo root (this needs `billing_service.py`, which ships only in WarmReach
+Pro — in the community edition every flag comes from the permissive stubs in
+`monetization_stubs.py` and there are no tiers to compare):
 
-Flags marked `—` on the free side are not keys in `FREE_TIER_FEATURES`; callers that gate on them receive `False` from `FeatureFlagService.check_flag` via the default-false lookup.
+```bash
+python3 - <<'EOF'
+import sys; sys.path.insert(0, 'backend/lambdas/shared/python')
+from shared_services.tier_service import FREE_TIER_FEATURES
+from shared_services.billing_service import STARTER_TIER_FEATURES, PRO_TIER_FEATURES
+cell = lambda d, k: str(d[k]).lower() if k in d else '-'
+for flag in PRO_TIER_FEATURES:
+    print(f'| `{flag}` | {cell(FREE_TIER_FEATURES, flag)} '
+          f'| {cell(STARTER_TIER_FEATURES, flag)} | {cell(PRO_TIER_FEATURES, flag)} |')
+EOF
+```
+
+An `ImportError` means the modules moved and this section is stale; it cannot
+print a plausible-but-wrong table.
+
+| Flag                            | Free  | Starter | Pro  | Notes                                                                                   |
+| ------------------------------- | ----- | ------- | ---- | --------------------------------------------------------------------------------------- |
+| `ai_messaging`                  | true  | true    | true | Community feature; AI-assisted message generation.                                      |
+| `bulk_operations`               | false | true    | true | Community feature; bulk connection/message operations.                                  |
+| `advanced_analytics`            | false | true    | true | Community feature; analytics dashboard aggregates.                                      |
+| `priority_support`              | false | true    | true | Community entitlement.                                                                  |
+| `deep_research`                 | false | false   | true | Community feature; deep-research LLM path. **Excluded on Starter** — see below.         |
+| `relationship_strength_scoring` | false | true    | true | Community feature.                                                                      |
+| `message_intelligence`          | false | true    | true | Community feature; messaging pattern analysis.                                          |
+| `tone_analysis`                 | —     | true    | true | Community feature. Not present on free tier defaults.                                   |
+| `best_time_to_send`             | —     | true    | true | Community feature. Not present on free tier defaults.                                   |
+| `reply_probability`             | —     | true    | true | Community feature. Not present on free tier defaults.                                   |
+| `priority_inference`            | —     | true    | true | Community feature. Not present on free tier defaults.                                   |
+| `cluster_detection`             | —     | true    | true | Community feature. Not present on free tier defaults.                                   |
+| `warm_intro_paths`              | false | true    | true | Community feature.                                                                      |
+| `network_graph_visualization`   | false | true    | true | Community feature.                                                                      |
+| `influence_mapping`             | false | true    | true | Pro-only.                                                                               |
+| `network_gap_analysis`          | false | true    | true | Pro-only.                                                                               |
+| `first_contact_icebreakers`     | false | true    | true | Pro-only.                                                                               |
+| `opportunity_tracker`           | false | true    | true | Pro-only.                                                                               |
+| `weekly_digest`                 | false | true    | true | Pro-only; SES email fan-out.                                                            |
+| `goal_intelligence`             | false | true    | true | Pro-only.                                                                               |
+| `opportunity_agent`             | false | false   | true | Pro-only; B-2 "Open Claw" autonomous action agent. **Excluded on Starter** — see below. |
+| `portfolio_metrics`             | false | true    | true | Pro-only; GitHub portfolio integration.                                                 |
+| `comment_concierge`             | —     | true    | true | Pro-only. Not present on free tier defaults.                                            |
+| `proactive_followup`            | —     | true    | true | Pro-only. Not present on free tier defaults.                                            |
+| `network_pulse`                 | —     | true    | true | Pro-only. Not present on free tier defaults.                                            |
+| `enrichment_export`             | —     | true    | true | Pro-only. Not present on free tier defaults.                                            |
+| `multi_platform_contacts`       | —     | true    | true | Pro-only. Not present on free tier defaults.                                            |
+| `blog_link_following`           | —     | true    | true | Pro-only. Not present on free tier defaults.                                            |
+| `prompt_quality_feedback`       | —     | true    | true | Pro-only. Not present on free tier defaults.                                            |
+
+Flags marked `—` on the free side are not keys in `FREE_TIER_FEATURES`; callers that gate on them receive `False` from `FeatureFlagService.check_flag` via the default-false lookup. `FREE_TIER_FEATURES` has 17 keys; `STARTER_TIER_FEATURES` and `PRO_TIER_FEATURES` have 29 each and differ on exactly two.
+
+### Why Starter excludes two features
+
+`_STARTER_EXCLUDED_FEATURES` is `('deep_research', 'opportunity_agent')`, and those are the only two rows where the Starter and Pro columns differ. Both are features whose **cost is unbounded per use**, so a flat Starter price cannot contain them:
+
+- **`deep_research`** is billed per call — roughly USD 0.50–2.00 in tokens — plus per-call web-search and code-interpreter tool fees on top. Starter also carries `monthly_deep_research: 0`, so the quota is a second, independent stop behind the flag.
+- **`opportunity_agent`** dispatches real LinkedIn actions on a schedule without a human in the loop for each one.
+
+Everything else on the list is a fixed-cost read over data the user already has, which is why Starter gets all of it. If you are a Starter subscriber, deep research and the autonomous agent are the two things you do not have; `docs/API_REFERENCE.md` marks the affected `/llm` operations.
 
 ## Automated Configuration
 

@@ -19,7 +19,8 @@ interface FetchOptions {
 }
 
 interface FetchResult {
-  data: Record<string, any>;
+  /** Decoded JSON body. Untrusted control-plane response; narrowed by callers. */
+  data: Record<string, unknown>;
 }
 
 interface FeatureFlags {
@@ -51,7 +52,7 @@ class ControlPlaneService {
   private _defaultHeaders: Record<string, string> | undefined;
 
   constructor() {
-    const cp = (config as Record<string, any>).controlPlane || {};
+    const cp = ((config as Record<string, unknown>).controlPlane || {}) as Record<string, unknown>;
     this._url = cp.url as string | undefined;
     this._deploymentId = cp.deploymentId as string | undefined;
     this._apiKey = cp.apiKey as string | undefined;
@@ -104,7 +105,7 @@ class ControlPlaneService {
         throw err;
       }
 
-      return { data: (await response.json()) as Record<string, any> };
+      return { data: (await response.json()) as Record<string, unknown> };
     } finally {
       clearTimeout(timeoutId);
     }

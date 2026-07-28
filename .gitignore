@@ -2,10 +2,11 @@
 node_modules
 
 # Environment
+# Generic, so a future .env.production/.env.staging is covered without an edit.
+# .env.example is the documented config template and must stay tracked.
 .env
-.env.docker
-.env.ragstack
-.env.aws-outputs
+.env.*
+!.env.example
 *.local
 
 # Build output
@@ -50,6 +51,19 @@ coverage/
 **/.coverage
 linkedin-inspect.log
 reports/
+# Playwright output. Harmless while the suite needed a hand-started server;
+# `npx playwright test` now runs from a clean shell and the CI job uses the html
+# reporter, so all three of these appear in a normal working tree.
+test-results/
+playwright-report/
+blob-report/
+
+# uv writes a 52-byte backend/uv.lock that is not a real lock file (backend/
+# pyproject.toml is ruff config, with no [project] table) and that nothing
+# installs from. It has been committed and reverted once already. The mechanism
+# that creates it is still unidentified; ignoring it costs nothing and does not
+# depend on the diagnosis being right.
+backend/uv.lock
 
 # AWS / Deployment
 backend/data
@@ -75,3 +89,8 @@ docs/api/
 
 # Editor / tool backups (e.g. settings.json.bak.<timestamp>)
 *.bak*
+
+# Internal planning seed — must never reach the public mirror. Also listed in
+# .sync/config.json exclude_paths, because sync.sh rsyncs the working tree and
+# does not consult .gitignore.
+docs/next-roadmap-seed.md

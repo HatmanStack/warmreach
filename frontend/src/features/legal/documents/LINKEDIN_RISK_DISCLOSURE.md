@@ -4,7 +4,7 @@
 > **DRAFT — NOT LEGAL ADVICE.** This document was drafted by the engineering
 > team and has **not** been reviewed by a lawyer. It must be reviewed by
 > qualified counsel before WarmReach accepts payment from anyone. See
-> [README](README.md).
+> `docs/legal/README.md`.
 
 **Version:** `2026-07-26.1`
 **Acknowledgment required:** yes — the application blocks LinkedIn automation

@@ -20,7 +20,7 @@ router.post('/', async (req, res) => {
 });
 
 // Health check endpoint for profile initialization
-router.get('/health', async (req, res) => {
+router.get('/health', async (_req, res) => {
   try {
     res.json({
       status: 'healthy',
@@ -33,7 +33,7 @@ router.get('/health', async (req, res) => {
     res.status(500).json({
       status: 'unhealthy',
       service: 'profile-initialization',
-      error: error.message,
+      error: error instanceof Error ? error.message : String(error),
       timestamp: new Date().toISOString()
     });
   }

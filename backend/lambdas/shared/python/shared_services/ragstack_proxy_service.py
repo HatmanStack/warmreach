@@ -56,7 +56,15 @@ class RAGStackProxyService(BaseService):
 
         profile_id_b64 = encode_profile_id(profile_id)
         if self._edge_data_service and self._is_recently_ingested(profile_id_b64):
-            logger.info(f'Skipping ingestion for {profile_id}: recently ingested by another user')
+            # No profile identifier in the message at all. Logging the raw
+            # `profile_id` was the original leak (it is a LinkedIn profile URL);
+            # swapping it for `profile_id_b64` did not fix it, because
+            # encode_profile_id is plain urlsafe_b64encode — reversible by
+            # anyone with CloudWatch read access, so it still pins a third
+            # party's identity to a log line. This is a routine skip; the
+            # correlation context already carries the request id if an operator
+            # needs to tie it back.
+            logger.info('Skipping ingestion: recently ingested by another user')
             return {'status': 'skipped', 'reason': 'recently_ingested', 'profileId': profile_id}
 
         metadata = {**metadata, 'user_id': user_id}

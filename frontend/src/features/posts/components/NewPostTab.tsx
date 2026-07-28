@@ -131,7 +131,12 @@ const NewPostTabInner = () => {
                   {copied ? <Check className="h-4 w-4 mr-1" /> : <Copy className="h-4 w-4 mr-1" />}
                   {copied ? 'Copied' : 'Copy'}
                 </Button>
-                <Button variant="ghost" size="sm" onClick={clearSynthesizedPost}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearSynthesizedPost}
+                  aria-label="Dismiss synthesized post"
+                >
                   <X className="h-4 w-4" />
                 </Button>
               </div>

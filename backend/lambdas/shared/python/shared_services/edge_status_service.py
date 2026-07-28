@@ -4,10 +4,10 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-import boto3
 from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
 from errors.exceptions import ExternalServiceError
+from shared_services import aws_clients
 from shared_services.base_service import BaseService
 from shared_services.edge_constants import INGESTION_TRIGGER_STATUSES, encode_profile_id
 
@@ -26,7 +26,7 @@ class EdgeStatusService(BaseService):
     @property
     def _dynamodb_client(self):
         if self._dynamodb_client_override is None:
-            self._dynamodb_client_override = boto3.client('dynamodb')
+            self._dynamodb_client_override = aws_clients.dynamodb_client()
         return self._dynamodb_client_override
 
     def upsert_status(

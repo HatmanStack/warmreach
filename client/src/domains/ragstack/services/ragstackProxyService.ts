@@ -1,6 +1,7 @@
 import { logger } from '#utils/logger.js';
 
-interface HttpClient {
+/** The HTTP surface this proxy uses; exported so test doubles can be typed. */
+export interface HttpClient {
   get: (url: string, config: Record<string, unknown>) => Promise<{ data: unknown }>;
   post: (
     url: string,

@@ -38,8 +38,7 @@ describe('MessagesApiService', () => {
     it('should throw ApiError on request failure', async () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: false,
-        error: 'Server error',
-        data: null,
+        error: { message: 'Server error' },
       });
 
       await expect(messagesApiService.getMessageHistory('conn-1')).rejects.toThrow(ApiError);

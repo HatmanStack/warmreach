@@ -353,4 +353,141 @@ describe('InteractionQueue', () => {
       expect(status.pauseReason).toBe('maintenance');
     });
   });
+
+  describe('cancelling a job that has not started', () => {
+    // Dropping a queued job is safe precisely because none of its code has
+    // run — unlike a running Puppeteer batch, which cannot be aborted
+    // mid-navigation. This is what lets the router report a truthful
+    // COMMAND_TIMEOUT for a command that timed out while still waiting.
+    it('removes a queued job, rejects its promise, and never runs its task', async () => {
+      const blocker = vi.fn(() => new Promise(() => {}));
+      const neverRuns = vi.fn().mockResolvedValue('nope');
+
+      queue.enqueue(blocker, { type: 'blocker' }).catch(() => {});
+      const { jobId, promise } = queue.enqueueCancellable(neverRuns, { type: 'victim' });
+      const settled = promise.catch((err) => err);
+
+      expect(queue.cancel(jobId, new Error('deadline elapsed'))).toBe(true);
+
+      await expect(settled).resolves.toMatchObject({ message: 'deadline elapsed' });
+      expect(neverRuns).not.toHaveBeenCalled();
+      expect(queue.getQueueStatus().queuedJobs).toBe(0);
+      expect(queue.getStatus(jobId).status).toBe('cancelled');
+    });
+
+    it('refuses to cancel a job that has already started, and that job completes', async () => {
+      let release;
+      const running = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve('done');
+          })
+      );
+      const { jobId, promise } = queue.enqueueCancellable(running, { type: 'running' });
+
+      // enqueue dequeues synchronously when the slot is free, so this job is
+      // already running by the time we get its id back.
+      expect(queue.cancel(jobId, new Error('too late'))).toBe(false);
+      expect(running).toHaveBeenCalledOnce();
+
+      release();
+      await expect(promise).resolves.toBe('done');
+    });
+
+    it('returns false for an unknown job id', () => {
+      expect(queue.cancel('no-such-job', new Error('x'))).toBe(false);
+    });
+
+    it('lets the next queued job start normally after one is cancelled', async () => {
+      let releaseBlocker;
+      queue
+        .enqueue(
+          () =>
+            new Promise((resolve) => {
+              releaseBlocker = () => resolve('blocked');
+            }),
+          { type: 'blocker' }
+        )
+        .catch(() => {});
+
+      const cancelled = queue.enqueueCancellable(vi.fn(), { type: 'cancelled' });
+      cancelled.promise.catch(() => {});
+      const survivor = vi.fn().mockResolvedValue('survived');
+      const kept = queue.enqueue(survivor, { type: 'survivor' });
+
+      queue.cancel(cancelled.jobId, new Error('dropped'));
+      releaseBlocker();
+
+      await expect(kept).resolves.toBe('survived');
+      expect(survivor).toHaveBeenCalledOnce();
+    });
+
+    it('evicts cancelled jobs so their records cannot accumulate', () => {
+      vi.useFakeTimers();
+      try {
+        const small = new InteractionQueue({ jobTtlMs: 1000 });
+        small.pause('hold everything so nothing starts');
+        const a = small.enqueueCancellable(vi.fn(), { type: 'a' });
+        const b = small.enqueueCancellable(vi.fn(), { type: 'b' });
+        a.promise.catch(() => {});
+        b.promise.catch(() => {});
+
+        small.cancel(a.jobId, new Error('dropped'));
+        small.cancel(b.jobId, new Error('dropped'));
+        expect(small.getQueueStatus().totalJobsTracked).toBe(2);
+
+        vi.advanceTimersByTime(2000);
+        small._evictStaleJobs();
+
+        // 'cancelled' must count as terminal, or these records outlive the
+        // process.
+        expect(small.getQueueStatus().totalJobsTracked).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('reentrancy', () => {
+    // The queue is NOT reentrant: with concurrency 1, _dequeueNext() only
+    // starts a job when activeCount < concurrency, so a job enqueued from
+    // inside a running job cannot start until the outer one finishes — and if
+    // the outer one awaits it, neither ever does. This is why serialization is
+    // applied at exactly one layer (the command router) and the controller's
+    // Direct methods do not enqueue again: doing both would hang the command.
+    it('deadlocks on a nested enqueue awaited by its parent', async () => {
+      const inner = vi.fn().mockResolvedValue('inner');
+
+      let outerSettled = false;
+      const outer = queue
+        .enqueue(async () => await queue.enqueue(inner, { type: 'inner' }), { type: 'outer' })
+        .then(() => {
+          outerSettled = true;
+        });
+
+      // Give the event loop plenty of turns; nothing can break the cycle.
+      for (let i = 0; i < 50; i++) await Promise.resolve();
+
+      expect(inner).not.toHaveBeenCalled();
+      expect(outerSettled).toBe(false);
+      expect(queue.getQueueStatus().activeJobs).toBe(1);
+      expect(queue.getQueueStatus().queuedJobs).toBe(1);
+
+      // Leave no dangling rejection handler for the (permanently) pending promise.
+      outer.catch(() => {});
+    });
+
+    it('runs sequential top-level enqueues to completion in order', async () => {
+      const order = [];
+      const a = queue.enqueue(async () => {
+        order.push('a');
+      });
+      const b = queue.enqueue(async () => {
+        order.push('b');
+      });
+
+      await Promise.all([a, b]);
+      expect(order).toEqual(['a', 'b']);
+    });
+  });
 });

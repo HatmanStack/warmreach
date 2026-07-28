@@ -1,30 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ContentSignalAnalyzer } from './contentSignalAnalyzer.ts';
+import { ContentSignalAnalyzer } from './contentSignalAnalyzer.js';
 
 // Mock logger
 vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
+/** The Page members ContentSignalAnalyzer calls. */
+const makePage = () => ({
+  url: vi.fn(() => 'https://www.linkedin.com/feed/'),
+  evaluate: vi.fn(() => null),
+});
+
+/** The SignalDetector members ContentSignalAnalyzer calls. */
+const makeDetector = () => ({
+  recordContentSignal: vi.fn(),
+});
+
+/** The SelectorResolver members ContentSignalAnalyzer calls. */
+const makeResolver = () => ({
+  resolve: vi.fn(),
+  resolveAll: vi.fn(),
+});
+
 describe('ContentSignalAnalyzer', () => {
   let analyzer: ContentSignalAnalyzer;
-  let mockPage: any;
-  let mockDetector: any;
-  let mockResolver: any;
+  let mockPage: ReturnType<typeof makePage>;
+  let mockDetector: ReturnType<typeof makeDetector>;
+  let mockResolver: ReturnType<typeof makeResolver>;
 
   beforeEach(() => {
-    mockPage = {
-      url: vi.fn(() => 'https://www.linkedin.com/feed/'),
-      evaluate: vi.fn(() => null),
-    };
-    mockDetector = {
-      recordContentSignal: vi.fn(),
-    };
-    mockResolver = {
-      resolve: vi.fn(),
-      resolveAll: vi.fn(),
-    };
-    analyzer = new ContentSignalAnalyzer(mockResolver);
+    mockPage = makePage();
+    mockDetector = makeDetector();
+    mockResolver = makeResolver();
+    analyzer = new ContentSignalAnalyzer(
+      mockResolver as unknown as ConstructorParameters<typeof ContentSignalAnalyzer>[0]
+    );
   });
 
   it('detects checkpoint URLs', async () => {

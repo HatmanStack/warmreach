@@ -8,7 +8,7 @@ Accepted
 
 The `llm` Lambda needs the OpenAI API key on every invocation. Reading the key from SSM Parameter Store on every cold start adds ~50 ms and a per-invocation SSM API call if not cached. Environment-variable injection is rejected because the key must be rotatable without a redeploy.
 
-The cited site is `backend/lambdas/llm/lambda_function.py:27`:
+The cited site is `backend/lambdas/llm/lambda_function.py:28`:
 
 ```python
 # SSM-backed OpenAI API key with TTL cache (ADR-004)

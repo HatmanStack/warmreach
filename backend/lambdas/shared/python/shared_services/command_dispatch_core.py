@@ -21,8 +21,8 @@ import os
 import time
 import uuid
 
-import boto3
 from shared_services.activity_writer import write_activity
+from shared_services.aws_clients import dynamodb_client, dynamodb_resource
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
@@ -34,13 +34,51 @@ logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
 TABLE_NAME = os.environ.get('DYNAMODB_TABLE_NAME')
 WEBSOCKET_ENDPOINT = os.environ.get('WEBSOCKET_ENDPOINT', '')
 
-dynamodb = boto3.resource('dynamodb')
+dynamodb = dynamodb_resource()
 table = dynamodb.Table(TABLE_NAME) if TABLE_NAME else None
 # Low-level client used for TransactWriteItems (atomic rate-limit + create).
-ddb_client = boto3.client('dynamodb')
+# Shares the resource's explicit timeouts: this backs the claim-before-send
+# transaction, and CommandDispatchFunction has the smallest Timeout of any
+# DynamoDB caller (10s), so botocore's 60s default read timeout meant a hung
+# call was a hard Lambda kill instead of a catchable, retryable error.
+ddb_client = dynamodb_client()
 
 # Command TTL: 24 hours
 COMMAND_TTL_SECONDS = 86400
+
+# The routable command vocabulary, mirroring the ROUTES map in
+# client/src/transport/commandRouter.ts — the client router is the authority on
+# what is routable, and anything absent from it is answered with
+# UNKNOWN_COMMAND after the backend has already written, rate-limited and
+# dispatched it. The vocabulary lives here rather than in a gate because it is a
+# community concept (ADR-009); the *gated* subset stays in
+# linkedin-action-gate's LI_ACTION_COMMAND_TYPES, where it belongs.
+#
+# Deliberately not generated. The vocabulary is hand-mirrored across six sites
+# that express genuinely different subsets (gated-only, dispatchable, routable,
+# agent-mappable), so collapsing them into one generated list would lose that
+# distinction; a CI drift check over the six sites is the intended guard.
+#
+# The community edition's router carries only the five browser routes
+# (client/src/domains/github is sync-excluded, and the two Comment Concierge
+# routes are pro), so this set is a superset there. That is harmless — an
+# unroutable-but-known type still gets the client's UNKNOWN_COMMAND — and it
+# keeps one vocabulary for both editions.
+KNOWN_COMMAND_TYPES = frozenset(
+    {
+        'linkedin:search',
+        'linkedin:send-message',
+        'linkedin:add-connection',
+        'linkedin:follow-profile',
+        'linkedin:profile-init',
+        'linkedin:post-comment',
+        'linkedin:scrape-feed',
+        'github:connect',
+        'github:disconnect',
+        'github:poll-metrics',
+        'github:get-status',
+    }
+)
 
 # Rate limiting: max commands per user per minute
 RATE_LIMIT_MAX = int(os.environ.get('COMMAND_RATE_LIMIT_MAX', '10'))
@@ -153,6 +191,8 @@ def create_command(user_sub: str, command_type: str, payload: dict) -> tuple[int
     returns over ``POST /commands``:
 
     - 200 ``{'commandId', 'status': 'dispatched'}`` — created + dispatched.
+    - 400 ``{'error': ..., 'code': 'UNKNOWN_COMMAND_TYPE'}`` — the type is not in
+      :data:`KNOWN_COMMAND_TYPES` (checked first; nothing is read or written).
     - 409 ``{'error': 'No agent connected'}`` — no agent connection (no quota burned).
     - 429 rate-limited — the per-user command rate limit was hit.
     - 503 ``{'error': 'Agent disconnected', ...}`` — the agent connection vanished
@@ -160,13 +200,33 @@ def create_command(user_sub: str, command_type: str, payload: dict) -> tuple[int
       unavailable (all fail closed, all strictly BEFORE any real send).
 
     Every RETURNED status is a clean, definitely-not-sent outcome. A post-send
-    exception (status update / browser notify / activity write) instead PROPAGATES
-    deliberately: it is the ambiguous-outcome signal the agent gate relies on (a
-    real send may already have happened, so callers must not revert). Because the
-    only clean-not-sent failure that could precede the dispatch — the agent-connection
-    lookup — is caught and returned as 503, the RAISE channel is exclusively at/after
-    the WebSocket dispatch, i.e. always maybe-sent.
+    exception on work that MATTERS — currently just the ``dispatched`` status
+    write — instead PROPAGATES deliberately: it is the ambiguous-outcome signal
+    the agent gate relies on (a real send may already have happened, so callers
+    must not revert). Because the only clean-not-sent failure that could precede
+    the dispatch — the agent-connection lookup — is caught and returned as 503,
+    the RAISE channel is exclusively at/after the WebSocket dispatch, i.e. always
+    maybe-sent.
+
+    Cosmetic post-send work — the browser notification and the activity write —
+    is explicitly NOT on that channel. Both are side channels that re-establish
+    themselves (the browser re-polls; activity is a timeline record), so failing
+    a completed LinkedIn action on one of them would report a success as a
+    failure. Each is wrapped and logged at its call site with the reason.
     """
+    # Vocabulary check FIRST: it needs no table, no lookup and no rate-limit
+    # slot, and it must not be able to reach the RAISE channel below — a caller
+    # reads any raised create_command as "a real send may have happened", so a
+    # typo hitting a misconfigured deploy would be treated as an ambiguous send
+    # and refused a quota refund. A RETURNED 400 is the honest answer: nothing
+    # was sent, and nothing could have been.
+    if command_type not in KNOWN_COMMAND_TYPES:
+        logger.warning('Rejecting unknown command type %r for %s', command_type, user_sub)
+        return 400, {
+            'error': f'Unknown command type: {command_type}',
+            'code': 'UNKNOWN_COMMAND_TYPE',
+        }
+
     # A misconfigured deploy (no DYNAMODB_TABLE_NAME) surfaces a clear config
     # error rather than an opaque NoneType AttributeError deeper in the send path,
     # mirroring the SFN handlers' `table is None` guard.
@@ -248,17 +308,43 @@ def create_command(user_sub: str, command_type: str, payload: dict) -> tuple[int
         ExpressionAttributeValues={':s': 'dispatched'},
     )
 
-    # Notify browser if connected
-    browser_conns = ws_service.get_user_connections(user_sub, 'browser')
-    for bc in browser_conns:
-        ws_service.send_to_connection(
-            bc['connectionId'],
-            {
-                'action': 'command_queued',
-                'commandId': command_id,
-            },
+    # Notify browser if connected. Best-effort, and deliberately OFF the raise
+    # channel: the send already happened and the COMMAND# already says
+    # 'dispatched', so this is a UI nicety, not a correctness input. It used to
+    # be able to fail the whole call — send_to_connection re-raises every
+    # ClientError except GoneException, so a @connections throttle
+    # (LimitExceededException) or an oversized frame (PayloadTooLargeException)
+    # on a *browser notification* propagated out of create_command, which the
+    # gate reads as maybe-sent and turns into a 503. A LinkedIn action that
+    # fully succeeded was reported to the user as a failure.
+    #
+    # Consistency is re-established without this: the browser polls the command
+    # status, and a stale WSCONN# is reaped by the next send's GoneException.
+    # The lookup is inside the try too — it is the same DynamoDB query that can
+    # throttle, and it is just as cosmetic.
+    try:
+        browser_conns = ws_service.get_user_connections(user_sub, 'browser')
+        for bc in browser_conns:
+            ws_service.send_to_connection(
+                bc['connectionId'],
+                {
+                    'action': 'command_queued',
+                    'commandId': command_id,
+                },
+            )
+    except Exception:
+        logger.exception(
+            'Browser notify failed after a successful dispatch of %s; the command stands and the browser re-polls',
+            command_id,
         )
 
-    write_activity(table, user_sub, 'command_dispatched', metadata={'commandType': command_type})
+    # Same reasoning: the activity timeline is a record of what happened, not an
+    # input to whether it happened. write_activity is already documented as
+    # fire-and-forget, but it can still raise on a client construction error
+    # before its own internal guard, so keep it off the raise channel here.
+    try:
+        write_activity(table, user_sub, 'command_dispatched', metadata={'commandType': command_type})
+    except Exception:
+        logger.exception('Activity write failed after a successful dispatch of %s; the command stands', command_id)
 
     return 200, {'commandId': command_id, 'status': 'dispatched'}

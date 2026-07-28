@@ -1,5 +1,7 @@
 """Custom exception classes for service layer."""
 
+from typing import Any
+
 
 class ServiceError(Exception):
     """
@@ -19,7 +21,7 @@ class ServiceError(Exception):
 
     def to_dict(self) -> dict:
         """Convert exception to dictionary for JSON response."""
-        result = {
+        result: dict[str, Any] = {
             'code': self.code,
             'message': self.message,
         }

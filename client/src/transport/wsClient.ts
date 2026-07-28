@@ -14,6 +14,11 @@ const HEARTBEAT_INTERVAL_MS = 30000;
 // at least once per HEARTBEAT_INTERVAL_MS; 3x gives slack for transient lag
 // before we force a reconnect on a half-open (silently dead) TCP connection.
 const HEARTBEAT_TIMEOUT_MS = HEARTBEAT_INTERVAL_MS * 3;
+// Bound on the outbound buffer held across a reconnect. Overflow drops the
+// OLDEST frames: the newest carry the most recent command results, and an
+// outbox that grew past this during one backoff window means the socket has
+// been down long enough that the earliest results are already stale.
+const MAX_OUTBOX = 100;
 
 interface WsClientOptions {
   url: string;
@@ -36,6 +41,7 @@ export class WsClient {
   private _heartbeatTimer: ReturnType<typeof setInterval> | null;
   private _closed: boolean;
   private _lastSeenAt: number;
+  private _outbox: string[];
 
   constructor({
     url,
@@ -56,6 +62,7 @@ export class WsClient {
     this._heartbeatTimer = null;
     this._closed = false;
     this._lastSeenAt = 0;
+    this._outbox = [];
   }
 
   connect(): void {
@@ -82,6 +89,9 @@ export class WsClient {
       this._retryMs = INITIAL_RETRY_MS;
       this._lastSeenAt = Date.now();
       this._startHeartbeat();
+      // Drain before the consumer's onConnect runs, so nothing observing the
+      // reconnect can see a half-flushed outbox.
+      this._flushOutbox();
       this._onConnect();
     });
 
@@ -119,15 +129,47 @@ export class WsClient {
     });
   }
 
-  send(data: Record<string, unknown>): void {
+  /**
+   * Write a frame to the socket, buffering it for the next connection when the
+   * socket is not OPEN.
+   *
+   * A dropped frame is invisible to the backend: a command result produced
+   * while the socket is mid-backoff would leave the COMMAND# at `dispatched`
+   * until its TTL, even though the LinkedIn action actually ran. LinkedIn
+   * commands routinely run for minutes, so this overlaps reconnects in normal
+   * operation.
+   *
+   * @returns `true` when the frame reached the socket, `false` when it was
+   *   buffered or deliberately dropped. Callers may ignore the result — the
+   *   outbox is the durable answer everywhere except after an explicit close().
+   */
+  send(data: Record<string, unknown>): boolean {
+    const frame = JSON.stringify(data);
     if (this._ws?.readyState === WebSocket.OPEN) {
-      this._ws.send(JSON.stringify(data));
+      this._ws.send(frame);
+      return true;
     }
+    // Stale heartbeats are pure noise — their timestamp is already wrong by the
+    // time the socket reopens, and the reconnect itself re-establishes liveness.
+    if (data.action === 'heartbeat') return false;
+    if (this._closed) {
+      logger.warn('WS frame dropped: client is closed', { action: data.action });
+      return false;
+    }
+    this._outbox.push(frame);
+    if (this._outbox.length > MAX_OUTBOX) {
+      const dropped = this._outbox.length - MAX_OUTBOX;
+      this._outbox.splice(0, dropped);
+      logger.warn(`WS outbox full — dropped ${dropped} oldest frame(s)`, { max: MAX_OUTBOX });
+    }
+    return false;
   }
 
   close(): void {
     this._closed = true;
     this._stopHeartbeat();
+    // A deliberate shutdown must not resurrect frames on some later connect().
+    this._outbox.length = 0;
     if (this._ws) {
       this._ws.close();
       this._ws = null;
@@ -136,6 +178,73 @@ export class WsClient {
 
   get connected(): boolean {
     return this._ws?.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Frames waiting on the next connection.
+   *
+   * Surfaced on the Electron tray status payload as `wsOutbox` — the Express
+   * server holds no reference to this client, so it cannot report the value.
+   */
+  get outboxSize(): number {
+    return this._outbox.length;
+  }
+
+  /**
+   * Remove and return the buffered frames, for handing to a replacement client.
+   *
+   * A token refresh replaces the whole `WsClient` instance rather than
+   * reconnecting it, so without this the outbox would be discarded by a timer
+   * that happens to fire during a backoff window — losing exactly the results
+   * it exists to preserve. Must be called before `close()`, which clears it.
+   */
+  takeOutbox(): string[] {
+    return this._outbox.splice(0, this._outbox.length);
+  }
+
+  /**
+   * Take on frames from a client this one replaces. Inherited frames are older
+   * than anything already queued here, so they go at the head.
+   */
+  adoptOutbox(frames: string[]): void {
+    if (frames.length === 0) return;
+    this._outbox.unshift(...frames);
+    if (this._outbox.length > MAX_OUTBOX) {
+      const dropped = this._outbox.length - MAX_OUTBOX;
+      this._outbox.splice(0, dropped);
+      logger.warn(`WS outbox full after adoption — dropped ${dropped} oldest frame(s)`, {
+        max: MAX_OUTBOX,
+      });
+    }
+  }
+
+  /**
+   * Write every buffered frame in FIFO order. If the socket dies part-way
+   * through, the unsent tail goes back at the head so ordering survives the
+   * next reconnect.
+   */
+  private _flushOutbox(): void {
+    if (this._outbox.length === 0) return;
+    const pending = this._outbox;
+    this._outbox = [];
+    logger.debug(`WS flushing ${pending.length} buffered frame(s)`);
+    for (let i = 0; i < pending.length; i++) {
+      if (this._ws?.readyState !== WebSocket.OPEN) {
+        this._outbox = pending.slice(i).concat(this._outbox);
+        logger.warn(`WS flush interrupted — ${this._outbox.length} frame(s) re-queued`);
+        return;
+      }
+      try {
+        this._ws.send(pending[i]!);
+      } catch (err: unknown) {
+        this._outbox = pending.slice(i).concat(this._outbox);
+        const error = err instanceof Error ? err : new Error(String(err));
+        logger.warn(`WS flush failed — ${this._outbox.length} frame(s) re-queued`, {
+          error: error.message,
+        });
+        return;
+      }
+    }
   }
 
   private _startHeartbeat(): void {

@@ -283,6 +283,20 @@ export interface ConnectionFilters {
  * @description Contains all user profile information including LinkedIn data and AI-generated content.
  */
 export interface UserProfile {
+  /**
+   * camelCase aliases the API actually returns.
+   *
+   * `UserProfileContext.normalizeProfile` bridges these to the snake_case keys
+   * the rest of the app reads and writes both casings back onto the object, so
+   * a consumer may legitimately see either. Declared here because they are part
+   * of the real shape; omitting them only hid that from the type checker.
+   */
+  firstName?: string;
+  lastName?: string;
+  userId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+
   /** Unique user identifier */
   user_id?: string;
 
@@ -447,8 +461,12 @@ export interface ValidationResult {
   /** Array of validation errors */
   errors: string[];
 
-  /** Array of validation warnings */
-  warnings?: string[];
+  /**
+   * Array of validation warnings. Always present: every producer in
+   * validators.ts builds the array up front and returns it on every path, so
+   * the optionality only forced callers into needless `?.` guards.
+   */
+  warnings: string[];
 
   /** Sanitized data if sanitization was performed */
   sanitizedData?: unknown;

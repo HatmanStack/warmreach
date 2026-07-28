@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowJs": true,
+    "checkJs": false,
+    "noCheck": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "outDir": "./build-tsc",
+    "rootDir": "."
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.cts",
+    "config/**/*.ts",
+    "routes/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.test.js"]
+}

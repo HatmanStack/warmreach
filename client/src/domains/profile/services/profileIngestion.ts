@@ -10,15 +10,7 @@ import { generateProfileMarkdown } from '../utils/profileMarkdownGenerator.js';
 import fs from 'fs/promises';
 import path from 'path';
 import type { MasterIndex, ProfileInitService } from './profileInitService.js';
-
-/**
- * Profile init state (minimal needed for ingestion)
- */
-interface ProfileInitState {
-  requestId?: string;
-  jwtToken?: string;
-  [key: string]: unknown;
-}
+import type { ProfileInitState } from '../types/profileInit.js';
 
 /**
  * Trigger RAGStack ingestion for a profile

@@ -246,10 +246,33 @@ export class PuppeteerService {
         );
       });
 
+      let raceLost = false;
       try {
         this.browser = await Promise.race([launchPromise, timeoutPromise]);
+      } catch (err) {
+        raceLost = true;
+        throw err;
       } finally {
         if (launchTimeoutId !== undefined) clearTimeout(launchTimeoutId);
+        if (raceLost) {
+          // The timeout won, so `this.browser` was never assigned and the
+          // catch -> this.close() teardown below has nothing to close — while
+          // launchPromise is still pending and will eventually resolve with a
+          // live Browser nobody holds a reference to. On a tray app that
+          // retries initialization, each timeout would leak a whole Chromium
+          // process tree and poison the userDataDir profile lock for every
+          // subsequent launch. Close it whenever it lands.
+          //
+          // Not awaited: the caller must get its timeout error promptly. The
+          // .catch() is required rather than defensive — without it a
+          // launchPromise that rejects after the race has settled becomes an
+          // unhandled rejection in the client process.
+          void launchPromise
+            .then((browser) => browser.close())
+            .catch(() => {
+              /* the launch failed on its own — there is nothing to close */
+            });
+        }
       }
 
       this.page = await this.browser!.newPage();

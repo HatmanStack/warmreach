@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LinkedInNavigationService } from './linkedinNavigationService.js';
-import { buildPuppeteerPage } from '../../../test-utils/index.ts';
+import { buildPuppeteerPage } from '../../../test-utils/index.js';
 
 // Mock logger
 vi.mock('#utils/logger.js', () => ({

@@ -7,6 +7,8 @@ import { UserProfileProvider } from '@/features/profile/contexts/UserProfileCont
 import { TierProvider, type TierContextType } from '@/features/tier';
 import { type UseCommandReturn } from '@/shared/hooks/useCommand';
 import { buildUserProfile } from './factories';
+import { useToast } from '@/shared/hooks';
+import type { UseQueryResult } from '@tanstack/react-query';
 
 /**
  * Shared mock setup for fetch.
@@ -82,10 +84,16 @@ export function buildMockTierReturn(overrides: Partial<TierContextType> = {}): T
  * Build a typed mock return value for useToast().
  * Avoids `as any` when mocking useToast in tests.
  */
-export function buildMockToastReturn(mockToast?: ReturnType<typeof vi.fn>) {
-  const toastFn = mockToast ?? vi.fn();
+export function buildMockToastReturn(
+  mockToast?: ReturnType<typeof vi.fn>
+): ReturnType<typeof useToast> {
+  // `vi.fn()` is Mock<Procedure | Constructable>, which is not assignable to
+  // the real toast signature. One widening here so callers can keep writing
+  // `const mockToast = vi.fn()` and still get a correctly typed return value —
+  // the previous loose object literal silently drifted from useToast's shape.
+  const toastFn = (mockToast ?? vi.fn()) as ReturnType<typeof useToast>['toast'];
   return {
-    toasts: [] as Array<{ id: string; dismiss: () => void }>,
+    toasts: [],
     toast: toastFn,
     dismiss: vi.fn(),
   };
@@ -113,9 +121,10 @@ export function createAuthenticatedWrapper(authOverrides: Partial<AuthContextTyp
   const QueryWrapper = createWrapper();
 
   const profile = buildUserProfile();
+  // UserProfile's fields are all optional; User requires id and email.
   const defaultUser: User = {
-    id: profile.user_id,
-    email: profile.email,
+    id: profile.user_id ?? 'test-user-id',
+    email: profile.email ?? 'test@example.com',
     firstName: profile.first_name,
     lastName: profile.last_name,
   };
@@ -142,4 +151,28 @@ export function createAuthenticatedWrapper(authOverrides: Partial<AuthContextTyp
       </MemoryRouter>
     </QueryWrapper>
   );
+}
+
+/**
+ * Build a typed `useQuery` return value from the handful of fields a component
+ * actually reads.
+ *
+ * React Query's UseQueryResult is a wide discriminated union with ~24 members,
+ * so a fixture can never satisfy it structurally; tests were reaching for
+ * `as ReturnType<typeof useQuery>`, which TypeScript rejects outright once test
+ * files are checked ("neither type sufficiently overlaps"). One widening here,
+ * with the readable fields kept typed on the way in.
+ */
+export function buildMockQueryResult<T>(partial: {
+  data?: T | null;
+  isLoading?: boolean;
+  error?: Error | null;
+  refetch?: ReturnType<typeof vi.fn>;
+}): UseQueryResult<T, Error> {
+  return {
+    data: partial.data ?? undefined,
+    isLoading: partial.isLoading ?? false,
+    error: partial.error ?? null,
+    refetch: partial.refetch ?? vi.fn(),
+  } as unknown as UseQueryResult<T, Error>;
 }

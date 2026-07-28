@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCommand } from '@/shared/hooks';
 import { useToast } from '@/shared/hooks';
@@ -8,7 +8,6 @@ import { useUserProfile } from '@/features/profile/contexts/UserProfileContext';
 
 interface ProfileInitResult {
   success?: boolean;
-  healing?: boolean;
   message?: string;
 }
 
@@ -37,30 +36,33 @@ export const useProfileInit = (): UseProfileInitReturn => {
     reset,
   } = useCommand<ProfileInitResult>('linkedin:profile-init');
 
-  // Handle command completion
+  // Handle command completion.
+  //
+  // `onSuccessCallback` is deliberately NOT a dependency, and the ref is what
+  // makes that safe. The effect clears the callback as its last act, so listing
+  // it re-ran the effect with `status === 'completed'` still true and fired a
+  // second success toast for one completion. Reading it through a ref keeps the
+  // latest value without making the clear re-trigger the effect, and
+  // `handledResultRef` covers the remaining case where an unrelated dependency
+  // changes while the same result is still in state.
+  const onSuccessCallbackRef = useRef(onSuccessCallback);
+  onSuccessCallbackRef.current = onSuccessCallback;
+  const handledResultRef = useRef<unknown>(null);
+
   useEffect(() => {
-    if (status === 'completed' && result) {
-      if (result.healing) {
-        const healingMessage =
-          result.message || 'Profile initialization is in progress with healing...';
-        setInitializationMessage(healingMessage);
-        toast({
-          title: 'Processing',
-          description: 'Profile initialization is in progress. This may take a few minutes.',
-        });
-      } else {
-        const successMessage = result.message || 'Profile database initialized successfully!';
-        setInitializationMessage(successMessage);
-        toast({
-          title: 'Success',
-          description: 'Profile database has been initialized successfully.',
-        });
-        queryClient.invalidateQueries({ queryKey: queryKeys.connections.all });
-        onSuccessCallback?.();
-      }
+    if (status === 'completed' && result && handledResultRef.current !== result) {
+      handledResultRef.current = result;
+      const successMessage = result.message || 'Profile database initialized successfully!';
+      setInitializationMessage(successMessage);
+      toast({
+        title: 'Success',
+        description: 'Profile database has been initialized successfully.',
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.connections.all });
+      onSuccessCallbackRef.current?.();
       setOnSuccessCallback(null);
     }
-  }, [status, result, queryClient, toast, onSuccessCallback]);
+  }, [status, result, queryClient, toast]);
 
   useEffect(() => {
     if (status === 'failed' && commandError) {
@@ -85,7 +87,7 @@ export const useProfileInit = (): UseProfileInitReturn => {
       }
 
       // Payload can be empty; commandService attaches ciphertext credentials.
-      // Include collectMutuals only when the user has opted in (ADR-6); the
+      // Include collectMutuals only when the user has opted in (ADR-013); the
       // client collects nothing when the flag is absent/false.
       const collectMutuals = userProfile?.mutual_scrape_opt_in === true;
       await execute(collectMutuals ? { collectMutuals: true } : {});

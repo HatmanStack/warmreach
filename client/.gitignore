@@ -21,7 +21,10 @@ screenshots/
 *.json
 !package*.json
 !nodemon.json
-!tsconfig.json
+# tsconfig*.json, not just tsconfig.json: the narrower rule silently swallowed
+# tsconfig.test.json when it was added, and tsconfig.build.json survives only
+# because it was tracked before this rule tightened.
+!tsconfig*.json
 !typedoc.json
 
 # OS generated files

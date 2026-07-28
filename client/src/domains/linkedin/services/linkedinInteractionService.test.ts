@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LinkedInInteractionService } from './linkedinInteractionService.js';
 import { BrowserSessionManager } from '../../session/services/browserSessionManager.js';
-import { buildPuppeteerPage } from '../../../test-utils/index.ts';
+import { buildPuppeteerPage } from '../../../test-utils/index.js';
 
 // Mock dependencies
 vi.mock('#utils/logger.js', () => ({

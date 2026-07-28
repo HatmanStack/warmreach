@@ -4,6 +4,9 @@
   "type": "module",
   "description": "Local mock LinkedIn server for testing puppeteer automation",
   "main": "server.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"

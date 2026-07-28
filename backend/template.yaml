@@ -83,6 +83,51 @@ Parameters:
     AllowedPattern: '^[a-z0-9.\-]*$'
     ConstraintDescription: Must be a valid S3 bucket name, or empty.
 
+  # Logging
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    # Restricted to the retention periods CloudWatch Logs actually accepts;
+    # any other value is rejected at deploy time. Tunable per environment so
+    # retention can be shortened (PII) or lengthened (audit) without a
+    # template edit.
+    AllowedValues:
+      - 1
+      - 3
+      - 5
+      - 7
+      - 14
+      - 30
+      - 60
+      - 90
+      - 120
+      - 150
+      - 180
+      - 365
+      - 400
+      - 545
+      - 731
+      - 1096
+      - 1827
+      - 2192
+      - 2557
+      - 2922
+      - 3288
+      - 3653
+    Description: >-
+      Retention for every Lambda log group. LinkedIn profile data, message
+      bodies, and email addresses flow through these handlers, so the
+      service default of Never Expire is indefinite PII retention.
+
+  RagstackApiKeyArn:
+    Type: String
+    Default: ''
+    Description: >-
+      ARN of an SSM SecureString parameter holding the RAGStack API key. When
+      set, no plaintext RAGSTACK_API_KEY is injected into any Lambda and the
+      value is fetched at runtime through ssm_cache. Leave blank to keep the
+      legacy plaintext env var (the fallback logs a warning).
+
 Rules:
   AdminEmailRequiredForRAGStack:
     RuleCondition: !Equals [!Ref DeployRAGStack, 'true']
@@ -108,8 +153,18 @@ Globals:
           - !Ref ProductionOrigins
 
 Conditions:
+  HasRagstackApiKeyArn: !Not [!Equals [!Ref RagstackApiKeyArn, '']]
   HasClientDownloadBucket: !Not [!Equals [!Ref ClientDownloadBucket, '']]
-  IncludeDevOriginsCondition: !Equals [!Ref IncludeDevOrigins, 'true']
+  # Localhost origins require BOTH the opt-in flag AND a dev stack. The flag
+  # alone defaulted to 'true' while Environment defaulted to 'prod', so the
+  # out-of-the-box deploy was a PRODUCTION stack whose CORS allow-list trusted
+  # http://localhost:5173 and :3000 — and with ProductionOrigins left blank, the
+  # allow-list was localhost and nothing else. Any page on a developer's machine
+  # could call the API with the user's credentials. Failing closed on prod costs
+  # a dev stack nothing: Environment=dev still honours the flag.
+  IncludeDevOriginsCondition: !And
+    - !Equals [!Ref IncludeDevOrigins, 'true']
+    - !Equals [!Ref Environment, 'dev']
   HasProductionOrigin: !Not [!Equals [!Ref ProductionOrigin, '']]
   DeployRAGStackCondition: !Equals [!Ref DeployRAGStack, 'true']
 
@@ -195,6 +250,19 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+        # NOT kept for parity: the inverted SK/PK index. Pro declares GSI2 and,
+        # since the GSI2 -> GSI4 migration, GSI4 alongside it. Both exist solely
+        # for `SK = TIER#current` queries in digest-coordinator and
+        # admin-metrics, and both of those Lambdas are pro-only (exclude_paths),
+        # so the community edition has no reader for either.
+        #
+        # This is where the parity argument that keeps GSI3 stops applying. GSI3
+        # is sparse — no community writer sets its keys, so it stays empty and
+        # costs nothing. An inverted SK/PK index is the opposite: EVERY item has
+        # an SK, so it would put a second index entry on every single write, to
+        # serve nothing. Declining it is deliberate. If a community reader of
+        # the inverted index ever appears, add GSI4 (not GSI2) here — the
+        # INCLUDE [tier, createdAt] projection is the cheaper shape.
 
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -206,11 +274,30 @@ Resources:
         - email
       Policies:
         PasswordPolicy:
-          MinimumLength: 8
+          # 12, not 8, and symbols required. This pool gates stored LinkedIn
+          # credentials and the automation that acts on them.
+          #
+          # A password policy applies to NEW and CHANGED passwords only —
+          # existing users are not locked out and are not forced to rotate. That
+          # is worth stating, because the opposite reading is the usual reason
+          # this change gets refused.
+          MinimumLength: 12
           RequireLowercase: true
           RequireNumbers: true
-          RequireSymbols: false
+          RequireSymbols: true
           RequireUppercase: true
+      # OPTIONAL, not ON. Forcing MFA on an existing pool locks out every
+      # current user at their next sign-in; ON is the follow-up once enrolment
+      # has been communicated.
+      MfaConfiguration: OPTIONAL
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      UserPoolAddOns:
+        # AUDIT, not ENFORCED. AUDIT records compromised-credential and
+        # adaptive-auth signals without blocking anyone, and AdvancedSecurityMode
+        # carries a per-MAU cost; ENFORCED is the follow-up once the signal is
+        # understood.
+        AdvancedSecurityMode: AUDIT
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -266,9 +353,42 @@ Resources:
               issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
               audience:
                 - !Ref UserPoolClient
+      # Default applies to every route without an override below. Raised from
+      # 10/5: one shared 5 rps bucket across all 22 routes and all users meant
+      # one tenant's burst starved every other. Kept below the pro defaults
+      # because a community deployment is single-tenant.
+      #
+      # NOT per-tenant. HTTP APIs have no usage plans or API keys, so genuine
+      # per-tenant isolation needs a REST migration or a Lambda-authorizer token
+      # bucket. This raises the ceiling and differentiates routes by cost.
       DefaultRouteSettings:
-        ThrottlingBurstLimit: 10
-        ThrottlingRateLimit: 5
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+      RouteSettings:
+        # Expensive and abuse-sensitive: spends money (OpenAI) or drives a real
+        # LinkedIn action.
+        'POST /llm':
+          ThrottlingBurstLimit: 20
+          ThrottlingRateLimit: 10
+        'POST /linkedin-actions':
+          ThrottlingBurstLimit: 20
+          ThrottlingRateLimit: 10
+        'POST /commands':
+          ThrottlingBurstLimit: 40
+          ThrottlingRateLimit: 20
+        # Read-heavy dashboard traffic: cheap per call and bursty by nature.
+        'GET /dynamodb':
+          ThrottlingBurstLimit: 200
+          ThrottlingRateLimit: 100
+        'POST /dynamodb':
+          ThrottlingBurstLimit: 200
+          ThrottlingRateLimit: 100
+        'POST /edges':
+          ThrottlingBurstLimit: 200
+          ThrottlingRateLimit: 100
+        'GET /profiles':
+          ThrottlingBurstLimit: 200
+          ThrottlingRateLimit: 100
 
   # ==========================================================================
   # WebSocket API for real-time client-backend communication
@@ -327,9 +447,157 @@ Resources:
                   - !GetAtt ProfilesTable.Arn
                   - !Sub '${ProfilesTable.Arn}/index/*'
 
+  # ==========================================================================
+  # Lambda log groups
+  # ==========================================================================
+  # Every Lambda below has an explicit log group. Left implicit, the Lambda
+  # service creates /aws/lambda/<name> on first invoke with retention "Never
+  # Expire" and the group is NOT stack-managed, so `sam delete` orphans it.
+  #
+  # Two rules that look like they could be simplified, and must not be:
+  #
+  # 1. Each LogGroupName REPEATS its function's own literal FunctionName
+  #    expression. `!Sub '/aws/lambda/${FunctionName}'` does NOT resolve —
+  #    ${...} inside !Sub resolves against template parameters and resource
+  #    logical IDs, and there is no FunctionName parameter or logical ID.
+  # 2. The tempting alternative, `!Sub '/aws/lambda/${SomeFunction}'` (the
+  #    logical ID, which does resolve to the function name), creates an implicit
+  #    log-group -> function dependency while the function's DependsOn points
+  #    back at the group. That is a circular dependency and the stack will not
+  #    deploy. The literal repetition is the only form compatible with the
+  #    DependsOn the ordering hazard below requires.
+  #
+  # DependsOn on each function is what prevents the ordering hazard: a Lambda
+  # invoked before its explicit group exists makes the service create the group
+  # implicitly, and the next deploy then fails with "already exists".
+  #
+  # DeletionPolicy: Delete is deliberate and differs from ProfilesTable's
+  # Retain — the entire point is that `sam delete` must not leave these behind.
+
+  WebSocketConnectLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-ws-connect-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  WebSocketDisconnectLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-ws-disconnect-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  WebSocketDefaultLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-ws-default-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  CommandDispatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-command-dispatch-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  LinkedinActionGateLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-linkedin-action-gate-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  EdgeCrudLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-edge-crud-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  RagstackOpsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-ragstack-ops-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  DynamoDBApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-dynamodb-api-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  LLMLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-llm-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ResearchReconcilerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-research-reconciler-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ClientDownloadsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/warmreach-client-downloads-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  # --------------------------------------------------------------------------
+  # Circuit-breaker persistence failures
+  # --------------------------------------------------------------------------
+  # shared_services/circuit_breaker.py keeps its state writes best-effort — a
+  # breaker that cannot persist must not break the caller's code — but a
+  # swallowed write silently degrades the breaker into a no-op. It now logs the
+  # literal CIRCUIT_BREAKER_PERSIST_FAILED, and these filters turn that into a
+  # metric. The marker is in the log MESSAGE rather than a structured `extra`
+  # field on purpose: observability.StructuredJsonFormatter filters `extra`
+  # through an allowlist, so a field an alarm keyed on would never be emitted.
+  #
+  # One filter per log group that actually runs a breaker, i.e. every Lambda
+  # that constructs a RAGStackClient. They all publish the same metric, so the
+  # alarm below covers all of them.
+
+  EdgeCrudPersistFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref EdgeCrudLogGroup
+      FilterPattern: 'CIRCUIT_BREAKER_PERSIST_FAILED'
+      MetricTransformations:
+        - MetricNamespace: !Sub 'WarmReach/${Environment}'
+          MetricName: CircuitBreakerPersistFailures
+          MetricValue: '1'
+          DefaultValue: 0
+
+  RagstackOpsPersistFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref RagstackOpsLogGroup
+      FilterPattern: 'CIRCUIT_BREAKER_PERSIST_FAILED'
+      MetricTransformations:
+        - MetricNamespace: !Sub 'WarmReach/${Environment}'
+          MetricName: CircuitBreakerPersistFailures
+          MetricValue: '1'
+          DefaultValue: 0
+
+  # No CloudWatch alarm on this metric in the community edition: it ships no SNS
+  # alerting stack at all (no AlarmNotificationEmail parameter, no topic, and no
+  # other AWS::CloudWatch::Alarm), so an alarm here would have nowhere to send.
+  # The metric is published regardless, so an operator running this template can
+  # attach their own alarm to WarmReach/<env> CircuitBreakerPersistFailures.
+
   # --- WebSocket Connect ---
   WebSocketConnectFunction:
     Type: AWS::Serverless::Function
+    DependsOn: WebSocketConnectLogGroup
     Properties:
       FunctionName: !Sub 'warmreach-ws-connect-${Environment}'
       CodeUri: lambdas/websocket-connect/
@@ -370,6 +638,7 @@ Resources:
   # --- WebSocket Disconnect ---
   WebSocketDisconnectFunction:
     Type: AWS::Serverless::Function
+    DependsOn: WebSocketDisconnectLogGroup
     Properties:
       FunctionName: !Sub 'warmreach-ws-disconnect-${Environment}'
       CodeUri: lambdas/websocket-disconnect/
@@ -407,6 +676,7 @@ Resources:
   # --- WebSocket Default ---
   WebSocketDefaultFunction:
     Type: AWS::Serverless::Function
+    DependsOn: WebSocketDefaultLogGroup
     Properties:
       FunctionName: !Sub 'warmreach-ws-default-${Environment}'
       CodeUri: lambdas/websocket-default/
@@ -446,6 +716,7 @@ Resources:
   # ==========================================================================
   CommandDispatchFunction:
     Type: AWS::Serverless::Function
+    DependsOn: CommandDispatchLogGroup
     Properties:
       FunctionName: !Sub 'warmreach-command-dispatch-${Environment}'
       CodeUri: lambdas/command-dispatch/
@@ -497,6 +768,7 @@ Resources:
   # passthrough; the frontend uses one path in both editions.
   LinkedinActionGateFunction:
     Type: AWS::Serverless::Function
+    DependsOn: LinkedinActionGateLogGroup
     Properties:
       FunctionName: !Sub 'warmreach-linkedin-action-gate-${Environment}'
       CodeUri: lambdas/linkedin-action-gate/
@@ -543,6 +815,7 @@ Resources:
   # agent-action / opportunity-reconciler Lambdas.)
   EdgeCrudFunction:
     Type: AWS::Serverless::Function
+    DependsOn: EdgeCrudLogGroup
     Properties:
       FunctionName: !Sub 'warmreach-edge-crud-${Environment}'
       CodeUri: lambdas/edge-crud/
@@ -554,11 +827,30 @@ Resources:
             - DeployRAGStackCondition
             - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiUrl
             - !Ref RagstackGraphqlEndpoint
+          # With RagstackApiKeyArn set, no plaintext key reaches the function
+          # configuration at all; the handler fetches it from SSM at runtime.
+          # Blank keeps the previous behaviour so the change is
+          # deploy-order-independent (the handler warns when it falls back).
+          RAGSTACK_API_KEY_ARN: !Ref RagstackApiKeyArn
           RAGSTACK_API_KEY: !If
-            - DeployRAGStackCondition
-            - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiKey
-            - !Ref RagstackApiKey
+            - HasRagstackApiKeyArn
+            - ''
+            - !If
+              - DeployRAGStackCondition
+              - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiKey
+              - !Ref RagstackApiKey
       Policies:
+        # Scoped to the single RAGStack key parameter — never '*'. Attached only
+        # when the ARN is configured, so a blank parameter grants nothing.
+        - !If
+          - HasRagstackApiKeyArn
+          - Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Ref RagstackApiKeyArn
+          - !Ref AWS::NoValue
         - DynamoDBCrudPolicy:
             TableName: !Ref ProfilesTable
       Events:
@@ -577,56 +869,28 @@ Resources:
             Auth:
               Authorizer: NONE
 
-  AnalyticsInsightsFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub 'warmreach-analytics-insights-${Environment}'
-      CodeUri: lambdas/analytics-insights/
-      Handler: lambda_function.lambda_handler
-      Timeout: 45
-      MemorySize: 512
-      Environment:
-        Variables:
-          RAGSTACK_GRAPHQL_ENDPOINT: !If
-            - DeployRAGStackCondition
-            - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiUrl
-            - !Ref RagstackGraphqlEndpoint
-          RAGSTACK_API_KEY: !If
-            - DeployRAGStackCondition
-            - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiKey
-            - !Ref RagstackApiKey
-      # Community analytics-insights is DynamoDB-CRUD only. The opportunity-agent,
-      # goal-intelligence, opportunities, and network-intelligence ops (and their
-      # SSM / states:* IAM) are pro-only and live in separate pro Lambdas that are
-      # excluded from the community sync — so they never appear in this template.
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ProfilesTable
-      Events:
-        AnalyticsApi:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /analytics
-            Method: POST
-        AnalyticsOptionsApi:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /analytics
-            Method: OPTIONS
-            Auth:
-              Authorizer: NONE
-
-  # Pro-only Lambdas peeled out of analytics-insights (Architecture 8->9) are
-  # excluded from the community sync, so they intentionally do NOT appear here:
+  # The admin dashboard is pro-only too, so this template declares none of its
+  # infrastructure: no AdminMetricsFunction, no CloudFront distribution, and no
+  # `warmreach-admin-cf-logs-*` bucket. If you are looking for the S3 ownership
+  # and logging rules that bucket carries, they live in the pro template only.
+  #
+  # Pro-only Lambdas excluded from the community sync, so they intentionally do
+  # NOT appear here:
+  #   - AnalyticsInsightsFunction (POST /analytics)
   #   - OpportunitiesFunction (POST /opportunities)
   #   - OpportunityAgentFunction (POST /opportunity-agent; carries states:*)
   #   - GoalIntelligenceFunction (POST /goal-intelligence; SSM for the OpenAI key)
   #   - NetworkIntelligenceFunction (POST /network-intelligence)
+  #
+  # AnalyticsInsightsFunction used to be declared here with
+  # `CodeUri: lambdas/analytics-insights/`, a directory that exclude_paths
+  # removes — so `sam build` could not succeed in this edition, and the
+  # community tier stub advertised the features it served. Both are gone: the
+  # declaration here, and the `true` values in features/tier/index.ts.
 
   RagstackOpsFunction:
     Type: AWS::Serverless::Function
+    DependsOn: RagstackOpsLogGroup
     Properties:
       FunctionName: !Sub 'warmreach-ragstack-ops-${Environment}'
       CodeUri: lambdas/ragstack-ops/
@@ -638,11 +902,30 @@ Resources:
             - DeployRAGStackCondition
             - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiUrl
             - !Ref RagstackGraphqlEndpoint
+          # With RagstackApiKeyArn set, no plaintext key reaches the function
+          # configuration at all; the handler fetches it from SSM at runtime.
+          # Blank keeps the previous behaviour so the change is
+          # deploy-order-independent (the handler warns when it falls back).
+          RAGSTACK_API_KEY_ARN: !Ref RagstackApiKeyArn
           RAGSTACK_API_KEY: !If
-            - DeployRAGStackCondition
-            - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiKey
-            - !Ref RagstackApiKey
+            - HasRagstackApiKeyArn
+            - ''
+            - !If
+              - DeployRAGStackCondition
+              - !GetAtt RAGStackNestedStack.Outputs.GraphQLApiKey
+              - !Ref RagstackApiKey
       Policies:
+        # Scoped to the single RAGStack key parameter — never '*'. Attached only
+        # when the ARN is configured, so a blank parameter grants nothing.
+        - !If
+          - HasRagstackApiKeyArn
+          - Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Ref RagstackApiKeyArn
+          - !Ref AWS::NoValue
         - DynamoDBCrudPolicy:
             TableName: !Ref ProfilesTable
       Events:
@@ -672,6 +955,7 @@ Resources:
   # dynamodb-api below therefore needs no Stripe dependency, secret, or IAM.
   DynamoDBApiFunction:
     Type: AWS::Serverless::Function
+    DependsOn: DynamoDBApiLogGroup
     Properties:
       FunctionName: !Sub 'warmreach-dynamodb-api-${Environment}'
       CodeUri: lambdas/dynamodb-api/
@@ -727,6 +1011,7 @@ Resources:
 
   LLMFunction:
     Type: AWS::Serverless::Function
+    DependsOn: LLMLogGroup
     Properties:
       # Async invocations retry twice and then vanish. This function is
       # invoked asynchronously, so without a DLQ a failed run leaves nothing to
@@ -777,6 +1062,7 @@ Resources:
   # ==========================================================================
   ResearchReconcilerFunction:
     Type: AWS::Serverless::Function
+    DependsOn: ResearchReconcilerLogGroup
     Properties:
       # Async invocations retry twice and then vanish. This function is
       # invoked asynchronously, so without a DLQ a failed run leaves nothing to
@@ -813,6 +1099,7 @@ Resources:
   # Public endpoint returning per-platform desktop client download URLs.
   ClientDownloadsFunction:
     Type: AWS::Serverless::Function
+    DependsOn: ClientDownloadsLogGroup
     Properties:
       FunctionName: !Sub 'warmreach-client-downloads-${Environment}'
       CodeUri: lambdas/client-downloads/

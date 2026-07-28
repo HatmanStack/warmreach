@@ -3,7 +3,7 @@
 
 > **DRAFT — NOT LEGAL ADVICE.** Not reviewed by a lawyer. The liability and
 > refund positions in particular may be unenforceable in some jurisdictions —
-> see [README](README.md).
+> see `docs/legal/README.md`.
 
 **Version:** `2026-07-26.1`
 

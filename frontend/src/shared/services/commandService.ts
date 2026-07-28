@@ -33,6 +33,31 @@ class CommandService {
     'linkedin:follow-profile',
   ]);
 
+  /**
+   * Idempotency keys for outbound LinkedIn actions that have not landed yet,
+   * keyed by the action's identity (type + caller payload).
+   *
+   * The gate's ambiguous-dispatch path returns 503 "please retry", and acting
+   * on that message is exactly how a user sends a duplicate connect, message or
+   * follow. A key regenerated per attempt would be useless, so the key is held
+   * here until the action lands and reused by every retry of the same action.
+   * Distinct actions get distinct keys, and a deliberate repeat of an action
+   * that already succeeded gets a fresh one.
+   */
+  private pendingIdempotencyKeys = new Map<string, string>();
+
+  /**
+   * Bound on the map above. Entries only survive dispatches that failed, and
+   * every one is a manual user action, so this is far above any real backlog —
+   * it exists so a pathological failure loop cannot grow the map forever.
+   */
+  private static readonly MAX_PENDING_IDEMPOTENCY_KEYS = 50;
+
+  /** Surfaced for tests: the number of un-landed actions holding a key. */
+  get pendingIdempotencyKeyCount(): number {
+    return this.pendingIdempotencyKeys.size;
+  }
+
   constructor() {
     this._setupMessageHandler();
   }
@@ -47,18 +72,43 @@ class CommandService {
 
     // Outbound LinkedIn actions go through the metered gate (daily li-actions
     // cap); everything else dispatches straight to command-dispatch.
-    const endpoint = CommandService.LI_ACTION_TYPES.has(type) ? 'linkedin-actions' : 'commands';
+    const gated = CommandService.LI_ACTION_TYPES.has(type);
+    const endpoint = gated ? 'linkedin-actions' : 'commands';
+    // Identity is computed from the CALLER's payload, before credentials are
+    // attached, so a session credential rotation does not look like a new action.
+    const identity = gated ? `${type}:${JSON.stringify(payload)}` : null;
     const result = await httpClient.post<{ commandId: string }>(endpoint, {
       type,
       payload: augmentedPayload,
+      ...(identity ? { idempotencyKey: this._idempotencyKeyFor(identity) } : {}),
     });
 
     if (!result.success) {
+      // Keep the key: the next attempt at this action must carry the same one.
       const errorMsg = result.error?.message || 'Command dispatch failed';
       throw new Error(errorMsg);
     }
 
+    // It landed. A further identical dispatch is a new, deliberate action and
+    // must not be answered with this one's recorded outcome.
+    if (identity) this.pendingIdempotencyKeys.delete(identity);
+
     return { commandId: result.data!.commandId };
+  }
+
+  private _idempotencyKeyFor(identity: string): string {
+    const existing = this.pendingIdempotencyKeys.get(identity);
+    if (existing) return existing;
+
+    const key = crypto.randomUUID();
+    this.pendingIdempotencyKeys.set(identity, key);
+    // Map iterates in insertion order, so the first entry is the oldest.
+    while (this.pendingIdempotencyKeys.size > CommandService.MAX_PENDING_IDEMPOTENCY_KEYS) {
+      const oldest = this.pendingIdempotencyKeys.keys().next().value;
+      if (oldest === undefined) break;
+      this.pendingIdempotencyKeys.delete(oldest);
+    }
+    return key;
   }
 
   /**
@@ -124,6 +174,7 @@ class CommandService {
 
   destroy() {
     this.commandCallbacks.clear();
+    this.pendingIdempotencyKeys.clear();
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;

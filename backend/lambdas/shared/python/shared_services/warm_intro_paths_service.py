@@ -1,9 +1,10 @@
 # Community edition stub — warm intro paths is available in WarmReach Pro.
 #
 # The Pro service traverses the requester's own private contact-to-contact
-# adjacency (you -> your contact -> ... -> target). The community edition ships
-# no adjacency store, so this stub returns an empty, interface-compatible
-# result. The signature and top-level response keys match the Pro service so
+# adjacency (you -> your contact -> ... -> target) — see
+# docs/adr/ADR-011-single-tenant-warm-intro-pathfinding.md. The community
+# edition ships no adjacency store, so this stub returns an empty,
+# interface-compatible result. The signature and top-level response keys match the Pro service so
 # callers (and the frontend) consume an identical shape.
 from shared_services.base_service import BaseService
 

@@ -163,6 +163,14 @@
         <span class="label">Threat level</span>
         <span class="value" id="threat">0/60</span>
       </div>
+      <div class="row">
+        <span class="label">Pending results</span>
+        <span class="value" id="outbox">0</span>
+      </div>
+      <div class="row">
+        <span class="label">Updates</span>
+        <span class="value" id="updates">Not checked yet</span>
+      </div>
     </div>
 
     <div class="actions">
@@ -182,6 +190,22 @@
         $('version').textContent = 'v' + (s.version || '?');
         $('backend').textContent = 'http://localhost:' + (s.backendPort || 3001);
         $('threat').textContent = (s.threatLevel || 0) + '/60';
+        // A non-zero, non-draining outbox means completed LinkedIn actions are
+        // not reaching the backend — indistinguishable from an idle agent
+        // without this.
+        $('outbox').textContent = String(s.wsOutbox || 0);
+
+        // Auto-update is the only security-patch channel, so a broken one has
+        // to be visible here rather than only in the log file.
+        const checkedAt = s.updateCheckedAt
+          ? new Date(s.updateCheckedAt).toLocaleTimeString()
+          : null;
+        $('updates').textContent =
+          s.updateStatus === 'error'
+            ? 'Check failed' + (checkedAt ? ' at ' + checkedAt : '') + ' — see logs'
+            : s.updateStatus === 'ok'
+              ? 'OK' + (checkedAt ? ' at ' + checkedAt : '')
+              : 'Not checked yet';
 
         const ws = $('ws-pill');
         ws.className = 'pill ' + (s.wsConnected ? 'green' : s.wsConfigured ? 'amber' : 'gray');
@@ -195,7 +219,9 @@
         auto.className = 'pill ' + (s.automationPaused ? 'red' : 'green');
         auto.textContent = s.automationPaused ? 'Paused' : 'Running';
 
-        $('toggle-pause').textContent = s.automationPaused ? 'Resume Automation' : 'Pause Automation';
+        $('toggle-pause').textContent = s.automationPaused
+          ? 'Resume Automation'
+          : 'Pause Automation';
       }
 
       $('open-app').addEventListener('click', () => window.mainAPI.openApp());

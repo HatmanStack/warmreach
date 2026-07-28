@@ -142,8 +142,9 @@ export class ProfileInitController {
         errorCount: processingStats?.errors || 0,
       });
 
-      // Record success in monitoring
-      profileInitMonitor.recordSuccess(requestId, result);
+      // Record success in monitoring. The processing counts live on the
+      // nested InitializationResult, not on this wrapper.
+      profileInitMonitor.recordSuccess(requestId, result.profileData);
 
       res.json(this._buildSuccessResponse(result, requestId));
     } catch (error: unknown) {
@@ -280,7 +281,7 @@ export class ProfileInitController {
         ? new BurstThrottleManager()
         : undefined;
 
-      // Consented mutual-connections collector (B-1 / ADR-6/7/8). Built only
+      // Consented mutual-connections collector (ADR-013 / ADR-014 / ADR-015). Built only
       // when the user opted in (payload.collectMutuals -> state.collectMutuals)
       // AND a live browser page exists; it drives the same persistent page as
       // the scraper. Left undefined otherwise, so collectMutualConnections()
@@ -705,16 +706,22 @@ export class ProfileInitController {
     // The agent now injects plaintext searchName/searchPassword from its
     // local CredentialStore at the commandRouter level, so honour those
     // if present. Ciphertext still wins when both are supplied.
+    // `payload` is Record<string, unknown>, so each credential field is
+    // narrowed the same way `jwtToken` is above. A non-string ciphertext still
+    // counts as "ciphertext supplied" (so the plaintext fields stay null) and
+    // still fails validateState's string check, exactly as before.
+    const hasCiphertext = Boolean(payload.linkedinCredentialsCiphertext);
+    const asString = (value: unknown): string | undefined =>
+      typeof value === 'string' ? value : undefined;
+
     const state = ProfileInitStateManager.buildInitialState({
-      searchName: payload.linkedinCredentialsCiphertext ? null : (payload.searchName ?? null),
-      searchPassword: payload.linkedinCredentialsCiphertext
-        ? null
-        : (payload.searchPassword ?? null),
-      credentialsCiphertext: payload.linkedinCredentialsCiphertext,
+      searchName: hasCiphertext ? null : (asString(payload.searchName) ?? null),
+      searchPassword: hasCiphertext ? null : (asString(payload.searchPassword) ?? null),
+      credentialsCiphertext: asString(payload.linkedinCredentialsCiphertext),
       jwtToken,
       requestId,
       progressCallback: onProgress,
-      // Consent flag (ADR-6): only an explicit true from the payload enables
+      // Consent flag (ADR-013): only an explicit true from the payload enables
       // mutual-connections collection; carried through into ingestion state.
       collectMutuals: payload.collectMutuals === true,
     });
@@ -729,7 +736,7 @@ export class ProfileInitController {
     const result = await this.runProfileInitWithHealing(state);
     if (result === undefined) throw new Error('Profile initialization returned no result');
 
-    profileInitMonitor.recordSuccess(requestId, result);
+    profileInitMonitor.recordSuccess(requestId, result.profileData);
     return {
       statusCode: 200,
       ...this._buildSuccessResponse(result, requestId),

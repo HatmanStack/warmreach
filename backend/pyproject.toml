@@ -37,15 +37,20 @@ quote-style = "single"
 indent-style = "space"
 
 [tool.mypy]
-# Static type checking for the backend Lambda shared-services layer. This locks
-# in the typed-boundary work (TypedDicts, Protocols, `str | None`) so it cannot
-# silently regress. CI runs `mypy -p shared_services` from `backend/`.
+# Static type checking for the backend. This locks in the typed-boundary work
+# (TypedDicts, Protocols, `str | None`) so it cannot silently regress.
 #
-# Scope note (future ratchet): the per-Lambda `lambda_function.py` handlers all
-# share the same module name, which mypy cannot resolve in a single pass without
-# per-directory invocation. The cohesive, uniquely-named `shared_services`
-# package is the type-rigor surface and is what is checked here. Extending the
-# check to the handlers (one mypy invocation per Lambda dir) is a future ratchet.
+# Scope: everything. `scripts/typecheck-backend.sh` runs `mypy -p shared_services`
+# plus one invocation per Lambda directory — 24 invocations — and both CI and
+# `npm run typecheck:backend` call that script, so they cannot drift apart. The
+# per-directory loop is not a style choice: the handlers are all named
+# `lambda_function`, so a single pass cannot resolve them. It selects directories
+# by "contains any .py", NOT by "contains lambda_function.py", because
+# `agent-action-task`'s four Step Functions workers have no file by that name and
+# the narrower test skipped them silently.
+#
+# This used to read "extending the check to the handlers is a future ratchet".
+# That is done; the settings below are what is left.
 python_version = "3.13"
 mypy_path = "lambdas/shared/python"
 # Third-party Lambda-layer deps (boto3, requests, yaml, openai, ...) ship no
@@ -63,35 +68,51 @@ warn_redundant_casts = true
 no_implicit_optional = true
 strict_equality = true
 extra_checks = true
-# NOTE: the following stricter checks are intentionally OFF — each surfaces
-# pre-existing errors today and is a future ratchet (violation counts as of this
-# change):
-#   check_untyped_defs      (var-annotated on untyped-def locals)
-#   warn_unused_ignores     (2 stale `# type: ignore` comments)
-#   warn_unreachable        (4 pre-existing unreachable branches)
-#   disallow_untyped_defs / strict mode
-
-# Future ratchet: these modules carry pre-existing type errors (TypedDict
-# mismatches, union-attr, arg-type) that predate this guardrail. They are
-# excluded from error reporting so the check is GREEN at introduction per the
-# audit's "guardrail must be green when added" rule. Fix the errors and remove
-# each entry from this list to ratchet coverage up.
-[[tool.mypy.overrides]]
-module = [
-    "errors.exceptions",
-    "shared_services.activity_service",
-    "shared_services.analytics_service",
-    "shared_services.billing_service",
-    "shared_services.edge_ingestion_service",
-    "shared_services.edge_query_service",
-    "shared_services.github_client",
-    "shared_services.handler_utils",
-    "shared_services.ingestion_service",
-    "shared_services.notification_service",
-    "shared_services.ragstack_client",
-    "shared_services.relationship_scoring_service",
-    "shared_services.send_time_service",
-    "shared_services.tier_service",
-    "shared_services.warm_intro_paths_service",
-]
-ignore_errors = true
+# NOTE: the following stricter checks are intentionally OFF — each still surfaces
+# pre-existing errors. Counts below were measured on 2026-07-27 with mypy 2.1.0
+# (which is what `requirements-test.lock` pins and therefore what CI runs, despite
+# `requirements-test.txt` asking for >=2.3.0). Do not trust these numbers on a tree
+# that has moved — re-measure. Run these from `backend/`, one per setting, and read
+# mypy's own last line:
+#
+#   python -m mypy -p shared_services --check-untyped-defs
+#   python -m mypy -p shared_services --warn-unused-ignores
+#   python -m mypy -p shared_services --warn-unreachable
+#   python -m mypy -p shared_services --disallow-untyped-defs
+#
+# Expected shape: `Found 7 errors in 3 files (checked 60 source files)`. Read the
+# "checked N source files" half too — a gate that inspects an empty file set has
+# bitten this repo more than once.
+#
+# The CLI spells these with DASHES; the settings themselves (below, and in the
+# names listed here) use underscores. Do not paste an underscored name after `--`:
+# mypy answers `mypy: error: unrecognized arguments: --check_untyped_defs` and
+# exits 2. That matters because this comment used to pipe the run through
+# `grep -c ': error:'`, and that usage message *contains* `: error:` — so the typo
+# printed a confident `1` for all four settings instead of failing. Reading mypy's
+# own summary cannot fail that way: a usage error produces no `Found N errors`
+# line at all.
+#
+#   check_untyped_defs      7  (2 ragstack_client, 4 cluster_detection_service,
+#                               1 warm_intro_paths_service)
+#   warn_unused_ignores     2  (observability.py:47,48)
+#   warn_unreachable        5  (see below)
+#   disallow_untyped_defs   134 — strict mode is a different order of work
+#
+# On warn_unreachable specifically, because a dead `return` shipped in this
+# branch and the gate that would have caught it was measured rather than assumed:
+# ruff has no unreachable-code rule at all (`ruff rule unreachable` is not a valid
+# rule name on 0.16.0), so mypy is the only lever. The count was 4 while the
+# ignore_errors list still existed; draining it moved the number to 5, because
+# handler_utils.py:363 was hidden by its entry. That one and the four others are
+# mypy narrowing artifacts rather than dead code — e.g. handler_utils' `budget.exhausted`
+# is a property that `budget.take()` mutates, which mypy's member narrowing does
+# not model — so enabling this flag needs those five rewritten first, not just
+# deleted.
+#
+# The `ignore_errors` module list that used to sit here is GONE: all 15 entries
+# were drained. Nothing in shared_services is excluded from error reporting now.
+# One of the suppressed errors was load-bearing — edge_ingestion_service's
+# `generate_profile_markdown = None` fallback was typed as non-Optional, which made
+# its own `is None` guard unreachable, so the ImportError path the try/except exists
+# to serve was never checked.

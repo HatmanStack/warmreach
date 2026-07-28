@@ -20,32 +20,45 @@ The fastest way to set up is with the automated script:
 
 ```bash
 git clone <repository-url>
-cd warmreach
+cd <the cloned directory>   # warmreach-pro, or warmreach for the community edition
 bash scripts/setup.sh
 ```
 
-This will install all Node.js and Python dependencies, create a Python venv, and copy `.env.example` to `.env`.
+The script checks for `node`, `npm`, `docker`, `python3` and `uv` up front and
+exits if any is missing, then runs `npm ci` in the root and in `frontend/`,
+`client/`, `mock-linkedin/` and `admin/` (skipped when `admin/` is absent, which
+it is in the community edition), creates `tests/backend/.venv` and installs from
+`requirements-test.lock`, and copies `.env.example` to `.env` if you do not
+already have one. It does **not** generate the Sealbox keypair — that is step 4
+below.
 
 ### Manual Setup
 
 If you prefer to set up manually:
 
-1.  **Install Dependencies**:
+1.  **Install Dependencies**: there is no `workspaces` key in the root
+    `package.json`, so a root install does not descend into the sub-projects —
+    each one needs its own. Use `npm ci` rather than `npm install`, matching
+    `scripts/setup.sh` and CI.
     ```bash
-    npm install
-    cd frontend && npm install && cd ..
-    cd client && npm install && cd ..
-    cd mock-linkedin && npm install && cd ..
+    npm ci
+    (cd frontend && npm ci)
+    (cd client && npm ci)
+    (cd mock-linkedin && npm ci)
+    if [ -d admin ]; then (cd admin && npm ci); fi   # admin/ ships in WarmReach Pro only
     ```
 
 2.  **Python Test Environment**:
     ```bash
     cd tests/backend
-    python -m venv .venv
+    python3 -m venv .venv
     source .venv/bin/activate
     uv pip install -r requirements-test.lock
     cd ../..
     ```
+    Install from `requirements-test.lock` (pinned + hashed), never from
+    `requirements-test.txt` — that file is only the loose-range input used to
+    regenerate the lock.
 
 3.  **Environment Configuration**:
     Copy the example environment file and fill in your values.
@@ -78,7 +91,14 @@ This starts:
 ### MiniStack
 
 MiniStack provides local AWS services. The init script (`scripts/ministack/init-aws.sh`) creates:
-- DynamoDB table with PK/SK + GSI1 (matching SAM template)
+- DynamoDB table with PK/SK and **GSI1 only**. The SAM template declares more
+  — four indexes in WarmReach Pro, two in the community edition (see
+  [ARCHITECTURE.md](ARCHITECTURE.md#global-secondary-indexes)). The
+  consequence is concrete: **local integration tests cannot exercise a query
+  that goes through any index other than GSI1.** Extending `init-aws.sh` is
+  deliberately not done — one script cannot match two templates, and
+  provisioning indexes no local test reads would be dead configuration that
+  goes stale on the next template change
 - S3 bucket for screenshots
 - SQS queues with DLQ redrive policy
 - Cognito user pool with test user (`testuser@example.com` / `TestPass123!`)

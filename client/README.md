@@ -7,10 +7,10 @@ Electron tray app + Node.js automation backend for LinkedIn interactions with qu
 ## Features
 
 - **LinkedIn Automation**: Queue-based search, messaging, and connection management
-- **Session Management**: Long-lived browser sessions with heal & restore capabilities
+- **Session Management**: Long-lived browser sessions, rebuilt when the local session-health check fails
 - **AWS Integration**: DynamoDB storage (via API Gateway) with encrypted credential management
 - **Secure Processing**: Sealbox encryption and user data isolation
-- **Error Recovery**: Checkpoint-based recovery for interrupted processes
+- **Error Recovery**: In-process retry from a resume state, up to three attempts, on a recoverable failure
 
 ## Quick Start
 
@@ -48,7 +48,15 @@ All `/search`, `/profile-init`, and `/linkedin-interactions` endpoints require:
 - JWT token in `Authorization: Bearer <token>` header
 - Encrypted LinkedIn credentials (sealbox format)
 
-Heal/restore and health endpoints do not require authentication.
+The health and status endpoints require no authentication: `GET /health`,
+`GET /config/status`, and `GET /profile-init/health`. (`/search` and
+`/profile-init` enforce the JWT inside their controllers rather than through
+router middleware, so their absence from a `router.use(...)` line is not an
+absence of authentication.)
+
+The auth-bridge routes `POST /auth/token` and `POST /auth/clear` are how the web
+app hands this agent its Cognito tokens, so they carry no bearer token of their
+own; `/auth/token` validates the token shapes it is given instead.
 
 ## Rate Limits
 
@@ -57,6 +65,8 @@ Heal/restore and health endpoints do not require authentication.
 | `/search` | 10 req/min |
 | `/profile-init` | 5 req/min |
 | `/linkedin-interactions` | 30 req/min |
+| `/auth/token` | 10 req/min |
+| `/auth/clear` | 10 req/min |
 
 ## Environment Variables
 
@@ -64,8 +74,6 @@ See `.env.example` for all configuration options. Key variables:
 
 | Variable | Description |
 |----------|-------------|
-| `RAGSTACK_GRAPHQL_ENDPOINT` | RAGStack GraphQL API URL for profile scraping |
-| `RAGSTACK_API_KEY` | API key for RAGStack authentication |
 | `HEADLESS` | Browser headless mode (default: true) |
 | `PORT` | Server port (default: 3001) |
 
@@ -74,8 +82,8 @@ See `.env.example` for all configuration options. Key variables:
 1. **Authentication**: Secure credential decryption with Sealbox encryption
 2. **Queue Processing**: FIFO queue serializes LinkedIn interactions
 3. **Session Management**: Long-lived browser sessions minimize logins
-4. **Profile Scraping**: RAGStack-based web scraping with cookie passthrough
-5. **Recovery System**: Checkpoint-based recovery for interrupted processes
+4. **Profile Scraping**: Puppeteer-driven page reads (`src/domains/linkedin/`) on the live authenticated session
+5. **Recovery System**: A recoverable failure re-runs the phase from its resume state with a fresh browser, capped at three attempts
 
 ## Troubleshooting
 

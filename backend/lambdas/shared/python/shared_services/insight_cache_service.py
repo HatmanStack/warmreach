@@ -24,7 +24,12 @@ class InsightCacheService:
         return {}
 
     def get_priority_recommendations(
-        self, user_id, edge_query_fn=None, reply_prob_service=None, priority_service=None,
-        limit=20, force_recompute=False
+        self,
+        user_id,
+        edge_query_fn=None,
+        reply_prob_service=None,
+        priority_service=None,
+        limit=20,
+        force_recompute=False,
     ):
         return {}

@@ -10,7 +10,7 @@ RAGStack GraphQL calls and S3 uploads via presigned URL both need backoff-on-ret
 
 The cited sites are:
 
-- `backend/lambdas/shared/python/shared_services/ragstack_client.py:207`
+- `backend/lambdas/shared/python/shared_services/ragstack_client.py:212`
 
   ```python
   # WARNING: time.sleep() blocks the Lambda execution thread. See ADR-003.

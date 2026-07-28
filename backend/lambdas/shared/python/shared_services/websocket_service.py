@@ -12,6 +12,18 @@ from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
+# TTL for WSCONN# rows. API Gateway caps a WebSocket connection at 24 hours, so
+# 26h can never reap a connection that is still legitimately alive; the 2h
+# margin absorbs clock skew and DynamoDB's own "within 48 hours of expiry"
+# deletion window being best-effort.
+#
+# $disconnect is best-effort and is not guaranteed to fire, so without this an
+# orphaned row survived indefinitely. Functionally such a row self-heals on the
+# next send (GoneException -> delete_connection), but until then it makes an
+# offline agent look online, and create_command then burns a rate-limit slot and
+# writes a COMMAND# before failing.
+WSCONN_TTL_SECONDS = 26 * 3600
+
 
 class WebSocketService:
     """Manages WebSocket connections via API Gateway Management API and DynamoDB."""
@@ -41,7 +53,13 @@ class WebSocketService:
         user_sub: str,
         client_type: str,
     ) -> None:
-        """Write WSCONN item to DynamoDB."""
+        """Write WSCONN item to DynamoDB.
+
+        The ``ttl`` attribute name matches the one ``COMMAND#`` items already use
+        (``command_dispatch_core.COMMAND_TTL_SECONDS``); DynamoDB allows exactly
+        one TTL attribute per table, so do not introduce a second name.
+        """
+        now = int(time.time())
         self.table.put_item(
             Item={
                 'PK': f'WSCONN#{connection_id}',
@@ -51,7 +69,8 @@ class WebSocketService:
                 'connectionId': connection_id,
                 'userSub': user_sub,
                 'clientType': client_type,
-                'connectedAt': int(time.time()),
+                'connectedAt': now,
+                'ttl': now + WSCONN_TTL_SECONDS,
             }
         )
 
@@ -65,17 +84,30 @@ class WebSocketService:
         return resp.get('Item')
 
     def get_user_connections(self, user_sub: str, client_type: str | None = None) -> list[dict]:
-        """Query GSI1 for a user's WebSocket connections, optionally filtered by type."""
+        """Query GSI1 for a user's WebSocket connections, optionally filtered by type.
+
+        Expired rows are filtered out. DynamoDB TTL deletion is best-effort and
+        can lag by up to 48 hours, so a row past its ``ttl`` is still returned by
+        the index — which makes an offline agent look online, and
+        ``create_command`` then burns a rate-limit slot and writes a ``COMMAND#``
+        before discovering the connection is gone. Rows written before the TTL
+        attribute existed carry no ``ttl`` and are kept, since nothing is known
+        about their age.
+        """
         key_condition = 'GSI1PK = :gpk'
-        expr_values = {':gpk': f'USER#{user_sub}#WSCONN'}
+        expr_values: dict = {':gpk': f'USER#{user_sub}#WSCONN'}
 
         if client_type:
             key_condition += ' AND GSI1SK = :gsk'
             expr_values[':gsk'] = f'TYPE#{client_type}'
 
+        expr_values[':now'] = int(time.time())
+
         resp = self.table.query(
             IndexName='GSI1',
             KeyConditionExpression=key_condition,
+            FilterExpression='attribute_not_exists(#ttl) OR #ttl > :now',
+            ExpressionAttributeNames={'#ttl': 'ttl'},
             ExpressionAttributeValues=expr_values,
         )
         return resp.get('Items', [])

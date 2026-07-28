@@ -3,6 +3,25 @@ import { z } from 'zod';
 import { httpClient } from './httpClient';
 import { server } from '@/test-utils';
 import { http, HttpResponse } from 'msw';
+import type { ApiResult } from '@/shared/types';
+
+/**
+ * ApiResult is a discriminated union whose own doc says it "forces callers to
+ * check success before accessing data" — these tests were reading `.data` and
+ * `.error` unchecked, which compiled only because test files were never
+ * type-checked. These keep the assertion and narrow off the same check.
+ */
+function expectSuccess<T>(result: ApiResult<T>): Extract<ApiResult<T>, { success: true }> {
+  expect(result.success).toBe(true);
+  if (!result.success) throw new Error(`expected success, got ${JSON.stringify(result.error)}`);
+  return result;
+}
+
+function expectFailure<T>(result: ApiResult<T>): Extract<ApiResult<T>, { success: false }> {
+  expect(result.success).toBe(false);
+  if (result.success) throw new Error(`expected failure, got ${JSON.stringify(result.data)}`);
+  return result;
+}
 
 vi.mock('@/features/auth', () => ({
   CognitoAuthService: {
@@ -39,8 +58,8 @@ describe('HttpClient', () => {
     );
 
     const result = await httpClient.makeRequest('edges', 'op');
-    expect(result.success).toBe(true);
-    expect(result.data).toEqual({ result: 'success' });
+    const ok_result = expectSuccess(result);
+    expect(ok_result.data).toEqual({ result: 'success' });
   });
 
   it('should handle lambda error response', async () => {
@@ -54,32 +73,9 @@ describe('HttpClient', () => {
     );
 
     const result = await httpClient.makeRequest('edges', 'op');
-    expect(result.success).toBe(false);
-    expect(result.error?.message).toBe('Bad request');
-    expect(result.error?.status).toBe(400);
-  });
-
-  it('parses the structured { error: { code, message, details } } shape', async () => {
-    server.use(
-      http.post('*/edges', () => {
-        return HttpResponse.json({
-          statusCode: 422,
-          body: JSON.stringify({
-            error: {
-              code: 'VALIDATION_ERROR',
-              message: 'Field required',
-              details: { field: 'name' },
-            },
-          }),
-        });
-      })
-    );
-
-    const result = await httpClient.makeRequest('edges', 'op');
-    expect(result.success).toBe(false);
-    expect(result.error?.message).toBe('Field required');
-    expect(result.error?.code).toBe('VALIDATION_ERROR');
-    expect(result.error?.status).toBe(422);
+    const err_result = expectFailure(result);
+    expect(err_result.error.message).toBe('Bad request');
+    expect(err_result.error.status).toBe(400);
   });
 
   it('should retry on retryable errors', async () => {
@@ -99,7 +95,7 @@ describe('HttpClient', () => {
     vi.spyOn(httpClient, 'sleep').mockResolvedValue(undefined);
 
     const result = await httpClient.get('retry');
-    expect(result.success).toBe(true);
+    expectSuccess(result);
     expect(attempts).toBe(2);
   });
 
@@ -113,7 +109,7 @@ describe('HttpClient', () => {
     );
 
     const result = await httpClient.get('no-retry');
-    expect(result.success).toBe(false);
+    expectFailure(result);
     expect(attempts).toBe(1);
   });
 
@@ -132,9 +128,9 @@ describe('HttpClient', () => {
 
     const result = await httpClient.get('max-retry');
 
-    expect(result.success).toBe(false);
+    const err_result = expectFailure(result);
     expect(attempts).toBe(3); // default maxRetries is 3
-    expect(result.error?.message).toContain('HTTP 503 error');
+    expect(err_result.error.message).toContain('HTTP 503 error');
 
     sleepSpy.mockRestore();
   });
@@ -144,8 +140,8 @@ describe('HttpClient', () => {
     controller.abort();
 
     const result = await httpClient.get('pre-cancel', { signal: controller.signal });
-    expect(result.success).toBe(false);
-    expect(result.error?.code).toBe('ERR_CANCELED');
+    const err_result = expectFailure(result);
+    expect(err_result.error.code).toBe('ERR_CANCELED');
   });
 
   it('should handle request cancellation', async () => {
@@ -161,8 +157,8 @@ describe('HttpClient', () => {
     controller.abort();
 
     const result = await promise;
-    expect(result.success).toBe(false);
-    expect(result.error?.code).toBe('ERR_CANCELED');
+    const err_result = expectFailure(result);
+    expect(err_result.error.code).toBe('ERR_CANCELED');
   });
 
   it('should handle network errors', async () => {
@@ -173,8 +169,8 @@ describe('HttpClient', () => {
     );
 
     const result = await httpClient.get('network-error');
-    expect(result.success).toBe(false);
-    expect(result.error?.message).toContain('error');
+    const err_result = expectFailure(result);
+    expect(err_result.error.message).toContain('error');
   });
 
   it('should identify 500 errors as retryable', async () => {
@@ -190,7 +186,7 @@ describe('HttpClient', () => {
     vi.spyOn(httpClient, 'sleep').mockResolvedValue(undefined);
 
     const result = await httpClient.get('retry-500');
-    expect(result.success).toBe(true);
+    expectSuccess(result);
     expect(attempts).toBe(2);
   });
 
@@ -205,8 +201,8 @@ describe('HttpClient', () => {
     );
 
     const result = await httpClient.makeRequest('edges', 'op');
-    expect(result.success).toBe(false);
-    expect(result.error?.code).toBe('EMPTY_RESPONSE');
+    const err_result = expectFailure(result);
+    expect(err_result.error.code).toBe('EMPTY_RESPONSE');
   });
 
   describe('Zod schema validation', () => {
@@ -223,8 +219,8 @@ describe('HttpClient', () => {
       );
 
       const result = await httpClient.get('schema-test', { schema: testSchema });
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ name: 'test', count: 42 });
+      const ok_result = expectSuccess(result);
+      expect(ok_result.data).toEqual({ name: 'test', count: 42 });
     });
 
     it('should fail when response does not match Zod schema', async () => {
@@ -235,9 +231,9 @@ describe('HttpClient', () => {
       );
 
       const result = await httpClient.get('schema-fail', { schema: testSchema });
-      expect(result.success).toBe(false);
-      expect(result.error?.message).toContain('Response validation failed');
-      expect(result.error?.code).toBe('SCHEMA_VALIDATION_ERROR');
+      const err_result = expectFailure(result);
+      expect(err_result.error.message).toContain('Response validation failed');
+      expect(err_result.error.code).toBe('SCHEMA_VALIDATION_ERROR');
     });
 
     it('should validate lambda-wrapped response with schema', async () => {
@@ -256,8 +252,8 @@ describe('HttpClient', () => {
         {},
         { schema: testSchema }
       );
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ name: 'lambda', count: 7 });
+      const ok_result = expectSuccess(result);
+      expect(ok_result.data).toEqual({ name: 'lambda', count: 7 });
     });
 
     it('should work without schema (backward compatible)', async () => {
@@ -268,8 +264,8 @@ describe('HttpClient', () => {
       );
 
       const result = await httpClient.get<{ arbitrary: string }>('no-schema');
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ arbitrary: 'data' });
+      const ok_result = expectSuccess(result);
+      expect(ok_result.data).toEqual({ arbitrary: 'data' });
     });
   });
 
@@ -285,9 +281,9 @@ describe('HttpClient', () => {
       );
 
       const result = await httpClient.makeRequest('edges', 'op');
-      expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('EMPTY_RESPONSE');
-      expect(result.error?.message).toBe('Response body is empty');
+      const err_result = expectFailure(result);
+      expect(err_result.error.code).toBe('EMPTY_RESPONSE');
+      expect(err_result.error.message).toBe('Response body is empty');
     });
 
     it('should return valid response body without schema', async () => {
@@ -301,8 +297,8 @@ describe('HttpClient', () => {
       );
 
       const result = await httpClient.makeRequest<{ key: string }>('edges', 'op');
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ key: 'value' });
+      const ok_result = expectSuccess(result);
+      expect(ok_result.data).toEqual({ key: 'value' });
     });
   });
 });

@@ -1,5 +1,13 @@
-import { createContext, useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from 'react';
-import { lambdaApiService } from '@/shared/services';
+import {
+  createContext,
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  type ReactNode,
+} from 'react';
+import { httpClient } from '@/shared/utils/httpClient';
 import { useUserProfile } from '@/features/profile';
 
 // ---------------------------------------------------------------------------
@@ -66,7 +74,7 @@ export const OnboardingProvider = ({ children }: { children: ReactNode }) => {
 
   const emitStepEvent = useCallback(async (step: string, skipped: boolean) => {
     try {
-      await lambdaApiService.apiClient.post('dynamodb', {
+      await httpClient.apiClient.post('dynamodb', {
         operation: 'complete_onboarding_step',
         step,
         skipped,
@@ -82,14 +90,14 @@ export const OnboardingProvider = ({ children }: { children: ReactNode }) => {
     setCurrentStep(next);
     if (next >= ONBOARDING_STEPS.length) {
       // Final step completed -- persist completion so refresh does not re-show onboarding
-      lambdaApiService.apiClient
+      httpClient.apiClient
         .post('dynamodb', {
           operation: 'complete_onboarding_step',
           step: 'completed',
           skipped: false,
         })
         .catch(() => {});
-      lambdaApiService.apiClient
+      httpClient.apiClient
         .post('dynamodb', {
           operation: 'update_user_settings',
           onboarding_completed: true,
@@ -98,7 +106,7 @@ export const OnboardingProvider = ({ children }: { children: ReactNode }) => {
       setIsOnboarding(false);
     } else {
       // Persist intermediate step progress (fire-and-forget)
-      lambdaApiService.apiClient
+      httpClient.apiClient
         .post('dynamodb', {
           operation: 'update_user_settings',
           onboarding_step: next,
@@ -128,7 +136,7 @@ export const OnboardingProvider = ({ children }: { children: ReactNode }) => {
   const completeOnboarding = useCallback(async () => {
     try {
       await emitStepEvent('completed', false);
-      await lambdaApiService.apiClient.post('dynamodb', {
+      await httpClient.apiClient.post('dynamodb', {
         operation: 'update_user_settings',
         onboarding_completed: true,
       });

@@ -12,6 +12,16 @@ export interface MainStatus {
   wsConnected: boolean;
   automationPaused: boolean;
   threatLevel: number;
+  /** Command-result frames buffered while the WebSocket is down. */
+  wsOutbox: number;
+  /**
+   * Coarse outcome of the last auto-update check. `unknown` means none has
+   * completed, which is what separates a broken update channel from a quiet
+   * one. The error detail is deliberately absent — it can carry release URLs
+   * and tokens.
+   */
+  updateStatus: 'ok' | 'error' | 'unknown';
+  updateCheckedAt: string | null;
 }
 
 export interface MainAPI {

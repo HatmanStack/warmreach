@@ -40,6 +40,7 @@ export function InterestsEditor({
             onClick={onAddInterest}
             variant="outline"
             className="bg-slate-700 border-white/20 text-white hover:bg-white/10"
+            aria-label="Add interest"
           >
             <Plus className="h-4 w-4" />
           </Button>

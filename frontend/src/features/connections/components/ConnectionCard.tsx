@@ -2,7 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   MessageSquare,
   ExternalLink,
@@ -584,6 +590,9 @@ const ConnectionCard = ({
         >
           <DialogHeader>
             <DialogTitle className="text-white">Summary</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              The most recent activity recorded for this connection.
+            </DialogDescription>
           </DialogHeader>
           <div className="text-sm text-slate-100 whitespace-pre-wrap">
             {connection.last_action_summary ||
@@ -601,6 +610,9 @@ const ConnectionCard = ({
         >
           <DialogHeader>
             <DialogTitle className="text-white">Tags</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Every tag on this connection. Select one to filter your connections by it.
+            </DialogDescription>
           </DialogHeader>
           <div className="flex flex-wrap gap-2">
             {(connection.tags || connection.common_interests || []).map(

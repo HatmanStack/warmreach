@@ -35,4 +35,22 @@ describe('AuthForm', () => {
     const signInTab = screen.getByRole('tab', { name: 'Sign In' });
     expect(signInTab).toHaveAttribute('data-state', 'active');
   });
+
+  describe('accessible names', () => {
+    it('names the password visibility toggle for its current state', () => {
+      const { rerender } = render(<AuthForm {...defaultProps} showPassword={false} />);
+      // Queried by role + accessible name on purpose: this fails if the
+      // aria-label is dropped, which a getByTestId query would not notice.
+      expect(screen.getByRole('button', { name: 'Show password' })).toBeInTheDocument();
+
+      rerender(<AuthForm {...defaultProps} showPassword={true} />);
+      expect(screen.getByRole('button', { name: 'Hide password' })).toBeInTheDocument();
+    });
+
+    it('labels both sign-in fields', () => {
+      render(<AuthForm {...defaultProps} />);
+      expect(screen.getByLabelText('Email')).toBeInTheDocument();
+      expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    });
+  });
 });

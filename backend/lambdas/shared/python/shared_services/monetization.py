@@ -15,14 +15,14 @@ class QuotaService:
     def __init__(self, table):
         self.table = table
 
-    def report_usage(self, user_sub, operation, *, count=1):
+    def report_usage(self, user_sub, operation, count=1):
         pass
 
-    def reserve_usage(self, user_sub, operation, *, count=1):
+    def reserve_usage(self, user_sub, operation, count=1):
         """No-op quota reservation — community edition has no cap."""
         pass
 
-    def release_usage(self, user_sub, operation, *, count=1):
+    def release_usage(self, user_sub, operation, count=1):
         """No-op compensating release — community edition never reserves."""
         pass
 
@@ -33,6 +33,18 @@ class QuotaService:
     def release_li_action_usage(self, user_sub, operation, count=1):
         """No-op li-actions compensating release — community edition never reserves."""
         pass
+
+    def reserve_deep_research(self, user_sub, operation='deep_research', count=1):
+        """No-op deep-research credit reservation — community edition has no cap."""
+        pass
+
+    def release_deep_research(self, user_sub, operation='deep_research', count=1):
+        """No-op deep-research compensating release — community edition never reserves."""
+        pass
+
+    def get_deep_research_status(self, user_sub):
+        """No-op credit snapshot — community edition is unmetered."""
+        return {'used': 0, 'limit': 999999, 'remaining': 999999}
 
     def get_rate_limits(self, user_sub):
         return {

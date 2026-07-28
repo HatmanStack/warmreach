@@ -45,8 +45,11 @@ describe('LinkedInConnectionService', () => {
     mockNavigationService = {
       navigateToProfile: vi.fn().mockResolvedValue(undefined),
     };
+    // Mirrors the real DynamoDBService surface. It has upsertEdgeStatus; it has
+    // never had an `upsertEdge`, and mocking one here is how the mismatch went
+    // unnoticed.
     mockDynamoDBService = {
-      upsertEdge: vi.fn().mockResolvedValue(true),
+      upsertEdgeStatus: vi.fn().mockResolvedValue(true),
     };
 
     service = new LinkedInConnectionService({
@@ -145,12 +148,10 @@ describe('LinkedInConnectionService', () => {
 
       await service.sendConnectionRequest('test-profile-id', '', { userId: 'user-123' });
 
-      expect(mockDynamoDBService.upsertEdge).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: 'user-123',
-          targetProfileId: 'test-profile-id',
-          edgeType: 'connection_request',
-        })
+      expect(mockDynamoDBService.upsertEdgeStatus).toHaveBeenCalledWith(
+        'test-profile-id',
+        'sent',
+        expect.objectContaining({ edgeType: 'connection_request' })
       );
     });
 

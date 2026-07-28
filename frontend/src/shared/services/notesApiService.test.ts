@@ -34,7 +34,6 @@ describe('NotesApiService', () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: false,
         error: { message: 'Failed to add note' },
-        data: null,
       });
 
       await expect(notesApiService.addNote('p1', 'content')).rejects.toThrow(ApiError);
@@ -61,7 +60,6 @@ describe('NotesApiService', () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: false,
         error: { message: 'Failed to update note' },
-        data: null,
       });
 
       await expect(notesApiService.updateNote('p1', 'n1', 'content')).rejects.toThrow(ApiError);
@@ -87,7 +85,6 @@ describe('NotesApiService', () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: false,
         error: { message: 'Failed to delete note' },
-        data: null,
       });
 
       await expect(notesApiService.deleteNote('p1', 'n1')).rejects.toThrow(ApiError);

@@ -84,7 +84,11 @@ const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({
   return (
     <Card className={`bg-slate-800 border-slate-700 ${className}`}>
       <CardContent className="p-4">
-        <div className="space-y-3">
+        {/* Message generation runs for minutes. Without a live region a screen
+            reader user gets no feedback for the whole run — the phase text and
+            the counters change silently. polite, not assertive: this is status,
+            not an alert, and it must not interrupt whatever is being read. */}
+        <div className="space-y-3" aria-live="polite" aria-busy={loadingState.isLoading}>
           {/* Phase indicator */}
           <div className="flex items-center space-x-2">
             {getPhaseIcon()}

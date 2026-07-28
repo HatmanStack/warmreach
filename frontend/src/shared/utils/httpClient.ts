@@ -21,7 +21,7 @@ class HttpClient {
 
     if (!apiBaseUrl) {
       logger.warn(
-        'No API base URL configured. Set VITE_API_GATEWAY_URL (preferred) or VITE_API_GATEWAY_BASE_URL to avoid defaulting to the current origin (e.g., localhost during dev).'
+        'No API base URL configured. Set VITE_API_GATEWAY_URL to avoid defaulting to the current origin (e.g., localhost during dev).'
       );
     }
 
@@ -148,20 +148,11 @@ class HttpClient {
             ? JSON.parse(lambdaResponse.body as string)
             : lambdaResponse.body;
         const errorData = errorBody as Record<string, unknown>;
-        // Accept both shapes during rollout:
-        //   legacy:   { error: 'message', code?, message? }
-        //   canonical:{ error: { code, message, details? } }
-        const structured =
-          errorData?.error && typeof errorData.error === 'object'
-            ? (errorData.error as Record<string, unknown>)
-            : null;
         const message =
-          (structured?.message as string) ||
           (typeof errorData?.error === 'string' ? (errorData.error as string) : '') ||
           (errorData?.message as string) ||
           `Lambda returned status ${lambdaResponse.statusCode}`;
-        const code =
-          (structured?.code as string | undefined) ?? (errorData?.code as string | undefined);
+        const code = errorData?.code as string | undefined;
         throw new ApiError({
           message,
           status: lambdaResponse.statusCode,

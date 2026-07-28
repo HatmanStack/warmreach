@@ -1,7 +1,7 @@
 # Data Retention Policy
 
 > **DRAFT — NOT LEGAL ADVICE.** Not reviewed by a lawyer. See
-> [README](README.md).
+> `docs/legal/README.md`.
 
 **Version:** `2026-07-26.1`
 
@@ -16,7 +16,8 @@ open-ended retention is not a neutral default — it is a growing liability.
 | Data                                             | Retained                      | Mechanism                  |
 | ------------------------------------------------ | ----------------------------- | -------------------------- |
 | Account, settings, tier                          | Life of the account           | Deleted on account erasure |
-| Connection data, notes, tags                     | Life of the account           | Deleted on account erasure |
+| Your connection data, notes, tags                | Life of the account           | Deleted on account erasure |
+| Shared third-party profile records               | Indefinite                    | **Not** deleted on erasure — see below |
 | LLM inferences (scores, probabilities, rankings) | Life of the account           | Deleted on account erasure |
 | Notifications                                    | 30 days                       | DynamoDB TTL               |
 | Daily usage counters                             | 90 days                       | DynamoDB TTL               |
@@ -29,9 +30,22 @@ open-ended retention is not a neutral default — it is a growing liability.
 
 ## Account erasure
 
-A user can erase their account in the app. That removes everything stored under
-their partition, plus the Stripe customer mapping. It is irreversible and
-requires explicit confirmation.
+A user can erase their account in the app. It is irreversible and requires
+explicit confirmation.
+
+Erasure removes the records stored under that user's own partition, plus the
+Stripe customer mapping. Two categories are deliberately **not** covered, and
+both are described under Known gaps below:
+
+- **Shared third-party profile records** (`PROFILE#{id}`), because they are
+  shared with every other account connected to that person and deleting them
+  would destroy other users' data.
+- **Legal acceptance records**, whose treatment is an unresolved question for
+  counsel rather than a settled policy.
+
+Stating this here rather than only in the gaps section is deliberate: a summary
+that promises complete deletion and a gap list that contradicts it is worse than
+either alone.
 
 ## Known gaps
 
@@ -50,8 +64,7 @@ carries the most risk.
 **Legal acceptance records.** Whether a record that someone accepted the terms
 should survive their erasure request is a question for counsel: retaining it is
 arguably necessary to evidence consent, but retaining data after an erasure
-request needs a lawful basis. Currently unresolved — see
-[README](README.md).
+request needs a lawful basis. Currently unresolved.
 
 **`DeletionPolicy: Retain` on the DynamoDB table.** Deleting the CloudFormation
 stack leaves the table, and all data in it, in place. That is deliberate

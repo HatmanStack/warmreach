@@ -52,6 +52,43 @@ describe('ProfileInitMonitor', () => {
     });
   });
 
+  describe('recordConnection', () => {
+    beforeEach(() => {
+      profileInitMonitor.metrics.connections.processed = 0;
+      profileInitMonitor.metrics.connections.skipped = 0;
+      profileInitMonitor.metrics.connections.errors = 0;
+      delete profileInitMonitor.metrics.connections.error;
+    });
+
+    it("counts an 'error' outcome on the errors counter", () => {
+      profileInitMonitor.startRequest('req1');
+      profileInitMonitor.recordConnection('req1', 'someone-123', 'error', 0);
+
+      expect(profileInitMonitor.metrics.connections.errors).toBe(1);
+      // The counter is `errors`; an `error` key would mean the outcome name
+      // leaked through as a fresh (NaN) property instead of being counted.
+      expect(profileInitMonitor.metrics.connections).not.toHaveProperty('error');
+    });
+
+    it("counts an 'error' outcome on the per-request counters too", () => {
+      profileInitMonitor.startRequest('req1');
+      profileInitMonitor.recordConnection('req1', 'someone-123', 'error', 0);
+
+      const active = profileInitMonitor.activeRequests.get('req1');
+      expect(active.connections.errors).toBe(1);
+      expect(active.connections).not.toHaveProperty('error');
+    });
+
+    it('counts processed and skipped outcomes', () => {
+      profileInitMonitor.startRequest('req1');
+      profileInitMonitor.recordConnection('req1', 'a-1', 'processed', 0);
+      profileInitMonitor.recordConnection('req1', 'b-2', 'skipped', 0);
+
+      expect(profileInitMonitor.metrics.connections.processed).toBe(1);
+      expect(profileInitMonitor.metrics.connections.skipped).toBe(1);
+    });
+  });
+
   describe('getMetrics', () => {
     it('should return calculated rates', () => {
       profileInitMonitor.startRequest('r1');

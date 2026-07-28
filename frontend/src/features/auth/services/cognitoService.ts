@@ -11,11 +11,30 @@ import type { AuthError, CognitoAttributeList } from '../types';
 
 const logger = createLogger('CognitoService');
 
-// Initialize Cognito User Pool
-const userPool = new CognitoUserPool({
-  UserPoolId: cognitoConfig.userPoolId,
-  ClientId: cognitoConfig.userPoolWebClientId,
-});
+// Cognito User Pool, constructed on first use rather than at module scope.
+//
+// amazon-cognito-identity-js throws `Both UserPoolId and ClientId are required.`
+// straight out of the constructor. At module scope that throw happens during
+// IMPORT, and AuthContext imports this module at the top of the file — so it
+// fires before the `isMockAuthAllowed` fallback can run and the whole SPA
+// renders an empty #root. That is the state produced by the .env that
+// scripts/setup.sh generates from .env.example, where the two Cognito values are
+// blank. Deferring construction means an unconfigured build reaches the mock-auth
+// path instead of dying at import time, and a configured one is unchanged.
+//
+// Unit tests cannot see this: setupTests.ts mocks the whole SDK. Only a
+// browser-level run does, which is why the e2e job exists.
+let cognitoUserPool: CognitoUserPool | null = null;
+
+function userPool(): CognitoUserPool {
+  if (!cognitoUserPool) {
+    cognitoUserPool = new CognitoUserPool({
+      UserPoolId: cognitoConfig.userPoolId,
+      ClientId: cognitoConfig.userPoolWebClientId,
+    });
+  }
+  return cognitoUserPool;
+}
 
 // Prefix the amazon-cognito-identity-js SDK uses for every key it writes to
 // localStorage (e.g. `...<clientId>.<username>.idToken`, `.accessToken`,
@@ -117,7 +136,7 @@ export class CognitoAuthService {
         );
       }
 
-      userPool.signUp(email, password, attributeList, [], (err, result) => {
+      userPool().signUp(email, password, attributeList, [], (err, result) => {
         if (err) {
           resolve({ error: { message: err.message } });
           return;
@@ -150,7 +169,7 @@ export class CognitoAuthService {
 
       const cognitoUser = new CognitoUserClass({
         Username: email,
-        Pool: userPool,
+        Pool: userPool(),
       });
 
       cognitoUser.authenticateUser(authenticationDetails, {
@@ -222,7 +241,7 @@ export class CognitoAuthService {
   // JS-readable storage between login and logout. Moving the SDK off
   // localStorage is a deliberately out-of-scope residual.
   static async signOut(): Promise<void> {
-    const cognitoUser = userPool.getCurrentUser();
+    const cognitoUser = userPool().getCurrentUser();
     if (!cognitoUser) {
       // No active user, but stale Cognito keys may linger — purge them.
       purgeCognitoStorage();
@@ -250,7 +269,7 @@ export class CognitoAuthService {
   // Get current authenticated user
   static async getCurrentUser(): Promise<CognitoUserData | null> {
     return new Promise((resolve) => {
-      const cognitoUser = userPool.getCurrentUser();
+      const cognitoUser = userPool().getCurrentUser();
 
       if (!cognitoUser) {
         resolve(null);
@@ -293,7 +312,7 @@ export class CognitoAuthService {
     return new Promise((resolve) => {
       const cognitoUser = new CognitoUserClass({
         Username: email,
-        Pool: userPool,
+        Pool: userPool(),
       });
 
       cognitoUser.confirmRegistration(code, true, (err) => {
@@ -311,7 +330,7 @@ export class CognitoAuthService {
     return new Promise((resolve) => {
       const cognitoUser = new CognitoUserClass({
         Username: email,
-        Pool: userPool,
+        Pool: userPool(),
       });
 
       cognitoUser.resendConfirmationCode((err) => {
@@ -329,7 +348,7 @@ export class CognitoAuthService {
     return new Promise((resolve) => {
       const cognitoUser = new CognitoUserClass({
         Username: email,
-        Pool: userPool,
+        Pool: userPool(),
       });
 
       cognitoUser.forgotPassword({
@@ -352,7 +371,7 @@ export class CognitoAuthService {
     return new Promise((resolve) => {
       const cognitoUser = new CognitoUserClass({
         Username: email,
-        Pool: userPool,
+        Pool: userPool(),
       });
 
       cognitoUser.confirmPassword(code, newPassword, {
@@ -369,7 +388,7 @@ export class CognitoAuthService {
   // Get current user's JWT token
   static async getCurrentUserToken(): Promise<string | null> {
     return new Promise((resolve) => {
-      const cognitoUser = userPool.getCurrentUser();
+      const cognitoUser = userPool().getCurrentUser();
 
       if (!cognitoUser) {
         resolve(null);
@@ -399,7 +418,7 @@ export class CognitoAuthService {
     region: string;
   } | null> {
     return new Promise((resolve) => {
-      const cognitoUser = userPool.getCurrentUser();
+      const cognitoUser = userPool().getCurrentUser();
       if (!cognitoUser) {
         resolve(null);
         return;

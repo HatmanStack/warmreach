@@ -11,8 +11,8 @@ import os
 import time
 from typing import Any
 
-import boto3
 import requests
+from shared_services.aws_clients import dynamodb_resource
 from shared_services.circuit_breaker import CachedDynamoDBStore, CircuitBreaker, InMemoryStore
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def _get_cb_table():
     if _cb_dynamodb_table is None:
         table_name = os.environ.get('DYNAMODB_TABLE_NAME')
         if table_name:
-            _cb_dynamodb_table = boto3.resource('dynamodb').Table(table_name)
+            _cb_dynamodb_table = dynamodb_resource().Table(table_name)
     return _cb_dynamodb_table
 
 

@@ -33,7 +33,7 @@ This is the **Community Edition** — a free, self-deployable version of WarmRea
 -   **RAGStack Integration**: Semantic search and text ingestion using AWS Bedrock and RAGStack-Lambda.
 -   **Content Generation**: OpenAI integration for personalized messaging and post creation.
 -   **Credential Management**: Sealbox encryption with device-specific key management.
--   **Heal & Restore**: Checkpoint-based recovery for long-running automation processes.
+-   **Self-healing runs**: a recoverable failure mid-run is retried in-process from its resume state with a fresh browser, capped at three attempts.
 -   **Cloud Native**: Fully serverless backend using AWS Lambda, DynamoDB, and S3.
 
 ## Pro Features
@@ -76,7 +76,7 @@ See [Development Guide](docs/DEVELOPMENT.md) for detailed instructions.
 
 | Layer | Technologies |
 |-------|--------------|
-| **Frontend** | React 18, TypeScript, Vite, Tailwind CSS |
+| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS |
 | **Client (Automation)** | Electron, Node.js, Express, Puppeteer |
 | **Cloud (AWS)** | Lambda, DynamoDB, API Gateway, Cognito, S3 |
 | **AI** | OpenAI GPT models |

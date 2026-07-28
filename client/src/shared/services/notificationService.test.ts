@@ -9,19 +9,23 @@ vi.mock('#utils/logger.js', () => ({
 const mockShow = vi.fn();
 const mockIsSupported = vi.fn(() => true);
 
-const MockNotificationSpy = vi.fn().mockImplementation(function () {
-  return {
-    show: mockShow,
-  };
-});
-// @ts-ignore
-MockNotificationSpy.isSupported = mockIsSupported;
+// `Notification.isSupported` is a static on the electron class, so the double
+// has to carry it too. Object.assign keeps that statically typed instead of
+// bolting the property on behind a suppression comment.
+const MockNotificationSpy = Object.assign(
+  vi.fn().mockImplementation(function () {
+    return {
+      show: mockShow,
+    };
+  }),
+  { isSupported: mockIsSupported }
+);
 
 vi.mock('electron', () => ({
   Notification: MockNotificationSpy,
 }));
 
-import { NotificationService } from './notificationService.ts';
+import { NotificationService } from './notificationService.js';
 import { logger } from '#utils/logger.js';
 
 describe('NotificationService', () => {

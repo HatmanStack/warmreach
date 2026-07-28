@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ProfileInitService } from './profileInitService';
+import { ProfileInitService } from './profileInitService.js';
 import { LinkedInErrorHandler } from '../../linkedin/utils/linkedinErrorHandler.js';
 
 // Mock dependencies

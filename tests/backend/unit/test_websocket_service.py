@@ -66,6 +66,38 @@ class TestWebSocketService:
         assert item['GSI1PK'] == 'USER#user-abc#WSCONN'
         assert item['GSI1SK'] == 'TYPE#browser'
 
+    def test_store_connection_sets_a_ttl_that_cannot_reap_a_live_connection(self, ws_table):
+        """MEDIUM #16: $disconnect is best-effort, so an orphaned WSCONN# used to
+        survive forever and make an offline agent look online. The TTL must sit
+        beyond API Gateway's 24h maximum WebSocket duration so it can only ever
+        reap a connection that is already dead."""
+        import time as _time
+
+        from shared_services.websocket_service import WSCONN_TTL_SECONDS
+
+        service = self._make_service(ws_table)
+        before = int(_time.time())
+        service.store_connection('conn-ttl', 'user-abc', 'agent')
+
+        item = ws_table.get_item(Key={'PK': 'WSCONN#conn-ttl', 'SK': '#METADATA'})['Item']
+        ttl = int(item['ttl'])
+        assert WSCONN_TTL_SECONDS == 26 * 3600
+        # Comfortably past the 24h ceiling, and anchored to now rather than fixed.
+        assert ttl > before + 24 * 3600
+        assert before + WSCONN_TTL_SECONDS <= ttl <= before + WSCONN_TTL_SECONDS + 5
+
+    def test_ttl_attribute_name_matches_the_one_command_items_use(self, ws_table):
+        """DynamoDB allows one TTL attribute per table, so a second name would
+        silently never expire."""
+        from shared_services.command_dispatch_core import COMMAND_TTL_SECONDS
+
+        assert COMMAND_TTL_SECONDS  # the COMMAND# TTL this reuses the name of
+        service = self._make_service(ws_table)
+        service.store_connection('conn-name', 'user-abc', 'browser')
+        item = ws_table.get_item(Key={'PK': 'WSCONN#conn-name', 'SK': '#METADATA'})['Item']
+        assert 'ttl' in item
+        assert not [k for k in item if k.lower().endswith('ttl') and k != 'ttl']
+
     def test_delete_connection(self, ws_table):
         service = self._make_service(ws_table)
         service.store_connection('conn-1', 'user-abc', 'browser')
@@ -179,3 +211,32 @@ class TestWebSocketService:
         with caplog.at_level(logging.INFO):
             service.disconnect_connection('conn-1')
         assert any('conn-1' in r.getMessage() for r in caplog.records)
+
+
+class TestExpiredConnectionsAreNotReturned:
+    """DynamoDB TTL deletion lags by up to 48 hours, so the index still returns
+    rows past their `ttl`. An expired row makes an offline agent look online,
+    and create_command then burns a rate-limit slot and writes a COMMAND#
+    before finding out the connection is gone."""
+
+    def test_the_query_filters_on_ttl(self, dynamodb_table):
+        from shared_services.websocket_service import WebSocketService
+
+        captured = {}
+
+        class _Table:
+            name = 'test-table'
+
+            def query(self, **kwargs):
+                captured.update(kwargs)
+                return {'Items': []}
+
+        WebSocketService(_Table()).get_user_connections('user-1')
+
+        assert 'FilterExpression' in captured, 'expired rows are not filtered out'
+        assert '#ttl' in captured['FilterExpression']
+        # Rows written before the ttl attribute existed must survive: nothing is
+        # known about their age, and dropping them would hide live agents.
+        assert 'attribute_not_exists' in captured['FilterExpression']
+        assert captured['ExpressionAttributeNames']['#ttl'] == 'ttl'
+        assert isinstance(captured['ExpressionAttributeValues'][':now'], int)

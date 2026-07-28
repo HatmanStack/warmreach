@@ -1,6 +1,10 @@
 import { test, expect } from './fixtures/auth.fixture';
 
-test.describe('Search Workflow', () => {
+// Tagged @needs-api: these assert on connection, message, or profile data
+// served by the HTTP API. Nothing provisions that in CI — tests/e2e/helpers/
+// ministack.ts exists to seed it and is imported by no spec. The CI job runs
+// `--grep-invert=@needs-api`; drop the tag as each becomes self-sufficient.
+test.describe('Search Workflow', { tag: '@needs-api' }, () => {
   test('should search, view profile and request connection', async ({ authenticatedPage }) => {
     // 1. Navigate to search
     await authenticatedPage.getByRole('tab', { name: /new connections/i }).click();

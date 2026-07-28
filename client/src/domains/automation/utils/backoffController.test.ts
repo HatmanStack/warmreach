@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { BackoffController } from './backoffController.ts';
+import { BackoffController } from './backoffController.js';
 
 // Mock logger
 vi.mock('#utils/logger.js', () => ({
@@ -22,25 +22,47 @@ vi.mock('#shared/services/notificationService.js', () => ({
 
 import { notificationService } from '#shared/services/notificationService.js';
 
+/** A threat assessment as SignalDetector.assess() returns it. */
+interface Assessment {
+  shouldPause: boolean;
+  signals: Array<{ type: string; severity: string }>;
+  reason: string;
+  threatLevel: number;
+}
+
+/** The SignalDetector members BackoffController calls. */
+const makeDetector = () => ({
+  assess: vi.fn<() => Assessment>(() => ({
+    shouldPause: false,
+    signals: [],
+    reason: '',
+    threatLevel: 0,
+  })),
+  clear: vi.fn(),
+  recordContentSignal: vi.fn(),
+});
+
+/** The InteractionQueue members BackoffController calls. */
+const makeQueue = () => ({
+  isPaused: vi.fn(() => false),
+  pause: vi.fn(),
+  resume: vi.fn(),
+  getPauseStatus: vi.fn(),
+});
+
 describe('BackoffController', () => {
   let controller: BackoffController;
-  let mockDetector: any;
-  let mockQueue: any;
+  let mockDetector: ReturnType<typeof makeDetector>;
+  let mockQueue: ReturnType<typeof makeQueue>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDetector = {
-      assess: vi.fn(() => ({ shouldPause: false, signals: [], reason: '', threatLevel: 0 })),
-      clear: vi.fn(),
-      recordContentSignal: vi.fn(),
-    };
-    mockQueue = {
-      isPaused: vi.fn(() => false),
-      pause: vi.fn(),
-      resume: vi.fn(),
-      getPauseStatus: vi.fn(),
-    };
-    controller = new BackoffController(mockDetector, mockQueue);
+    mockDetector = makeDetector();
+    mockQueue = makeQueue();
+    controller = new BackoffController(
+      mockDetector as unknown as ConstructorParameters<typeof BackoffController>[0],
+      mockQueue as unknown as ConstructorParameters<typeof BackoffController>[1]
+    );
     vi.useFakeTimers();
   });
 
@@ -79,7 +101,12 @@ describe('BackoffController', () => {
 
     it('does not pause if already paused', async () => {
       mockQueue.isPaused.mockReturnValue(true);
-      mockDetector.assess.mockReturnValue({ shouldPause: true, reason: 'Test' });
+      mockDetector.assess.mockReturnValue({
+        shouldPause: true,
+        reason: 'Test',
+        signals: [],
+        threatLevel: 0,
+      });
 
       await controller.assessAndAct();
       expect(mockQueue.pause).not.toHaveBeenCalled();

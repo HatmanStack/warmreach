@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import type { Browser, Page } from 'puppeteer';
 import { buildPuppeteerPage } from './factories.js';
 
 /**
@@ -86,4 +87,21 @@ export function mockWebSocketClient() {
   }));
 
   return { mockSend, mockOn };
+}
+
+/**
+ * Widen a test double to the puppeteer `Page` the code under test declares.
+ *
+ * A double implements only the handful of members the subject calls, so it is
+ * never structurally a real `Page`. Doing the widening here, once, keeps the
+ * call sites honest: `page as any` at each call would also switch off checking
+ * of the surrounding call, while this keeps the argument position typed.
+ */
+export function asPuppeteerPage(page: unknown): Page {
+  return page as Page;
+}
+
+/** Widen a test double to the puppeteer `Browser`. See {@link asPuppeteerPage}. */
+export function asPuppeteerBrowser(browser: unknown): Browser {
+  return browser as Browser;
 }

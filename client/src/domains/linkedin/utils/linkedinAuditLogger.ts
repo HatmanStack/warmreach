@@ -1,6 +1,25 @@
 import { logger } from '#utils/logger.js';
 
 /**
+ * Metadata attached to an audit record.
+ *
+ * A log field genuinely can hold anything — these bags carry request context,
+ * puppeteer session stats, error payloads and timing numbers from a dozen call
+ * sites — so `unknown` values are the accurate type here rather than a retreat
+ * from typing. The logger only forwards them; it never operates on a value
+ * without a truthiness check first.
+ */
+export type AuditMetadata = Record<string, unknown>;
+
+/**
+ * An operation's own result object, spread verbatim into the audit entry. Kept
+ * as `object` rather than `AuditMetadata` because callers pass declared result
+ * interfaces (e.g. `SendMessageResult`), which have no index signature; the
+ * logger never reads a field off it.
+ */
+export type AuditResult = object;
+
+/**
  * LinkedIn Audit Logger - Comprehensive audit trail for LinkedIn interactions
  * Implements requirement 7.1, 7.2, 7.3 for audit trails and monitoring
  */
@@ -11,11 +30,7 @@ export class LinkedInAuditLogger {
    * @param {Object} context - Context information
    * @param {string} requestId - Unique request identifier
    */
-  static logInteractionAttempt(
-    operation: string,
-    context: Record<string, any>,
-    requestId: string
-  ): void {
+  static logInteractionAttempt(operation: string, context: AuditMetadata, requestId: string): void {
     const auditData = {
       eventType: 'INTERACTION_ATTEMPT',
       operation,
@@ -43,8 +58,8 @@ export class LinkedInAuditLogger {
    */
   static logInteractionSuccess(
     operation: string,
-    result: Record<string, any>,
-    context: Record<string, any>,
+    result: AuditResult,
+    context: AuditMetadata,
     requestId: string
   ): void {
     const auditData = {
@@ -81,7 +96,7 @@ export class LinkedInAuditLogger {
   static logInteractionFailure(
     operation: string,
     error: Error,
-    context: Record<string, any>,
+    context: AuditMetadata,
     requestId: string
   ): void {
     const auditData = {
@@ -113,11 +128,7 @@ export class LinkedInAuditLogger {
    * @param {Object} context - Context information
    * @param {string} requestId - Unique request identifier
    */
-  static logRateLimitDetected(
-    operation: string,
-    context: Record<string, any>,
-    requestId: string
-  ): void {
+  static logRateLimitDetected(operation: string, context: AuditMetadata, requestId: string): void {
     const auditData = {
       eventType: 'RATE_LIMIT_DETECTED',
       operation,
@@ -142,7 +153,7 @@ export class LinkedInAuditLogger {
    */
   static logSessionEvent(
     eventType: string,
-    sessionInfo: Record<string, any>,
+    sessionInfo: AuditMetadata,
     requestId: string | null = null
   ): void {
     const auditData = {
@@ -171,7 +182,7 @@ export class LinkedInAuditLogger {
    */
   static logAuthenticationEvent(
     eventType: string,
-    context: Record<string, any>,
+    context: AuditMetadata,
     requestId: string
   ): void {
     const auditData = {
@@ -198,7 +209,7 @@ export class LinkedInAuditLogger {
    */
   static logSuspiciousActivity(
     activityType: string,
-    context: Record<string, any>,
+    context: AuditMetadata,
     requestId: string
   ): void {
     const auditData = {
@@ -224,11 +235,7 @@ export class LinkedInAuditLogger {
    * @param {Object} context - Context information
    * @param {string} requestId - Unique request identifier
    */
-  static logHumanBehavior(
-    behaviorType: string,
-    context: Record<string, any>,
-    requestId: string
-  ): void {
+  static logHumanBehavior(behaviorType: string, context: AuditMetadata, requestId: string): void {
     const auditData = {
       eventType: 'HUMAN_BEHAVIOR_SIMULATION',
       behaviorType,
@@ -251,11 +258,7 @@ export class LinkedInAuditLogger {
    * @param {Object} context - Context information
    * @param {string} requestId - Unique request identifier
    */
-  static logRecoveryAttempt(
-    recoveryType: string,
-    context: Record<string, any>,
-    requestId: string
-  ): void {
+  static logRecoveryAttempt(recoveryType: string, context: AuditMetadata, requestId: string): void {
     const auditData = {
       eventType: 'RECOVERY_ATTEMPT',
       recoveryType,
@@ -318,7 +321,7 @@ export class LinkedInAuditLogger {
   static logPerformanceMetrics(
     operation: string,
     duration: number,
-    context: Record<string, any>,
+    context: AuditMetadata,
     requestId: string
   ): void {
     const auditData = {

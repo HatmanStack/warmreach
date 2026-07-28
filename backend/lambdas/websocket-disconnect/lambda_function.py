@@ -6,7 +6,7 @@ Removes the WSCONN#{connectionId} item from DynamoDB.
 import logging
 import os
 
-import boto3
+from shared_services.aws_clients import dynamodb_resource
 from shared_services.observability import setup_correlation_context
 
 logger = logging.getLogger()
@@ -15,7 +15,7 @@ logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
 TABLE_NAME = os.environ['DYNAMODB_TABLE_NAME']
 WEBSOCKET_ENDPOINT = os.environ.get('WEBSOCKET_ENDPOINT', '')
 
-dynamodb = boto3.resource('dynamodb')
+dynamodb = dynamodb_resource()
 table = dynamodb.Table(TABLE_NAME)
 
 

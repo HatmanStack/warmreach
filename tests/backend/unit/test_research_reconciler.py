@@ -33,6 +33,10 @@ def reconciler():
     # Ensure the handler treats storage as configured (module-level table may be
     # a real boto3 resource, but we never hit it — the index query is patched).
     module.table = MagicMock()
+    # No stored resume cursor by default. A bare MagicMock would return a truthy
+    # mock from get_item, which _read_cursor would take for a real cursor and
+    # silently filter every user out.
+    module.table.get_item.return_value = {}
     # Pin the hourly index-verification sweep off. It is wall-clock driven, so
     # leaving it live would make every test here behave differently between
     # :00 and :05. Tests that exercise the sweep turn it on explicitly.
@@ -139,6 +143,9 @@ def test_no_table_is_a_noop(reconciler):
         'completed': 0,
         'abandoned': 0,
         'errors': 0,
+        'processed': 0,
+        'remaining': 0,
+        'hasMore': False,
     }
 
 
@@ -236,3 +243,137 @@ def test_unindexed_rows_are_still_reconciled(reconciler):
     svc.get_research_result.assert_called_once_with('u9', 'orphan', 'RESEARCH')
     assert summary['unindexed'] == 1
     assert summary['completed'] == 1
+
+
+# --- Deadline budgeting (Phase-4 Task 4) --------------------------------------
+
+
+class _ScriptedContext:
+    """Returns a scripted remaining-time sequence, then holds the last value."""
+
+    function_name = 'research-reconciler'
+    aws_request_id = 'test-request-id'
+
+    def __init__(self, *remaining_ms):
+        self._remaining = list(remaining_ms)
+
+    def get_remaining_time_in_millis(self):
+        if len(self._remaining) > 1:
+            return self._remaining.pop(0)
+        return self._remaining[0]
+
+
+def _active_rows(*user_ids):
+    """One still-running job per user. A job that never finishes keeps its GSI3
+    keys tick after tick, which is exactly the shape that livelocks."""
+    now = _now()
+    return [
+        {
+            'PK': f'USER#{uid}',
+            'SK': f'RESEARCH#job-{uid}',
+            'status': 'in_progress',
+            'openai_response_id': f'r_{uid}',
+            'created_at': _iso(now),
+        }
+        for uid in user_ids
+    ]
+
+
+def _cursor_writes(reconciler):
+    return [c.kwargs['Item'] for c in reconciler.table.put_item.call_args_list]
+
+
+def test_a_healthy_budget_drains_every_user(reconciler):
+    reconciler._query_active_research = lambda: _active_rows('u1', 'u2', 'u3')
+    svc = MagicMock()
+    svc.get_research_result.return_value = {'success': True, 'content': 'done'}
+    reconciler._get_service = lambda: svc
+
+    summary = reconciler.lambda_handler({}, _ScriptedContext(300_000))
+
+    assert summary['reconciled'] == 3
+    assert summary['processed'] == 3
+    assert summary['remaining'] == 0
+    assert summary['hasMore'] is False
+    reconciler.table.delete_item.assert_called_once()
+
+
+def test_an_exhausted_budget_stops_early_and_writes_a_cursor(reconciler):
+    reconciler._query_active_research = lambda: _active_rows('u1', 'u2', 'u3')
+    svc = MagicMock()
+    svc.get_research_result.return_value = {'success': True, 'content': 'done'}
+    reconciler._get_service = lambda: svc
+
+    summary = reconciler.lambda_handler({}, _ScriptedContext(300_000, 1_000))
+
+    assert summary['processed'] == 1
+    assert summary['remaining'] == 2
+    assert summary['hasMore'] is True
+    svc.get_research_result.assert_called_once_with('u1', 'job-u1', 'RESEARCH')
+    assert _cursor_writes(reconciler)[-1]['lastUserId'] == 'u1'
+
+
+def test_the_next_tick_starts_after_the_cursor(reconciler):
+    """The livelock test. Users arrive in a stable sorted order, so without a
+    cursor every tick reprocesses the same head and the tail never drains."""
+    reconciler._query_active_research = lambda: _active_rows('u1', 'u2', 'u3')
+    reconciler.table.get_item.return_value = {'Item': {'lastUserId': 'u1'}}
+    svc = MagicMock()
+    svc.get_research_result.return_value = {'success': True, 'content': 'done'}
+    reconciler._get_service = lambda: svc
+
+    summary = reconciler.lambda_handler({}, _ScriptedContext(300_000, 1_000))
+
+    svc.get_research_result.assert_called_once_with('u2', 'job-u2', 'RESEARCH')
+    assert summary['hasMore'] is True
+    assert _cursor_writes(reconciler)[-1]['lastUserId'] == 'u2'
+
+
+def test_draining_the_tail_clears_the_cursor(reconciler):
+    reconciler._query_active_research = lambda: _active_rows('u1', 'u2', 'u3')
+    reconciler.table.get_item.return_value = {'Item': {'lastUserId': 'u2'}}
+    svc = MagicMock()
+    svc.get_research_result.return_value = {'success': True, 'content': 'done'}
+    reconciler._get_service = lambda: svc
+
+    summary = reconciler.lambda_handler({}, _ScriptedContext(300_000))
+
+    svc.get_research_result.assert_called_once_with('u3', 'job-u3', 'RESEARCH')
+    assert summary['hasMore'] is False
+    reconciler.table.delete_item.assert_called_once()
+
+
+def test_a_users_jobs_are_never_split_across_ticks(reconciler):
+    """The budget is spent per USER, not per row, deliberately. The module's
+    safety guard is that only a user's newest active job may mirror to the
+    profile; truncating the row list mid-user would promote an older job to
+    primary and let a stale result clobber the current research."""
+    now = _now()
+    rows = [
+        {
+            'PK': 'USER#u1',
+            'SK': 'RESEARCH#old',
+            'status': 'in_progress',
+            'openai_response_id': 'r_old',
+            'created_at': _iso(now - timedelta(minutes=5)),
+        },
+        {
+            'PK': 'USER#u1',
+            'SK': 'RESEARCH#new',
+            'status': 'in_progress',
+            'openai_response_id': 'r_new',
+            'created_at': _iso(now),
+        },
+    ]
+    reconciler._query_active_research = lambda: rows
+    svc = MagicMock()
+    svc.get_research_result.return_value = {'success': True, 'content': 'done'}
+    reconciler._get_service = lambda: svc
+
+    # A budget that would have cut a per-row loop in half.
+    summary = reconciler.lambda_handler({}, _ScriptedContext(300_000, 1_000))
+
+    svc.get_research_result.assert_called_once_with('u1', 'new', 'RESEARCH')
+    svc._set_research_status.assert_any_call('u1', 'old', 'abandoned')
+    assert summary['processed'] == 1
+    assert summary['hasMore'] is False

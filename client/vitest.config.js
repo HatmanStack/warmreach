@@ -11,6 +11,15 @@ export default defineConfig({
     // Setup file for common mocks
     setupFiles: ['./src/setupTests.js'],
 
+    // Same load-sensitivity guard as frontend/vitest.config.ts, which carries
+    // the measurement. This suite runs in the node environment rather than
+    // jsdom so it has less per-file setup cost and was not itself observed
+    // failing, but it ran at the same 5000ms/0 defaults with the same exposure.
+    // 15s is headroom for a slow 2-core runner, not room for a slow test.
+    testTimeout: 15000,
+    // CI only — a local retry hides flakiness from whoever can fix it.
+    retry: process.env.CI ? 1 : 0,
+
     // Coverage configuration
     coverage: {
       provider: 'v8',

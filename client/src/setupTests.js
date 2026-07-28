@@ -27,32 +27,43 @@ vi.stubGlobal(
   )
 );
 
-// Helper to create mock Puppeteer page object
+/**
+ * Helper to create a mock Puppeteer page object.
+ *
+ * The double implements only the members the code under test calls; use
+ * `asPuppeteerPage` from `src/test-utils/mocks.ts` to hand it to something
+ * declaring a real `Page`.
+ *
+ * @param {{ evaluateResult?: unknown, querySelector?: unknown, querySelectorAll?: unknown[], url?: string }} [options]
+ */
 export function createMockPage(options = {}) {
   return {
-    goto: vi.fn().mockResolvedValue(),
+    goto: vi.fn().mockResolvedValue(undefined),
     waitForSelector: vi.fn().mockResolvedValue({
-      click: vi.fn().mockResolvedValue(),
-      type: vi.fn().mockResolvedValue(),
+      click: vi.fn().mockResolvedValue(undefined),
+      type: vi.fn().mockResolvedValue(undefined),
       boundingBox: vi.fn().mockResolvedValue({ x: 100, y: 100, width: 80, height: 30 }),
     }),
-    click: vi.fn().mockResolvedValue(),
-    type: vi.fn().mockResolvedValue(),
+    click: vi.fn().mockResolvedValue(undefined),
+    type: vi.fn().mockResolvedValue(undefined),
     evaluate: vi.fn().mockResolvedValue(options.evaluateResult || {}),
-    evaluateOnNewDocument: vi.fn().mockResolvedValue(),
+    evaluateOnNewDocument: vi.fn().mockResolvedValue(undefined),
     $: vi.fn().mockResolvedValue(options.querySelector || null),
     $$: vi.fn().mockResolvedValue(options.querySelectorAll || []),
-    waitForNavigation: vi.fn().mockResolvedValue(),
+    waitForNavigation: vi.fn().mockResolvedValue(undefined),
     screenshot: vi.fn().mockResolvedValue(Buffer.from('')),
     url: vi.fn().mockReturnValue(options.url || 'https://www.linkedin.com'),
-    close: vi.fn().mockResolvedValue(),
-    setViewport: vi.fn().mockResolvedValue(),
-    setUserAgent: vi.fn().mockResolvedValue(),
-    setRequestInterception: vi.fn().mockResolvedValue(),
+    close: vi.fn().mockResolvedValue(undefined),
+    setViewport: vi.fn().mockResolvedValue(undefined),
+    setUserAgent: vi.fn().mockResolvedValue(undefined),
+    setRequestInterception: vi.fn().mockResolvedValue(undefined),
     setDefaultTimeout: vi.fn(),
     isClosed: vi.fn().mockReturnValue(false),
     on: vi.fn(),
-    mouse: { move: vi.fn().mockResolvedValue(), click: vi.fn().mockResolvedValue() },
+    mouse: {
+      move: vi.fn().mockResolvedValue(undefined),
+      click: vi.fn().mockResolvedValue(undefined),
+    },
   };
 }
 
@@ -60,13 +71,16 @@ export function createMockPage(options = {}) {
 export function createMockBrowser() {
   return {
     newPage: vi.fn().mockResolvedValue(createMockPage()),
-    close: vi.fn().mockResolvedValue(),
+    close: vi.fn().mockResolvedValue(undefined),
     pages: vi.fn().mockResolvedValue([]),
     isConnected: vi.fn().mockReturnValue(true),
   };
 }
 
-// Helper to create mock profile data matching profileTextSchema
+/**
+ * Helper to create mock profile data matching the scraped-profile shape.
+ * @param {Record<string, unknown>} [overrides]
+ */
 export function createMockProfile(overrides = {}) {
   return {
     profile_id: 'dGVzdC1wcm9maWxlLTEyMw==',

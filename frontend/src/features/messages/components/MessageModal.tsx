@@ -289,6 +289,7 @@ export const MessageModal: React.FC<MessageModalProps> = ({
           <div className="flex w-full gap-2 flex-1">
             <textarea
               placeholder="Type your message..."
+              aria-label="Message text"
               value={messageInput}
               onChange={(e) => {
                 setMessageInput(e.target.value);

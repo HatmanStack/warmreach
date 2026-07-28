@@ -12,9 +12,10 @@ and the agent ``gate_dispatch``). These tests exercise the core directly:
 """
 
 import json
+import logging
 import os
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from moto import mock_aws
@@ -31,6 +32,7 @@ USER = 'user-123'
 def ws_table(aws_credentials):
     with mock_aws():
         import boto3
+
         dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
         table = dynamodb.create_table(
             TableName='test-table',
@@ -114,6 +116,42 @@ def test_core_imports_nothing_pro():
     assert not offenders, f'command_dispatch_core must stay community-clean; forbidden imports: {offenders}'
 
 
+def test_core_imports_nothing_pro_transitively():
+    """The AST check above inspects DIRECT imports only, so a helper that is
+    itself clean but pulls monetization in behind it would pass it while
+    breaching ADR-009 all the same.
+
+    This is not hypothetical. The Phase-3 plan specified the shared DynamoDB
+    resource factory as ``handler_utils.dynamodb_resource()``, and
+    ``handler_utils`` imports ``shared_services.monetization`` at module scope —
+    routing the core through it would have put
+    ``monetization -> quota_service/tier_service/feature_flag_service`` in this
+    module's import graph with every existing gate still green. The factory
+    lives in the ``aws_clients`` leaf instead, and this test is what keeps it
+    there.
+    """
+    import subprocess
+
+    from conftest import SHARED_PYTHON
+
+    script = (
+        'import sys, json\n'
+        'before = set(sys.modules)\n'
+        'import shared_services.command_dispatch_core  # noqa: F401\n'
+        "print(json.dumps(sorted(m for m in set(sys.modules) - before if m.startswith('shared_services.'))))\n"
+    )
+    env = dict(os.environ, PYTHONPATH=str(SHARED_PYTHON), DYNAMODB_TABLE_NAME='test-table')
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, env=env, timeout=60)
+    assert result.returncode == 0, result.stderr
+    modules = json.loads(result.stdout.strip().splitlines()[-1])
+
+    forbidden = ('monetization', 'quota', 'tier_service', 'feature_flag', 'opportunity_action', 'gate_dispatch')
+    offenders = [m for m in modules for token in forbidden if token in m]
+    assert not offenders, (
+        f'command_dispatch_core reaches pro/quota modules transitively: {offenders} (full graph: {modules})'
+    )
+
+
 # --- create_command status branches ------------------------------------------
 def test_create_command_dispatches_returns_200(core, ws_table):
     _seed_agent(ws_table)
@@ -194,8 +232,10 @@ def test_create_command_agent_disconnected_mid_send_returns_503(core, ws_table):
 
 def test_create_command_emits_activity_on_success(core, ws_table):
     _seed_agent(ws_table)
-    with patch('shared_services.websocket_service.WebSocketService.send_to_connection', return_value=True), \
-         patch.object(core, 'write_activity') as mock_wa:
+    with (
+        patch('shared_services.websocket_service.WebSocketService.send_to_connection', return_value=True),
+        patch.object(core, 'write_activity') as mock_wa,
+    ):
         status, _ = core.create_command(USER, 'linkedin:search', {'query': 'x'})
 
     assert status == 200
@@ -205,14 +245,131 @@ def test_create_command_emits_activity_on_success(core, ws_table):
 
 
 def test_create_command_post_send_exception_propagates(core, ws_table):
-    """A post-send failure (status update / activity write) must PROPAGATE, not be
-    swallowed — it is the ambiguous-outcome signal the agent gate relies on (a real
-    send may already have happened, so callers must not revert)."""
+    """A post-send failure on work that MATTERS must PROPAGATE, not be swallowed —
+    it is the ambiguous-outcome signal the agent gate relies on (a real send may
+    already have happened, so callers must not revert).
+
+    The example is the ``dispatched`` status write: if that fails, the COMMAND#
+    genuinely disagrees with reality. It used to be ``write_activity``, but the
+    activity timeline records what happened rather than deciding whether it
+    happened, so it moved off this channel — see
+    ``test_activity_write_failure_still_returns_200``."""
     _seed_agent(ws_table)
-    with patch('shared_services.websocket_service.WebSocketService.send_to_connection', return_value=True), \
-         patch.object(core, 'write_activity', side_effect=RuntimeError('post-send boom')):
+    with (
+        patch('shared_services.websocket_service.WebSocketService.send_to_connection', return_value=True),
+        patch.object(core.table, 'update_item', side_effect=RuntimeError('post-send boom')),
+    ):
         with pytest.raises(RuntimeError, match='post-send boom'):
             core.create_command(USER, 'linkedin:search', {})
+
+
+# --- MEDIUM #15: cosmetic post-send work must not fail a completed send -------
+def _seed_browser(table, user=USER):
+    table.put_item(
+        Item={
+            'PK': 'WSCONN#browser-conn-1',
+            'SK': '#METADATA',
+            'GSI1PK': f'USER#{user}#WSCONN',
+            'GSI1SK': 'TYPE#browser',
+            'connectionId': 'browser-conn-1',
+            'userSub': user,
+            'clientType': 'browser',
+            'connectedAt': 1000,
+        }
+    )
+
+
+def _agent_ok_browser_raises(exc):
+    """send_to_connection stub: the agent dispatch succeeds, the browser
+    notification that follows it raises."""
+
+    def _send(self, connection_id, data):
+        if connection_id.startswith('browser'):
+            raise exc
+        return True
+
+    return _send
+
+
+@pytest.mark.parametrize('code', ['LimitExceededException', 'PayloadTooLargeException'])
+def test_browser_notify_client_error_still_returns_200(core, ws_table, caplog, code):
+    """send_to_connection re-raises every ClientError except GoneException, so a
+    @connections throttle on a *cosmetic browser notification* used to propagate
+    out of create_command. The gate reads any raise as maybe-sent and returns
+    503 — reporting a LinkedIn action that fully succeeded as a failure."""
+    from botocore.exceptions import ClientError
+
+    _seed_agent(ws_table)
+    _seed_browser(ws_table)
+    err = ClientError({'Error': {'Code': code, 'Message': 'x'}}, 'PostToConnection')
+    with patch(
+        'shared_services.websocket_service.WebSocketService.send_to_connection',
+        _agent_ok_browser_raises(err),
+    ):
+        with caplog.at_level(logging.ERROR):
+            status, body = core.create_command(USER, 'linkedin:search', {'query': 'x'})
+
+    assert status == 200
+    assert body['status'] == 'dispatched'
+    assert any(r.exc_info is not None for r in caplog.records), 'the swallowed error must still be logged'
+
+
+def test_browser_connection_lookup_failure_still_returns_200(core, ws_table, caplog):
+    """The browser-connection query is the same DynamoDB call that can throttle,
+    and it is just as cosmetic as the notification it feeds — so it sits inside
+    the same guard rather than one statement outside it."""
+    _seed_agent(ws_table)
+
+    def _lookup(self, user_sub, client_type=None):
+        if client_type == 'browser':
+            raise RuntimeError('query throttled')
+        return [{'connectionId': 'agent-conn-1'}]
+
+    with (
+        patch('shared_services.websocket_service.WebSocketService.get_user_connections', _lookup),
+        patch('shared_services.websocket_service.WebSocketService.send_to_connection', return_value=True),
+    ):
+        with caplog.at_level(logging.ERROR):
+            status, body = core.create_command(USER, 'linkedin:search', {})
+
+    assert status == 200
+    assert body['status'] == 'dispatched'
+    assert any(r.exc_info is not None for r in caplog.records)
+
+
+def test_activity_write_failure_still_returns_200(core, ws_table, caplog):
+    """The activity timeline is a record, not a correctness input."""
+    _seed_agent(ws_table)
+    with (
+        patch('shared_services.websocket_service.WebSocketService.send_to_connection', return_value=True),
+        patch.object(core, 'write_activity', side_effect=RuntimeError('activity boom')),
+    ):
+        with caplog.at_level(logging.ERROR):
+            status, body = core.create_command(USER, 'linkedin:search', {})
+
+    assert status == 200
+    assert body['status'] == 'dispatched'
+    assert any(r.exc_info is not None for r in caplog.records)
+
+
+def test_gone_browser_connection_is_still_reaped(core, ws_table):
+    """The GoneException self-heal is unchanged: send_to_connection deletes the
+    stale WSCONN# and returns False rather than raising, so swallowing the other
+    ClientErrors did not paper over this path."""
+    from shared_services.websocket_service import WebSocketService
+
+    _seed_agent(ws_table)
+    _seed_browser(ws_table)
+    from botocore.exceptions import ClientError
+
+    ws = WebSocketService(ws_table, '')
+    ws.apigw = MagicMock()
+    ws.apigw.post_to_connection.side_effect = ClientError(
+        {'Error': {'Code': 'GoneException', 'Message': 'x'}}, 'PostToConnection'
+    )
+
+    assert ws.send_to_connection('browser-conn-1', {'a': 1}) is False
+    assert ws_table.get_item(Key={'PK': 'WSCONN#browser-conn-1', 'SK': '#METADATA'}).get('Item') is None
 
 
 # --- _reserve_and_create_command atomicity (rate-limit + create) --------------
@@ -306,3 +463,101 @@ def test_rate_limit_enforced_across_calls(core, ws_table):
         status, body = core.create_command(USER, 'linkedin:search', {})
     assert status == 429
     assert body['code'] == 'RATE_LIMITED'
+
+
+# --- Command vocabulary: reject an unknown type before anything is persisted ---
+def _routes_declared_in(path) -> frozenset:
+    """Parse the ``ROUTES`` map keys out of a ``commandRouter.ts``.
+
+    The client router is the authority on what is *routable*: a command type it
+    has no entry for is written, rate-limited, dispatched over WebSocket and
+    then answered with UNKNOWN_COMMAND. Parsing it here makes this test the
+    drift check until Phase 7 wires ``scripts/check-command-vocabulary.py``.
+    """
+    import re
+
+    src = path.read_text()
+    body = src.split('export const ROUTES', 1)[1]
+    # The map ends at the first column-0 '};'.
+    block = body.split('\n};', 1)[0]
+    return frozenset(re.findall(r"^  '([^']+)': \{", block, re.MULTILINE))
+
+
+# The community edition's router declares only the five browser routes:
+# `client/src/domains/github` is in `.sync/config.json` exclude_paths, and the
+# two Comment Concierge routes are pro-only. This test file syncs VERBATIM to
+# the community repo, so an equality assertion against the local router would
+# be red there. The containment below is the direction that is load-bearing in
+# both editions — a type the client can route must never be rejected by the
+# core — and the second assertion still pins the pro tree exactly, because the
+# difference there is empty.
+_EDITION_OPTIONAL_TYPES = frozenset(
+    {
+        'github:connect',
+        'github:disconnect',
+        'github:poll-metrics',
+        'github:get-status',
+        'linkedin:post-comment',
+        'linkedin:scrape-feed',
+    }
+)
+
+
+def test_known_command_types_covers_every_routable_client_command():
+    from conftest import REPO_ROOT
+
+    routes = _routes_declared_in(REPO_ROOT / 'client' / 'src' / 'transport' / 'commandRouter.ts')
+    assert routes, 'failed to parse any ROUTES key — the parser drifted from the router'
+
+    from shared_services.command_dispatch_core import KNOWN_COMMAND_TYPES
+
+    missing = routes - KNOWN_COMMAND_TYPES
+    assert not missing, f'the client can route types the core would reject with 400: {sorted(missing)}'
+    extra = KNOWN_COMMAND_TYPES - routes
+    assert extra <= _EDITION_OPTIONAL_TYPES, (
+        f'KNOWN_COMMAND_TYPES carries types no client edition routes: {sorted(extra - _EDITION_OPTIONAL_TYPES)}'
+    )
+
+
+def test_unknown_command_type_returns_400_and_persists_nothing(core, ws_table):
+    """A typo must be REJECTED, not written. Returned (not raised): a validation
+    rejection is definitively not-sent, so it belongs on the clean-outcome
+    channel (Phase-0 §5.1). Raising would tell the agent gate to treat a typo as
+    an ambiguous send and refuse to release quota."""
+    _seed_agent(ws_table)
+    before = ws_table.scan()['Items']
+
+    with patch('shared_services.websocket_service.WebSocketService.send_to_connection') as mock_send:
+        status, body = core.create_command(USER, 'linkedin:typo', {})
+
+    assert status == 400
+    assert body['code'] == 'UNKNOWN_COMMAND_TYPE'
+    assert 'linkedin:typo' in body['error']
+    mock_send.assert_not_called()
+    # Zero writes: no COMMAND# record and no rate-limit slot burned.
+    after = ws_table.scan()['Items']
+    assert after == before
+    assert not [i for i in after if i['PK'].startswith('COMMAND#')]
+    assert not [i for i in after if i['SK'].startswith('RATELIMIT#')]
+
+
+def test_unknown_command_type_is_rejected_before_the_agent_lookup(core, ws_table):
+    """The check is first, so a bad type cannot burn a lookup, a rate-limit slot,
+    or — on a misconfigured deploy — reach the raise channel the gate reads as
+    maybe-sent."""
+    with patch(
+        'shared_services.websocket_service.WebSocketService.get_user_connections'
+    ) as mock_lookup:
+        status, _ = core.create_command(USER, 'linkedin:typo', {})
+    assert status == 400
+    mock_lookup.assert_not_called()
+
+
+def test_every_known_command_type_still_dispatches(core, ws_table):
+    _seed_agent(ws_table)
+    core.RATE_LIMIT_MAX = 100
+    with patch('shared_services.websocket_service.WebSocketService.send_to_connection', return_value=True):
+        for command_type in sorted(core.KNOWN_COMMAND_TYPES):
+            status, body = core.create_command(USER, command_type, {})
+            assert status == 200, f'{command_type} was rejected'
+            assert body['status'] == 'dispatched'

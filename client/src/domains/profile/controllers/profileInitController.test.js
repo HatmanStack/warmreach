@@ -145,6 +145,30 @@ describe('ProfileInitController', () => {
       expect(profileInitMonitor.recordSuccess).toHaveBeenCalled();
     });
 
+    it('hands the monitor the result that actually carries the processing counts', async () => {
+      // recordSuccess reads `result.data.{processed,skipped,errors}` to move the
+      // global connection counters. The controller's own return is
+      // { profileData, stats }, so passing it left `.data` permanently
+      // undefined and the counters permanently zero.
+      ProfileInitService.mockImplementation(function () {
+        return {
+          initializeUserProfile: vi.fn().mockResolvedValue({
+            success: true,
+            message: 'ok',
+            data: { processed: 7, skipped: 2, errors: 1 },
+            metadata: { requestId: 'r', duration: 1, timestamp: 't' },
+          }),
+        };
+      });
+
+      await controller.performProfileInit(mockReq, mockRes);
+
+      expect(profileInitMonitor.recordSuccess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ data: { processed: 7, skipped: 2, errors: 1 } })
+      );
+    });
+
     it('resumes in-process and succeeds after a recoverable error heals', async () => {
       // First attempt hits a recoverable error → healing resumes in-process;
       // second attempt succeeds. No 202 / no spawned worker.

@@ -3,9 +3,25 @@ import { LinkedInInteractionController } from '../src/domains/linkedin/controlle
 import { logger } from '#utils/logger.js';
 
 const router = express.Router();
+
+/**
+ * A caught value is `unknown`; surface a message without assuming it is an Error.
+ * @param {unknown} error
+ * @returns {string}
+ */
+const getErrorMessage = (error) => (error instanceof Error ? error.message : String(error));
 const linkedInInteractionController = new LinkedInInteractionController();
 
 // JWT Authentication middleware
+/**
+ * Parameters are annotated individually rather than typing the whole arrow as
+ * `RequestHandler`: @types/express declares that call signature returning
+ * `unknown`, so a void middleware trips TS2355/TS7030 under noImplicitReturns.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ * @returns {void}
+ */
 const authenticateJWT = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.startsWith('Bearer ') 
@@ -18,7 +34,7 @@ const authenticateJWT = (req, res, next) => {
       method: req.method,
       ip: req.ip
     });
-    return res.status(401).json({
+    res.status(401).json({
       success: false,
       error: {
         code: 'MISSING_TOKEN',
@@ -27,11 +43,11 @@ const authenticateJWT = (req, res, next) => {
       },
       timestamp: new Date().toISOString()
     });
+  } else {
+    // Store token in request for controller use (see src/types/express.d.ts)
+    req.jwtToken = token;
+    next();
   }
-
-  // Store token in request for controller use
-  req.jwtToken = token;
-  next();
 };
 
 // Apply JWT authentication to all routes
@@ -48,7 +64,7 @@ router.post('/send-message', async (req, res) => {
       error: {
         code: 'INTERNAL_ERROR',
         message: 'Internal server error during message sending',
-        details: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+        details: process.env.NODE_ENV === 'development' ? getErrorMessage(error) : 'Something went wrong'
       },
       timestamp: new Date().toISOString()
     });
@@ -66,7 +82,7 @@ router.post('/add-connection', async (req, res) => {
       error: {
         code: 'INTERNAL_ERROR',
         message: 'Internal server error during connection request',
-        details: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+        details: process.env.NODE_ENV === 'development' ? getErrorMessage(error) : 'Something went wrong'
       },
       timestamp: new Date().toISOString()
     });
@@ -84,7 +100,7 @@ router.post('/create-post', async (req, res) => {
       error: {
         code: 'INTERNAL_ERROR',
         message: 'Internal server error during post creation',
-        details: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+        details: process.env.NODE_ENV === 'development' ? getErrorMessage(error) : 'Something went wrong'
       },
       timestamp: new Date().toISOString()
     });
@@ -102,7 +118,7 @@ router.post('/follow-profile', async (req, res) => {
       error: {
         code: 'INTERNAL_ERROR',
         message: 'Internal server error during profile follow',
-        details: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+        details: process.env.NODE_ENV === 'development' ? getErrorMessage(error) : 'Something went wrong'
       },
       timestamp: new Date().toISOString()
     });
@@ -120,7 +136,7 @@ router.get('/session-status', async (req, res) => {
       error: {
         code: 'INTERNAL_ERROR',
         message: 'Internal server error during session status check',
-        details: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+        details: process.env.NODE_ENV === 'development' ? getErrorMessage(error) : 'Something went wrong'
       },
       timestamp: new Date().toISOString()
     });

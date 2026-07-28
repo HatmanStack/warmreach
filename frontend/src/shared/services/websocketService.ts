@@ -13,6 +13,15 @@ export interface WebSocketMessage {
 type MessageHandler = (message: WebSocketMessage) => void;
 type StateChangeHandler = (state: ConnectionState) => void;
 
+const HEARTBEAT_INTERVAL_MS = 30000;
+// Treat the socket as dead after ~3 missed intervals with no inbound frame. The
+// backend echoes heartbeats (websocket-default's `heartbeat` handler), so a
+// healthy connection refreshes liveness at least once per interval; three
+// intervals rather than one gives slack for a slow round-trip instead of
+// churning the connection over it.
+const HEARTBEAT_STALE_MS = HEARTBEAT_INTERVAL_MS * 3;
+const INITIAL_RECONNECT_DELAY_MS = 1000;
+
 /**
  * WebSocket connection manager for the frontend.
  * Connects to API Gateway WebSocket API for real-time command results.
@@ -26,9 +35,11 @@ class WebSocketService {
   private stateHandlers = new Set<StateChangeHandler>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private reconnectDelay = 1000;
+  private reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
   private readonly maxReconnectDelay = 30000;
   private shouldReconnect = false;
+  /** Timestamp of the last inbound frame on the CURRENT socket. */
+  private lastMessageAt = 0;
 
   get connectionState(): ConnectionState {
     return this.state;
@@ -98,8 +109,8 @@ class WebSocketService {
       socket.onopen = () => {
         if (socket !== this.ws) return;
         logger.info('WebSocket connected');
-        this.reconnectDelay = 1000;
-        this._startHeartbeat();
+        this.reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+        this._startHeartbeat(socket);
         // Set state LAST so any synchronous send() inside state handlers
         // (e.g. get_agent_status from WebSocketContext) sees the timers
         // running and ws in place.
@@ -108,6 +119,10 @@ class WebSocketService {
 
       socket.onmessage = (event) => {
         if (socket !== this.ws) return;
+        // Any inbound frame proves the socket is alive, not just a heartbeat
+        // echo. The guard above matters here: a late frame from a socket this
+        // one replaced must not make the current one look alive.
+        this.lastMessageAt = Date.now();
         try {
           const message = JSON.parse(event.data) as WebSocketMessage;
           this.messageHandlers.forEach((handler) => handler(message));
@@ -145,19 +160,61 @@ class WebSocketService {
 
   private _scheduleReconnect() {
     if (this.reconnectTimer) return;
-    logger.info(`Reconnecting in ${this.reconnectDelay}ms`);
+    const base = Math.min(this.reconnectDelay, this.maxReconnectDelay);
+    // Equal jitter, matching client/src/transport/wsClient.ts rather than
+    // inventing a third backoff policy in this repo: half the capped base plus
+    // a random share of the other half. Without it every tab that lost the
+    // socket at the same moment reconnects at the same moment.
+    const delay = base / 2 + Math.random() * (base / 2);
+    logger.info(`Reconnecting in ${Math.round(delay)}ms`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this._connect();
-    }, this.reconnectDelay);
+    }, delay);
+    // The BASE doubles; only the scheduled delay is jittered.
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
   }
 
-  private _startHeartbeat() {
+  private _startHeartbeat(socket: WebSocket) {
     this._stopHeartbeat();
+    // Seed liveness at open so the first interval cannot false-trip on a socket
+    // that has not yet had a chance to receive anything.
+    this.lastMessageAt = Date.now();
     this.heartbeatTimer = setInterval(() => {
+      // Same stale-socket guard as every other callback: a timer belonging to a
+      // socket that has been replaced must not touch newer state.
+      if (socket !== this.ws) return;
+      if (Date.now() - this.lastMessageAt > HEARTBEAT_STALE_MS) {
+        logger.warn('WebSocket liveness deadline missed; treating the socket as dead');
+        this._forceReconnect(socket);
+        return;
+      }
       this.send({ action: 'heartbeat' });
-    }, 30000);
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  /**
+   * Drop a half-open socket — one that still accepts writes but delivers
+   * nothing — and run the normal reconnect path.
+   *
+   * The disconnected transition is driven here rather than left to `onclose`
+   * because a browser has no `terminate()`: `close()` on a half-open socket
+   * starts a handshake the peer may never answer, so `onclose` can be minutes
+   * away or never arrive. Detaching first also means the late `onclose` hits
+   * the `socket !== this.ws` guard and cannot trample the replacement.
+   */
+  private _forceReconnect(socket: WebSocket) {
+    this.ws = null;
+    this._clearTimers();
+    this._setState('disconnected');
+    try {
+      socket.close(4000, 'Liveness deadline missed');
+    } catch {
+      // A socket that is already gone is exactly the case being handled.
+    }
+    if (this.shouldReconnect) {
+      this._scheduleReconnect();
+    }
   }
 
   private _stopHeartbeat() {

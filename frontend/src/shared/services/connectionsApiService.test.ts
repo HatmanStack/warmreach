@@ -35,8 +35,7 @@ describe('ConnectionsApiService', () => {
     it('should throw ApiError on failure', async () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: false,
-        error: 'Fetch failed',
-        data: null,
+        error: { message: 'Fetch failed' },
       });
 
       await expect(connectionsApiService.getConnectionsByStatus()).rejects.toThrow(ApiError);

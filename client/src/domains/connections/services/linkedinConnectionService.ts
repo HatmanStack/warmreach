@@ -7,20 +7,69 @@
 import { logger } from '#utils/logger.js';
 import { RandomHelpers } from '#utils/randomHelpers.js';
 import { linkedinResolver } from '../../linkedin/selectors/index.js';
+import type { Page } from 'puppeteer';
+
+/**
+ * The collaborators are described structurally, matching the sibling
+ * LinkedInNavigationService: only the members this service actually calls are
+ * declared, so a DI double stays cheap to write while a renamed or dropped
+ * method is a compile error.
+ */
+interface SessionManagerLike {
+  getInstance(opts: { reinitializeIfUnhealthy: boolean }): Promise<{ getPage(): Page }>;
+}
+
+interface NavigationServiceLike {
+  navigateToProfile(profileId: string): Promise<unknown>;
+}
+
+interface EdgeRecorderLike {
+  upsertEdgeStatus(
+    profileId: string,
+    status: string,
+    extraUpdates?: Record<string, unknown>
+  ): Promise<unknown>;
+}
 
 /**
  * Connection service for LinkedIn connection requests.
  */
 interface ConnectionServiceOptions {
-  sessionManager: Record<string, any>;
-  navigationService?: Record<string, any>;
-  dynamoDBService?: Record<string, any>;
+  sessionManager: SessionManagerLike;
+  navigationService?: NavigationServiceLike;
+  dynamoDBService?: EdgeRecorderLike;
+}
+
+/** Options accepted by {@link LinkedInConnectionService.sendConnectionRequest}. */
+export interface SendConnectionRequestOptions {
+  /** When set (with a dynamoDBService injected), the edge is recorded. */
+  userId?: string;
+}
+
+/** Outcome recorded for a connection request. */
+export type ConnectionRequestStatus =
+  | 'unknown'
+  | 'ally'
+  | 'outgoing'
+  | 'incoming'
+  | 'sent'
+  | 'failed';
+
+/** Result of {@link LinkedInConnectionService.sendConnectionRequest}. */
+export interface ConnectionRequestResult {
+  requestId: string;
+  profileId: string;
+  status: ConnectionRequestStatus;
+  sentAt: string;
+  hasPersonalizedMessage: boolean;
+  confirmationFound?: boolean;
+  error?: string;
 }
 
 export class LinkedInConnectionService {
-  sessionManager: Record<string, any>;
-  navigationService: Record<string, any> | undefined;
-  dynamoDBService: Record<string, any> | undefined;
+  sessionManager: SessionManagerLike;
+  navigationService: NavigationServiceLike | undefined;
+  dynamoDBService: EdgeRecorderLike | undefined;
 
   constructor(options: ConnectionServiceOptions = {} as ConnectionServiceOptions) {
     this.sessionManager = options.sessionManager;
@@ -42,11 +91,11 @@ export class LinkedInConnectionService {
   async sendConnectionRequest(
     profileId: string,
     connectionMessage = '',
-    options: Record<string, any> = {}
-  ): Promise<Record<string, any>> {
+    options: SendConnectionRequestOptions = {}
+  ): Promise<ConnectionRequestResult> {
     logger.info(`Sending connection request to ${profileId}`);
 
-    const result: Record<string, any> = {
+    const result: ConnectionRequestResult = {
       requestId: `conn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       profileId,
       status: 'unknown',
@@ -88,11 +137,8 @@ export class LinkedInConnectionService {
       // Record edge if DynamoDB service available
       if (this.dynamoDBService && options.userId) {
         try {
-          await this.dynamoDBService.upsertEdge({
-            userId: options.userId,
-            targetProfileId: profileId,
+          await this.dynamoDBService.upsertEdgeStatus(profileId, result.status, {
             edgeType: 'connection_request',
-            status: result.status,
           });
         } catch (error: unknown) {
           logger.warn('Failed to record connection edge', { error: (error as Error).message });

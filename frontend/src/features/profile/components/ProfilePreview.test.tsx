@@ -15,81 +15,39 @@ const defaultProfile: ProfileData = {
 
 describe('ProfilePreview', () => {
   it('renders the profile name and title', () => {
-    render(
-      <ProfilePreview
-        profile={defaultProfile}
-        clientConnected={false}
-        linkedinCredentials={{ email: '', password: '' }}
-      />
-    );
+    render(<ProfilePreview profile={defaultProfile} clientConnected={false} />);
     expect(screen.getByText('Jane Doe')).toBeInTheDocument();
     expect(screen.getByText('Engineer')).toBeInTheDocument();
   });
 
   it('renders initials avatar', () => {
-    render(
-      <ProfilePreview
-        profile={defaultProfile}
-        clientConnected={false}
-        linkedinCredentials={{ email: '', password: '' }}
-      />
-    );
+    render(<ProfilePreview profile={defaultProfile} clientConnected={false} />);
     expect(screen.getByText('JD')).toBeInTheDocument();
   });
 
   it('renders interests', () => {
-    render(
-      <ProfilePreview
-        profile={defaultProfile}
-        clientConnected={false}
-        linkedinCredentials={{ email: '', password: '' }}
-      />
-    );
+    render(<ProfilePreview profile={defaultProfile} clientConnected={false} />);
     expect(screen.getByText('React')).toBeInTheDocument();
     expect(screen.getByText('Go')).toBeInTheDocument();
   });
 
   it('shows Connected when clientConnected is true', () => {
-    render(
-      <ProfilePreview
-        profile={defaultProfile}
-        clientConnected={true}
-        linkedinCredentials={{ email: '', password: '' }}
-      />
-    );
+    render(<ProfilePreview profile={defaultProfile} clientConnected={true} />);
     expect(screen.getByText('Connected')).toBeInTheDocument();
   });
 
   it('shows Not Connected when no credentials', () => {
-    render(
-      <ProfilePreview
-        profile={defaultProfile}
-        clientConnected={false}
-        linkedinCredentials={{ email: '', password: '' }}
-      />
-    );
+    render(<ProfilePreview profile={defaultProfile} clientConnected={false} />);
     expect(screen.getByText('Not Connected')).toBeInTheDocument();
   });
 
   it('renders the pro tip card', () => {
-    render(
-      <ProfilePreview
-        profile={defaultProfile}
-        clientConnected={false}
-        linkedinCredentials={{ email: '', password: '' }}
-      />
-    );
+    render(<ProfilePreview profile={defaultProfile} clientConnected={false} />);
     expect(screen.getByText('Pro Tip')).toBeInTheDocument();
   });
 
   it('renders bio', () => {
-    render(
-      <ProfilePreview
-        profile={defaultProfile}
-        clientConnected={false}
-        linkedinCredentials={{ email: '', password: '' }}
-      />
-    );
+    render(<ProfilePreview profile={defaultProfile} clientConnected={false} />);
     expect(screen.getByText('A test bio')).toBeInTheDocument();
   });
 });

@@ -33,8 +33,7 @@ describe('AnalyticsApiService', () => {
     it('should throw ApiError on failure', async () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: false,
-        error: 'Server error',
-        data: null,
+        error: { message: 'Server error' },
       });
 
       await expect(analyticsApiService.getMessagingInsights()).rejects.toThrow(ApiError);
@@ -95,7 +94,6 @@ describe('AnalyticsApiService', () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: false,
         error: { message: 'Write failed' },
-        data: null,
       });
 
       await expect(analyticsApiService.storeMessageInsights([])).rejects.toThrow(ApiError);
@@ -119,7 +117,6 @@ describe('AnalyticsApiService', () => {
       vi.mocked(httpClient.makeRequest).mockResolvedValue({
         success: false,
         error: { message: 'Too many requests', code: 'RATE_LIMIT' },
-        data: null,
       });
 
       const result = await analyticsApiService.sendLLMRequest('op');

@@ -42,7 +42,7 @@ MODEL_ANALYSIS = os.environ.get('OPENAI_MODEL_ANALYSIS', 'gpt-5.6-terra')
 #: migrating early costs 5x for no benefit. Every kickoff logs a countdown.
 MODEL_DEEP_RESEARCH = os.environ.get('OPENAI_MODEL_DEEP_RESEARCH', 'o4-mini-deep-research')
 
-#: Planner model for goal intelligence and the autonomous agent (ADR-7).
+#: Planner model for goal intelligence and the autonomous agent (ADR-022).
 #: Reads PLANNER_MODEL, the name that already existed in
 #: goal_intelligence_service, rather than introducing a second variable for
 #: the same setting — two names for one knob is how an operator sets the one

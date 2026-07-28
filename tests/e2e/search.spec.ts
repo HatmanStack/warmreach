@@ -19,7 +19,7 @@ test.describe('Search', () => {
     });
   });
 
-  test('should clear search results', async ({ authenticatedPage }) => {
+  test('should clear search results', { tag: '@needs-api' }, async ({ authenticatedPage }) => {
     await authenticatedPage.getByRole('tab', { name: /new connections/i }).click();
 
     const searchInput = authenticatedPage.getByTestId('search-input');

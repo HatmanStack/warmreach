@@ -6,16 +6,46 @@ on:
     paths:
       - 'docs/**'
       - '*.md'
+      # Every surface the linters now cover must also fire the workflow that
+      # covers it. A file that is checked but does not trigger its own check is
+      # the blind spot this widening exists to close.
+      - '.sync/overlays/**/*.md'
+      - 'admin/*.md'
+      - 'client/README.md'
+      - 'client/electron-resources/README.md'
+      - 'mock-linkedin/README.md'
+      - '.github/workflows/README.md'
+      - 'frontend/src/features/legal/documents/*.md'
+      - 'backend/docs-api/index.md'
+      - '.agents/workflows/*.md'
       - '.markdownlint-cli2.jsonc'
       - 'lychee.toml'
+      # Carries two of the four doc-linter invocations (lint:docs and
+      # lint:docs:links), so an edit to it must fire the workflow that runs them.
+      - 'package.json'
       - '.github/workflows/docs-lint.yml'
   pull_request:
     branches: [main]
     paths:
       - 'docs/**'
       - '*.md'
+      # Every surface the linters now cover must also fire the workflow that
+      # covers it. A file that is checked but does not trigger its own check is
+      # the blind spot this widening exists to close.
+      - '.sync/overlays/**/*.md'
+      - 'admin/*.md'
+      - 'client/README.md'
+      - 'client/electron-resources/README.md'
+      - 'mock-linkedin/README.md'
+      - '.github/workflows/README.md'
+      - 'frontend/src/features/legal/documents/*.md'
+      - 'backend/docs-api/index.md'
+      - '.agents/workflows/*.md'
       - '.markdownlint-cli2.jsonc'
       - 'lychee.toml'
+      # Carries two of the four doc-linter invocations (lint:docs and
+      # lint:docs:links), so an edit to it must fire the workflow that runs them.
+      - 'package.json'
       - '.github/workflows/docs-lint.yml'
 
 permissions:
@@ -32,7 +62,7 @@ jobs:
         with:
           node-version: '24'
       - name: Run markdownlint
-        run: npx markdownlint-cli2 "docs/**/*.md" "*.md"
+        run: npx markdownlint-cli2 "docs/**/*.md" "*.md" ".sync/overlays/**/*.md" "admin/*.md" "client/README.md" "client/electron-resources/README.md" "mock-linkedin/README.md" ".github/workflows/README.md" "frontend/src/features/legal/documents/*.md" "backend/docs-api/index.md" ".agents/workflows/*.md"
 
   link-check:
     name: Link Check
@@ -43,5 +73,5 @@ jobs:
       - name: Check links
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
-          args: --config lychee.toml "docs/**/*.md" "*.md"
+          args: --config lychee.toml "docs/**/*.md" "*.md" ".sync/overlays/**/*.md" "admin/*.md" "client/README.md" "client/electron-resources/README.md" "mock-linkedin/README.md" ".github/workflows/README.md" "frontend/src/features/legal/documents/*.md" "backend/docs-api/index.md" ".agents/workflows/*.md"
           fail: true

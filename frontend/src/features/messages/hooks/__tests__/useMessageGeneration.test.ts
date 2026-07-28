@@ -3,6 +3,7 @@ import { useMessageGeneration } from '../useMessageGeneration';
 import { createWrapper, buildConnection } from '@/test-utils';
 import { messageGenerationService } from '@/features/messages';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { WebSocketMessage } from '@/shared/services/websocketService';
 
 // Mock all dependencies
 vi.mock('@/shared/hooks', () => ({
@@ -29,7 +30,7 @@ vi.mock('@/shared/services/commandService', () => ({
     dispatch: vi.fn().mockResolvedValue({ commandId: 'cmd-1' }),
     // Deliver a confirmed result immediately so handleSendMessage resolves
     // deterministically without a real WebSocket.
-    onCommandMessage: vi.fn((commandId: string, cb: (m: unknown) => void) => {
+    onCommandMessage: vi.fn((commandId: string, cb: (m: WebSocketMessage) => void) => {
       cb({ commandId, action: 'result', data: { data: { deliveryStatus: 'delivered' } } });
       return () => {};
     }),
@@ -240,7 +241,7 @@ describe('useMessageGeneration', () => {
   it('does NOT record the message when the agent reports delivery failed', async () => {
     const { commandService } = await import('@/shared/services/commandService');
     vi.mocked(commandService.onCommandMessage).mockImplementationOnce(
-      (commandId: string, cb: (m: unknown) => void) => {
+      (commandId: string, cb: (m: WebSocketMessage) => void) => {
         cb({ commandId, action: 'error' });
         return () => {};
       }
@@ -261,7 +262,7 @@ describe('useMessageGeneration', () => {
   it('does NOT record the message when delivery is unconfirmed', async () => {
     const { commandService } = await import('@/shared/services/commandService');
     vi.mocked(commandService.onCommandMessage).mockImplementationOnce(
-      (commandId: string, cb: (m: unknown) => void) => {
+      (commandId: string, cb: (m: WebSocketMessage) => void) => {
         cb({ commandId, action: 'result', data: { data: { deliveryStatus: 'unconfirmed' } } });
         return () => {};
       }

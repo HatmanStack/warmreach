@@ -105,3 +105,52 @@ class TestSSMCachedSecret:
             mock_boto_client.return_value = mock_client
             secret.get_value()
             mock_boto_client.assert_called_once()
+
+
+class TestAnOptionalIntegrationDoesNotKillTheHandler:
+    """RAGStack is optional; a transient SSM failure must not take the Lambda down.
+
+    Every caller resolves this at module scope, so an escaping exception became
+    Runtime.ImportModuleError and every request that container served returned
+    502 — for edge-crud that is the connections list, notes, activity timeline
+    and lifecycle, none of which touch RAGStack.
+    """
+
+    def test_an_ssm_failure_degrades_to_disabled_instead_of_raising(self, monkeypatch):
+        from botocore.exceptions import ClientError
+
+        from shared_services import ssm_cache
+
+        monkeypatch.setenv('RAGSTACK_API_KEY_ARN', 'arn:aws:ssm:us-east-1:1:parameter/ragstack')
+        monkeypatch.delenv('RAGSTACK_API_KEY', raising=False)
+
+        def _boom(**kwargs):
+            raise ClientError({'Error': {'Code': 'ThrottlingException'}}, 'GetParameter')
+
+        monkeypatch.setattr(ssm_cache, 'resolve_secret', _boom)
+
+        assert ssm_cache.resolve_ragstack_api_key() == ''
+
+    def test_a_required_secret_still_fails_loudly(self, monkeypatch):
+        """resolve_secret keeps its contract — the unsubscribe HMAC calls it
+        directly and a handler that signs with an empty key is worse than one
+        that refuses to start."""
+        from botocore.exceptions import ClientError
+
+        from shared_services import ssm_cache
+
+        monkeypatch.setenv('UNSUB_ARN', 'arn:aws:ssm:us-east-1:1:parameter/unsub')
+        monkeypatch.delenv('UNSUB_FALLBACK', raising=False)
+
+        class _Boom:
+            def __init__(self, *a, **k):
+                pass
+
+            def get_value(self, *a, **k):
+                raise ClientError({'Error': {'Code': 'ThrottlingException'}}, 'GetParameter')
+
+        monkeypatch.setattr(ssm_cache, 'SSMCachedSecret', _Boom)
+        with pytest.raises(ClientError):
+            ssm_cache.resolve_secret(
+                arn_env='UNSUB_ARN', fallback_env='UNSUB_FALLBACK', label='unsubscribe secret'
+            )

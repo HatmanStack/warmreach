@@ -243,4 +243,62 @@ describe('ConnectionNotesModal', () => {
       )
     ).toBeInTheDocument();
   });
+
+  describe('accessible names', () => {
+    it('names the per-note icon buttons', () => {
+      render(
+        <AuthenticatedWrapper>
+          <ConnectionNotesModal
+            isOpen={true}
+            onClose={mockOnClose}
+            connection={connectionWithNotes}
+          />
+        </AuthenticatedWrapper>
+      );
+
+      // Both are icon-only buttons. Queried by accessible name so the assertion
+      // fails if the aria-label is dropped — a getByTestId query would not.
+      expect(screen.getAllByRole('button', { name: 'Edit note' }).length).toBeGreaterThan(0);
+      expect(screen.getAllByRole('button', { name: 'Delete note' }).length).toBeGreaterThan(0);
+    });
+
+    it('labels the note textareas', () => {
+      render(
+        <AuthenticatedWrapper>
+          <ConnectionNotesModal
+            isOpen={true}
+            onClose={mockOnClose}
+            connection={connectionWithNotes}
+          />
+        </AuthenticatedWrapper>
+      );
+
+      expect(screen.getByLabelText('New note')).toBeInTheDocument();
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Edit note' })[0]);
+      expect(screen.getByLabelText('Edit note text')).toBeInTheDocument();
+    });
+
+    it('associates a description with the dialog', () => {
+      render(
+        <AuthenticatedWrapper>
+          <ConnectionNotesModal
+            isOpen={true}
+            onClose={mockOnClose}
+            connection={connectionWithNotes}
+          />
+        </AuthenticatedWrapper>
+      );
+
+      // Radix points DialogContent's aria-describedby at the DialogDescription.
+      // Without one the dialog announces its title and nothing else (and Radix
+      // logs a runtime warning).
+      const dialog = screen.getByRole('dialog');
+      const describedBy = dialog.getAttribute('aria-describedby');
+      expect(describedBy).toBeTruthy();
+      expect(document.getElementById(describedBy as string)).toHaveTextContent(
+        'Notes you add are used to personalize AI-generated messages for this connection.'
+      );
+    });
+  });
 });

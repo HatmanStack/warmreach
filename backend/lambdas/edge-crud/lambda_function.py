@@ -4,14 +4,15 @@ import json
 import logging
 import os
 
-import boto3
 from errors.exceptions import AuthorizationError, ExternalServiceError, NotFoundError, ServiceError, ValidationError
 from shared_services.activity_service import ActivityService
 from shared_services.activity_writer import write_activity
+from shared_services.aws_clients import dynamodb_resource
 from shared_services.edge_data_service import EdgeDataService
 from shared_services.edge_opportunity_service import OptimisticConcurrencyError
 from shared_services.observability import setup_correlation_context
 from shared_services.request_utils import api_response, extract_user_id
+from shared_services.ssm_cache import resolve_ragstack_api_key
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -20,9 +21,9 @@ logger.setLevel(logging.INFO)
 _table_name = os.environ.get('DYNAMODB_TABLE_NAME')
 if not _table_name:
     raise RuntimeError('FATAL: DYNAMODB_TABLE_NAME environment variable is required')
-table = boto3.resource('dynamodb').Table(_table_name)
+table = dynamodb_resource().Table(_table_name)
 RAGSTACK_GRAPHQL_ENDPOINT = os.environ.get('RAGSTACK_GRAPHQL_ENDPOINT', '')
-RAGSTACK_API_KEY = os.environ.get('RAGSTACK_API_KEY', '')
+RAGSTACK_API_KEY = resolve_ragstack_api_key()
 
 # Module-level clients for warm container reuse
 _ragstack_client = None
@@ -218,7 +219,10 @@ def _handle_get_activity_timeline(body, user_id, event, edge_cache):
 #
 # Contact-to-contact adjacency persistence is a Pro-only capability and is
 # intentionally absent from this routing table; any unregistered operation
-# falls through to the "Unsupported operation" 400 response below.
+# falls through to the "Unsupported operation" 400 response below. Withholding
+# the persistence op here is one of the three enforcement points in
+# docs/adr/ADR-015-mutual-collection-sync-posture.md, which is why the
+# collector itself can ship verbatim.
 # ---------------------------------------------------------------------------
 
 HANDLERS = {
@@ -239,9 +243,10 @@ def lambda_handler(event, context):
     """Route edge CRUD operations."""
     setup_correlation_context(event, context)
 
-    logger.debug(f'Event keys: {list(event.keys())}')
+    logger.debug('Event keys: %s', list(event.keys()))
     logger.debug(
-        f'Request context: {json.dumps(_sanitize_request_context(event.get("requestContext", {})), default=str)}'
+        'Request context: %s',
+        json.dumps(_sanitize_request_context(event.get('requestContext', {})), default=str),
     )
 
     if event.get('requestContext', {}).get('http', {}).get('method') == 'OPTIONS':
@@ -278,5 +283,5 @@ def lambda_handler(event, context):
     except ServiceError as e:
         return api_response(500, {'error': e.message}, event)
     except Exception as e:
-        logger.error(f'Error: {e}')
+        logger.error('Error: %s', e)
         return api_response(500, {'error': 'Internal server error'}, event)

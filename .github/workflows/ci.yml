@@ -11,6 +11,12 @@ on:
     paths-ignore:
       - 'docs/**'
       - '*.md'
+  # WarmReach Pro's CI additionally runs a publication guard (`sync-leak`) that
+  # scans the tree this repository is generated from before it is pushed here.
+  # There is no counterpart job in this edition and there should not be: the
+  # `.sync/` directory that drives the sync, its exclusion list, and its overlays
+  # are pro-only and never reach this repository, so there is nothing here for
+  # such a job to inspect. The absence is deliberate, not an omission.
 
 env:
   NODE_VERSION: '24'
@@ -45,6 +51,13 @@ jobs:
       - name: Frontend TypeScript check
         working-directory: ./frontend
         run: npx tsc --noEmit
+      # `tsc --noEmit` cannot catch a Rollup resolution failure, an unresolvable
+      # dynamic import, a missing static asset, or a bundler-only config error,
+      # and this is the artifact that actually gets deployed. Build only; no
+      # artifact upload.
+      - name: Frontend production build
+        working-directory: ./frontend
+        run: npx vite build
       - name: Frontend tests (with coverage)
         working-directory: ./frontend
         run: npx vitest run --coverage
@@ -76,13 +89,97 @@ jobs:
       - name: Install test dependencies
         working-directory: ./tests/backend
         run: uv pip install -r requirements-test.lock --system
+      # One invocation per Lambda directory plus the shared_services package.
+      # The handlers are all named `lambda_function`, so a single pass cannot
+      # resolve them; the script is shared with `npm run typecheck:backend` so a
+      # local run and this one are the same command.
       - name: Run mypy type check
-        working-directory: ./backend
-        run: python -m mypy -p shared_services
+        run: bash scripts/typecheck-backend.sh
       - name: Backend tests
         working-directory: ./tests/backend
         run: python -m pytest unit/ -v --tb=short
+      # template.yaml is the largest production artifact here and had no
+      # automated checking, so a malformed !Ref or IAM policy document surfaced
+      # first at `sam deploy`. Version-pinned so the gate cannot break without a
+      # code change. Two rules are ignored by name, with reasons, in .cfnlintrc.
+      - name: Validate the SAM template
+        run: uvx cfn-lint@1.53.2 backend/template.yaml
 
       # Skipped-test lint (shared with pro CI)
       - name: Check for untracked test skips
         run: scripts/check-skipped-tests.sh
+
+      # Command-vocabulary drift (shared with pro CI). The vocabulary is a
+      # community concept (ADR-009); this edition routes the 5 core LinkedIn
+      # commands and the script accounts for that.
+      - name: Check the command vocabulary for drift
+        run: python3 scripts/check-command-vocabulary.py
+      # Doc-linter inputs (shared with pro CI). The sync-exclusion half needs
+      # .sync/, which is pro-only, so here it checks that every literal input
+      # exists — which is precisely the half that bites in this edition, since
+      # this is where a path the sync removed goes missing.
+      - name: Check the doc-linter inputs resolve
+        run: python3 scripts/check-doc-lint-inputs.py
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix frontend
+      # chromium only — playwright.config.ts defines exactly one project. No
+      # spec filter: this edition ships nine specs and a bare run collects
+      # exactly those. (Pro has four more, covering pages this edition does not
+      # have.) playwright.config.ts also guards its second webServer entry on
+      # the admin/ directory, which is absent here.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      # No VITE_ALLOW_MOCK_AUTH: the webServer runs `npm run dev`, so
+      # import.meta.env.DEV already satisfies appConfig.ts's isMockAuthAllowed.
+      # The tests that assert on API-served connection, message, or profile data
+      # have no backend here either, and one auth test is blocked by the
+      # legal-acceptance modal. Both are tagged at the source and drop their tag
+      # as they become self-sufficient.
+      - name: Run Playwright
+        run: npx playwright test --grep-invert='@needs-api|@needs-legal-gate'
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  commitlint:
+    name: Commit Message Lint
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install commitlint
+        run: npm ci --ignore-scripts
+      # .husky/commit-msg runs commitlint locally, but `--no-verify` walks past
+      # it. The commits the pro sync generates here are conventional
+      # (`chore(sync): ...`), so this passes on the generated history too.
+      # See the overlay-drift step: the ref is passed through env: and quoted,
+      # not interpolated into the script body.
+      - name: Lint the PR's commit messages
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: npx commitlint --from "origin/$BASE_REF" --to HEAD --verbose

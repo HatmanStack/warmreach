@@ -1,6 +1,7 @@
 """ActivityService - Query activity timeline records from DynamoDB."""
 
 import base64
+import binascii
 import json
 import logging
 from typing import Any
@@ -76,7 +77,7 @@ class ActivityService(BaseService):
             try:
                 decoded = json.loads(base64.urlsafe_b64decode(cursor))
                 query_params['ExclusiveStartKey'] = decoded
-            except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
+            except (json.JSONDecodeError, binascii.Error, UnicodeDecodeError):
                 logger.warning('Invalid pagination cursor, ignoring')
 
         response = self.table.query(**query_params)

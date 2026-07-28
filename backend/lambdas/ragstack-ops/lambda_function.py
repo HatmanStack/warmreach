@@ -4,15 +4,16 @@ import json
 import logging
 import os
 
-import boto3
 from botocore.exceptions import ClientError
 from errors.exceptions import AuthorizationError, ExternalServiceError, NotFoundError, ServiceError, ValidationError
+from shared_services.aws_clients import dynamodb_resource
 from shared_services.edge_data_service import EdgeDataService
 from shared_services.handler_utils import get_user_id, release_quota, reserve_quota, sanitize_request_context
 from shared_services.monetization import FeatureFlagService, QuotaExceededError, QuotaService
 from shared_services.observability import setup_correlation_context
 from shared_services.ragstack_proxy_service import RAGStackProxyService
 from shared_services.request_utils import api_response
+from shared_services.ssm_cache import resolve_ragstack_api_key
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -21,9 +22,9 @@ logger.setLevel(logging.INFO)
 _table_name = os.environ.get('DYNAMODB_TABLE_NAME')
 if not _table_name:
     raise RuntimeError('FATAL: DYNAMODB_TABLE_NAME environment variable is required')
-table = boto3.resource('dynamodb').Table(_table_name)
+table = dynamodb_resource().Table(_table_name)
 RAGSTACK_GRAPHQL_ENDPOINT = os.environ.get('RAGSTACK_GRAPHQL_ENDPOINT', '')
-RAGSTACK_API_KEY = os.environ.get('RAGSTACK_API_KEY', '')
+RAGSTACK_API_KEY = resolve_ragstack_api_key()
 
 # Conditional RAGStack client initialization
 _ragstack_client = None

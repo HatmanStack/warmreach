@@ -21,21 +21,35 @@ check_command docker
 check_command python3
 check_command uv
 
+# Every install below uses `npm ci`: it installs exactly what the lockfile pins
+# and fails rather than rewriting it, so a local setup cannot drift from CI,
+# which uses `npm ci` throughout (.github/workflows/ci.yml).
 echo ""
 echo "Installing root dependencies..."
-npm install
+npm ci
 
 echo ""
 echo "Installing frontend dependencies..."
-(cd frontend && npm install)
+(cd frontend && npm ci)
 
 echo ""
 echo "Installing client dependencies..."
-(cd client && npm install)
+(cd client && npm ci)
+
+# admin/ is a Pro-only workspace: it is in .sync/config.json exclude_paths and
+# never reaches the community edition, while this script syncs verbatim. The
+# guard is what keeps community setup working.
+echo ""
+echo "Installing admin dependencies..."
+if [ -d admin ]; then
+  (cd admin && npm ci)
+else
+  echo "  skipping admin/ (not present in this edition)"
+fi
 
 echo ""
 echo "Installing mock-linkedin dependencies..."
-(cd mock-linkedin && npm install)
+(cd mock-linkedin && npm ci)
 
 echo ""
 echo "Setting up Python test environment..."

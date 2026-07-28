@@ -4,8 +4,8 @@ import {
   createMasterIndexFile,
   loadMasterIndex,
   updateMasterIndex,
-} from './profileIngestion';
-import type { ProfileInitService } from './profileInitService';
+} from './profileIngestion.js';
+import type { MasterIndex, ProfileInitService } from './profileInitService.js';
 
 vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
@@ -40,7 +40,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 describe('profileIngestion', () => {
-  let mockService: any;
+  let mockService: ProfileInitService;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -145,7 +145,7 @@ describe('profileIngestion', () => {
           currentIndex: 0,
           completedBatches: [],
         },
-      } as any;
+      } as unknown as MasterIndex;
 
       await updateMasterIndex(mockService, 'data/index.json', masterIndex);
       expect(fs.writeFile).toHaveBeenCalled();

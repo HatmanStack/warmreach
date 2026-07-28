@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from moto import mock_aws
 
 # Path to lambdas directory
@@ -14,6 +15,13 @@ BACKEND_LAMBDAS = Path(__file__).parent.parent.parent / 'backend' / 'lambdas'
 
 # Path to shared python modules
 SHARED_PYTHON = BACKEND_LAMBDAS / 'shared' / 'python'
+
+# The two SAM templates. Template changes are verified by shape assertion rather
+# than by deploy (Phase-0 testing strategy: this suite never touches live AWS),
+# so several test modules parse these directly.
+REPO_ROOT = Path(__file__).parent.parent.parent
+SOURCE_TEMPLATE = REPO_ROOT / 'backend' / 'template.yaml'
+OVERLAY_TEMPLATE = REPO_ROOT / '.sync' / 'overlays' / 'backend' / 'template.yaml'
 
 # Path to edge-processing services
 EDGE_PROCESSING = BACKEND_LAMBDAS / 'edge-processing'
@@ -35,6 +43,37 @@ os.environ['COGNITO_USER_POOL_ID'] = 'test-pool-id'
 os.environ['COGNITO_REGION'] = 'us-west-2'
 os.environ['ALLOWED_ORIGINS'] = 'http://localhost:5173,http://localhost:3000'
 os.environ['OPENAI_API_KEY'] = 'test-key-for-unit-tests'
+
+
+class _CfnLoader(yaml.SafeLoader):
+    """SafeLoader that tolerates CloudFormation short-form intrinsic tags
+    (``!Ref``, ``!Sub``, ``!GetAtt``, ``!If`` ...) by constructing them as plain
+    Python values instead of raising on the unknown tag.
+
+    ``!Ref Foo`` becomes ``{'Ref': 'Foo'}`` and ``!Sub 'a-${B}'`` becomes
+    ``{'Sub': 'a-${B}'}``, so assertions compare against those dicts.
+    """
+
+
+def _construct_cfn_tag(loader, tag_suffix, node):
+    if isinstance(node, yaml.ScalarNode):
+        return {tag_suffix: loader.construct_scalar(node)}
+    if isinstance(node, yaml.SequenceNode):
+        return {tag_suffix: loader.construct_sequence(node, deep=True)}
+    return {tag_suffix: loader.construct_mapping(node, deep=True)}
+
+
+_CfnLoader.add_multi_constructor('!', _construct_cfn_tag)
+
+
+def load_cfn_template(path) -> dict:
+    """Parse a SAM/CloudFormation template, tolerating short-form intrinsics.
+
+    Parsing beats a regex here: a regex happily matches an unresolvable ``!Sub``
+    literal, while the parsed form lets a test assert the actual structure.
+    """
+    with open(path, encoding='utf-8') as fh:
+        return yaml.load(fh, Loader=_CfnLoader)
 
 
 def load_lambda_module(lambda_name: str):
@@ -226,6 +265,27 @@ def dynamodb_table(aws_credentials):
                         'ReadCapacityUnits': 5,
                         'WriteCapacityUnits': 5
                     }
+                },
+                # GSI4 — inverted SK/PK index (matches template.yaml). No new
+                # AttributeDefinitions needed: PK and SK are already declared.
+                # The INCLUDE projection is written out for documentation only —
+                # moto does not enforce GSI projections, which is exactly why
+                # Phase-4 Task 2's acceptance criteria are template-shape
+                # assertions and a deploy runbook rather than a behavioural test.
+                {
+                    'IndexName': 'GSI4',
+                    'KeySchema': [
+                        {'AttributeName': 'SK', 'KeyType': 'HASH'},
+                        {'AttributeName': 'PK', 'KeyType': 'RANGE'},
+                    ],
+                    'Projection': {
+                        'ProjectionType': 'INCLUDE',
+                        'NonKeyAttributes': ['tier', 'createdAt'],
+                    },
+                    'ProvisionedThroughput': {
+                        'ReadCapacityUnits': 5,
+                        'WriteCapacityUnits': 5
+                    }
                 }
             ],
             ProvisionedThroughput={
@@ -362,6 +422,27 @@ def mock_dynamodb_resource(aws_credentials):
                         {'AttributeName': 'GSI3SK', 'KeyType': 'RANGE'},
                     ],
                     'Projection': {'ProjectionType': 'ALL'},
+                    'ProvisionedThroughput': {
+                        'ReadCapacityUnits': 5,
+                        'WriteCapacityUnits': 5
+                    }
+                },
+                # GSI4 — inverted SK/PK index (matches template.yaml). No new
+                # AttributeDefinitions needed: PK and SK are already declared.
+                # The INCLUDE projection is written out for documentation only —
+                # moto does not enforce GSI projections, which is exactly why
+                # Phase-4 Task 2's acceptance criteria are template-shape
+                # assertions and a deploy runbook rather than a behavioural test.
+                {
+                    'IndexName': 'GSI4',
+                    'KeySchema': [
+                        {'AttributeName': 'SK', 'KeyType': 'HASH'},
+                        {'AttributeName': 'PK', 'KeyType': 'RANGE'},
+                    ],
+                    'Projection': {
+                        'ProjectionType': 'INCLUDE',
+                        'NonKeyAttributes': ['tier', 'createdAt'],
+                    },
                     'ProvisionedThroughput': {
                         'ReadCapacityUnits': 5,
                         'WriteCapacityUnits': 5

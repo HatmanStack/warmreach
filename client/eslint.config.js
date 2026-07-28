@@ -20,32 +20,35 @@ export default [
       'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  // `tseslint.configs.recommended` is a three-element array: [0] is
+  // typescript-eslint/base, which registers the plugin and parser and contains
+  // ZERO rules; the 23 recommended rules live at [1] and [2]. Spreading only
+  // [0] — as this config did until audit Phase 8 — left every recommended rule
+  // silently off in client TS files. Spread the whole array, and scope `files`
+  // onto each element with .map(): [0] is what registers the plugin, so
+  // spreading just [1] and [2] fails with "could not find plugin
+  // @typescript-eslint".
+  ...tseslint.configs.recommended.map((c) => ({ ...c, files: ['**/*.ts'] })),
   {
     files: ['**/*.ts'],
-    ...tseslint.configs.recommended[0],
     languageOptions: {
-      ...tseslint.configs.recommended[0]?.languageOptions,
       globals: {
         ...globals.node,
         ...globals.es2021,
       },
     },
     rules: {
-      ...tseslint.configs.recommended[0]?.rules,
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       'no-unused-vars': 'off',
     },
   },
   {
-    // Guardrail (audit Phase 5 / ADR-005): the WebSocket transport boundary was
-    // cleaned in Phase 4 to use runtime-validated, typed command payloads instead of
-    // `Record<string, any>` and `as unknown as` double-casts. Lock that in so it
-    // cannot silently regress. The profile-init and search controller boundaries
-    // were likewise typed in audit Phase 7 (removing ~17/~14 `any`-class usages and
-    // a `@ts-expect-error`) and are ratcheted alongside the transport boundary here.
-    // Scoped to the cleaned boundary files only; a repo-wide ban surfaces pre-existing
-    // `Record<string, any>` across the client domains (future ratchet — see Phase-5
-    // Known Limitations).
+    // Guardrail (audit Phase 5 / ADR-005): the WebSocket transport boundary uses
+    // runtime-validated, typed command payloads instead of `as unknown as`
+    // double-casts. `no-explicit-any` is now global (above), so only the
+    // double-cast ban still needs this scope — it is deliberately not repo-wide,
+    // because widening a double at a test-double boundary is legitimate and
+    // banning it everywhere would push tests back toward `any`.
     files: [
       'src/transport/commandRouter.ts',
       'src/transport/commandRouter.schemas.ts',
@@ -53,7 +56,6 @@ export default [
       'src/domains/search/controllers/searchController.ts',
     ],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'error',
       'no-restricted-syntax': [
         'error',
         {

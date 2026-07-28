@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { LinkedInErrorHandler } from './linkedinErrorHandler.js';
+import { LinkedInErrorHandler, type ErrorCodeInfo } from './linkedinErrorHandler.js';
 import { LinkedInError } from './LinkedInError.js';
 
 // Mock logger
@@ -42,7 +42,7 @@ describe('LinkedInErrorHandler', () => {
     });
 
     it('should categorize error by code when present', () => {
-      const error = new Error('some message');
+      const error: Error & { code?: string } = new Error('some message');
       error.code = 'LINKEDIN_RATE_LIMIT';
       const result = LinkedInErrorHandler.categorizeError(error);
       expect(result).toBe(LinkedInErrorHandler.ERROR_CODES.LINKEDIN_RATE_LIMIT);
@@ -50,7 +50,7 @@ describe('LinkedInErrorHandler', () => {
     });
 
     it('should fall through to string matching when code is not in ERROR_CODES', () => {
-      const error = new Error('Browser session crashed');
+      const error: Error & { code?: string } = new Error('Browser session crashed');
       error.code = 'UNKNOWN_CODE_XYZ';
       const result = LinkedInErrorHandler.categorizeError(error);
       expect(result.category).toBe('BROWSER');
@@ -148,12 +148,22 @@ describe('LinkedInErrorHandler', () => {
 
   describe('isRecoverable', () => {
     it('should return true for network errors on first attempt', () => {
-      const categorized = { category: 'NETWORK' };
+      const categorized: ErrorCodeInfo = {
+        category: 'NETWORK',
+        httpStatus: 503,
+        message: 'network',
+        suggestions: [],
+      };
       expect(LinkedInErrorHandler.isRecoverable(categorized, 1)).toBe(true);
     });
 
     it('should return false after 3 attempts', () => {
-      const categorized = { category: 'NETWORK' };
+      const categorized: ErrorCodeInfo = {
+        category: 'NETWORK',
+        httpStatus: 503,
+        message: 'network',
+        suggestions: [],
+      };
       expect(LinkedInErrorHandler.isRecoverable(categorized, 3)).toBe(false);
     });
   });

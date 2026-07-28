@@ -13,7 +13,7 @@ import json
 import logging
 import os
 
-import boto3
+from shared_services.aws_clients import dynamodb_resource
 from shared_services.command_dispatch_core import create_command
 from shared_services.observability import setup_correlation_context
 from shared_services.request_utils import api_response, extract_user_id
@@ -23,7 +23,7 @@ logger.setLevel(os.environ.get('LOG_LEVEL', 'INFO'))
 
 TABLE_NAME = os.environ['DYNAMODB_TABLE_NAME']
 
-dynamodb = boto3.resource('dynamodb')
+dynamodb = dynamodb_resource()
 table = dynamodb.Table(TABLE_NAME)
 
 _ALLOWED_METHODS = 'GET,POST,OPTIONS'

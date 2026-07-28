@@ -5,7 +5,7 @@ vi.mock('#utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
-import { SignalDetector } from './signalDetector.ts';
+import { SignalDetector } from './signalDetector.js';
 
 describe('SignalDetector', () => {
   let detector: SignalDetector;

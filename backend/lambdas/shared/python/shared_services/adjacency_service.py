@@ -7,7 +7,7 @@ as two directed rows written in a single ``transact_write_items``::
     PK=USER#{user_id}  SK=ADJ#{a}#{b}
     PK=USER#{user_id}  SK=ADJ#{b}#{a}
 
-Load-bearing invariants (ADR-1):
+Load-bearing invariants (ADR-010):
 
 1. All neighbors of any node ``n`` are retrievable with a single base-table query
    ``PK=USER#{user_id} AND begins_with(SK, 'ADJ#{n}#')`` -- no new GSI, no change
@@ -30,9 +30,9 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-import boto3
 from botocore.exceptions import ClientError
 from errors.exceptions import ExternalServiceError, ValidationError
+from shared_services import aws_clients
 from shared_services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class AdjacencyService(BaseService):
     @property
     def _dynamodb_client(self):
         if self._dynamodb_client_override is None:
-            self._dynamodb_client_override = boto3.client('dynamodb')
+            self._dynamodb_client_override = aws_clients.dynamodb_client()
         return self._dynamodb_client_override
 
     def upsert_adjacency(

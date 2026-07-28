@@ -9,6 +9,27 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/setupTests.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    // Timeout and retry carry their reasoning, same convention as the coverage
+    // thresholds below.
+    //
+    // At vitest's 5000ms default this suite passed or failed depending on
+    // machine load, which makes a green run weak evidence. Measured on a
+    // 12-core box by running 10 of the interactive component specs against 96
+    // busy loops (8x oversubscription): 10 failures across 8 files, every one
+    // "Test timed out in 5000ms", where the same 10 files pass unloaded. The
+    // failing tests are ordinary synchronous render+assert bodies — the time
+    // goes to module resolution and jsdom setup under contention, not to
+    // anything the test awaits.
+    //
+    // 15s rather than 30s: three times the default is enough headroom for a
+    // 2-core GitHub runner while still failing fast on a genuinely hung test.
+    // This is headroom for a slow machine, NOT a licence to leave a slow test
+    // in place — if a single test needs more than 15s, fix the test.
+    testTimeout: 15000,
+    // Retry under CI only, mirroring playwright.config.ts's
+    // `retries: process.env.CI ? 2 : 0`. A local retry would hide flakiness
+    // from the person best placed to fix it.
+    retry: process.env.CI ? 1 : 0,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

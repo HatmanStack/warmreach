@@ -11,6 +11,25 @@ This guide walks through deploying a fresh WarmReach stack from scratch. After t
 - **Node.js** 24 LTS
 - **Python** 3.13+
 
+## 0. Optional: the RAGStack API key as an SSM SecureString
+
+This edition has one optional secret parameter. Without it the key arrives as a
+plaintext Lambda environment variable, which is what the runtime warns about.
+
+```bash
+# Read the value from a file rather than passing it inline: a --value argument
+# lands in shell history and is visible to any user who can run `ps` while the
+# command runs.
+aws ssm put-parameter \
+  --name "/warmreach/prod/ragstack-api-key" \
+  --type SecureString --value "file://ragstack-key.txt" \
+  --tags Key=Project,Value=warmreach
+rm ragstack-key.txt
+```
+
+Pass the resulting **ARN** as the `RagstackApiKeyArn` template parameter, never
+the value; the functions fetch and cache it at runtime.
+
 ## 1. Deploy the Backend
 
 ### Option A: Interactive Deployment Script (Recommended)
@@ -39,16 +58,29 @@ sam deploy --guided
 
 Key parameter prompts:
 
-| Parameter              | Value                           | Notes                                                         |
-| ---------------------- | ------------------------------- | ------------------------------------------------------------- |
-| `Environment`          | `prod`                          | `dev` includes localhost CORS origins                         |
-| `IncludeDevOrigins`    | `false`                         | Set `true` for dev stacks                                     |
-| `ProductionOrigins`    | `https://app.warmreach.com`     | Comma-separated allowed origins                               |
-| `ProductionOrigin`     | `https://app.warmreach.com`     | Primary origin for S3 CORS                                    |
-| `OpenAIApiKeyArn`      | `arn:aws:ssm:...:parameter/...` | SSM SecureString ARN — not the raw key                        |
-| `ClientDownloadBucket` | your-bucket                     | Only if a download URL uses `s3://`; scopes the presign grant |
-| `DeployRAGStack`       | `true` or `false`               | Nested RAGStack or use external                               |
-| `AdminEmail`           | your email                      | Required if nested RAGStack                                   |
+All 17 parameters this edition's template declares, in the order
+`backend/template.yaml` declares them, so the two can be diffed top to
+bottom. "Required" is operational, not a CloudFormation constraint.
+
+| Parameter                 | Default       | Required    | Description                                                                                                                                                                                                                                                   |
+| ------------------------- | ------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Environment`             | `prod`        | yes         | `dev` or `prod`. `dev` adds the localhost CORS origins.                                                                                                                                                                                                       |
+| `IncludeDevOrigins`       | `true`        | yes         | Allowlists `http://localhost:5173/5174` as CORS origins, but **only when `Environment=dev`**. It defaults to `true` and `Environment` defaults to `prod`, so an all-defaults deploy used to be a prod stack that trusted localhost; the template now requires both, so prod fails closed regardless of this value. |
+| `ProductionOrigins`       | (blank)       | yes         | Comma-separated allowed origins for API Gateway CORS.                                                                                                                                                                                                         |
+| `ProductionOrigin`        | (blank)       | yes         | Primary origin for S3 CORS.                                                                                                                                                                                                                                   |
+| `OpenAIApiKeyArn`         | (blank)       | no          | SSM SecureString ARN — not the raw key. The LLM Lambda fetches it at runtime, so AI operations need it set.                                                                                                                                                   |
+| `DeployRAGStack`          | `true`        | yes         | `true` for nested RAGStack, `false` to use an external endpoint.                                                                                                                                                                                              |
+| `AdminEmail`              | (blank)       | conditional | Required when `DeployRAGStack=true`.                                                                                                                                                                                                                          |
+| `RagstackGraphqlEndpoint` | (blank)       | conditional | External RAGStack GraphQL endpoint URL. Required when `DeployRAGStack=false` (see Option C); ignored when nested.                                                                                                                                             |
+| `RagstackApiKey`          | (blank)       | conditional | External RAGStack API key (`NoEcho: true`). Required when `DeployRAGStack=false`. Prefer `RagstackApiKeyArn` below.                                                                                                                                           |
+| `RagstackTemplateUrl`     | public S3 URL | no          | S3 URL of the packaged RAGStack CloudFormation template, used when `DeployRAGStack=true`.                                                                                                                                                                     |
+| `ClientDownloadMacUrl`    | (blank)       | no          | macOS desktop client download URL (`https://` or `s3://bucket/key`). Blank renders "coming soon".                                                                                                                                                             |
+| `ClientDownloadWinUrl`    | (blank)       | no          | Windows desktop client download URL. Same rules.                                                                                                                                                                                                              |
+| `ClientDownloadLinuxUrl`  | (blank)       | no          | Linux desktop client download URL. Same rules.                                                                                                                                                                                                                |
+| `ClientDownloadVersion`   | (blank)       | no          | Optional version label shown next to the download buttons.                                                                                                                                                                                                    |
+| `ClientDownloadBucket`    | (blank)       | conditional | Bucket holding the desktop client binaries. Required only when a `ClientDownload*Url` uses `s3://`; the `client-downloads` Lambda's `s3:GetObject` grant is scoped to it.                                                                                     |
+| `LogRetentionDays`        | `30`          | yes         | Retention on every Lambda log group. LinkedIn profile data, message bodies and email addresses flow through these handlers, so the CloudWatch default of Never Expire is indefinite PII retention. Restricted to the periods CloudWatch Logs accepts.         |
+| `RagstackApiKeyArn`       | (blank)       | no          | SSM SecureString ARN holding the RAGStack API key. When set, no plaintext `RAGSTACK_API_KEY` is injected into any Lambda. Blank keeps the legacy plaintext env var, which logs a warning.                                                                     |
 
 Deployment takes 5-20 minutes depending on whether RAGStack is nested.
 
@@ -231,6 +263,27 @@ Users
         +-- LinkedIn credentials (local only, never sent to backend)
 ```
 
+## DynamoDB indexes
+
+The table declares two global secondary indexes:
+
+| Index  | Keys                          | Purpose                                                                                        |
+| ------ | ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| `GSI1` | `GSI1PK` HASH / `GSI1SK` RANGE | General access patterns (profiles, edges, activity)                                            |
+| `GSI3` | `GSI3PK` HASH / `GSI3SK` RANGE | Sparse reconciliation index. Always empty here — its only writer is a pro-only feature         |
+
+It deliberately declares **no inverted `SK`/`PK` index**. WarmReach Pro carries
+one to answer `SK = TIER#current` queries for its weekly digest and admin
+dashboard; both of those Lambdas are pro-only, so the community edition has no
+reader for such an index. Every item has an `SK`, so adding one would put a
+second index entry on every single write to serve nothing.
+
+That is why the "GSI2 -> GSI4 migration" runbook in the pro deployment guide has
+no counterpart here: there is no index to migrate. If you add a feature that
+needs to look items up by `SK`, add a new index with an `INCLUDE` projection over
+just the attributes you read — not `ProjectionType: ALL`, which on an `SK`-keyed
+index is a complete second copy of the table.
+
 ## Dead-letter queues
 
 Two Lambdas are invoked asynchronously and so get an SQS dead-letter queue:
@@ -255,6 +308,46 @@ aws sqs get-queue-attributes --region "$REGION" \
     --region "$REGION" --query QueueUrl --output text)" \
   --attribute-names ApproximateNumberOfMessages
 ```
+
+## Cognito MFA is OPTIONAL, and that is a rollout decision
+
+_Added 2026-07-27._ The user pool declares `MfaConfiguration: OPTIONAL` with
+software-token MFA enabled. `OPTIONAL` means every user _can_ enrol a TOTP
+authenticator and nobody _has to_.
+
+This is deliberate. `ON` on an existing pool locks out every user who has not
+yet enrolled — they cannot sign in to enrol. The safe sequence is deploy with
+`OPTIONAL`, let users enrol, check `UserMFASettingList` via
+`aws cognito-idp list-users --user-pool-id <id>`, and only then change the
+template to `ON` and deploy again.
+
+Note the value is `ON`, not `REQUIRED`: `MfaConfiguration` accepts only `OFF`,
+`ON`, or `OPTIONAL`, and `ON` is the one that enforces MFA. Deploying
+`REQUIRED` fails template validation.
+
+**That last step is not in this repository.** Flipping it is an operator decision
+that depends on your user base, and committing it would make the next
+`sam deploy` lock people out.
+
+## Upgrading an existing stack: explicit log groups
+
+_Added 2026-07-27._ The template declares an explicit `AWS::Logs::LogGroup` per
+function (12 of them) so `LogRetentionDays` applies to all of them. Before that,
+Lambda created each group implicitly on first invocation.
+
+**This is a hand action with no code counterpart.** CloudFormation cannot adopt a
+log group it did not create, so on an existing stack the first deploy after this
+change fails with `resource already exists` for every function that has ever run.
+Either delete the pre-existing groups or import them, before deploying:
+
+```bash
+ENV=prod
+aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/warmreach-" \
+  --query "logGroups[?ends_with(logGroupName, '-$ENV')].logGroupName" --output text
+```
+
+Deleting discards the existing log history for those functions. A brand-new stack
+needs neither — this section applies only to a stack that predates the change.
 
 ## Tearing Down
 
