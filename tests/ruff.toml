@@ -1,0 +1,16 @@
+# Ruff settings for the test suites.
+#
+# Without this file ruff finds no configuration above `tests/` — `backend/pyproject.toml`
+# only governs `backend/` — and falls back to its defaults, which use DOUBLE quotes and an
+# 88-column line. Any `ruff format` run over a test file therefore rewrote it into a style
+# the rest of the directory does not use, and nothing in CI format-checks `tests/`, so the
+# rewrite was invisible until it showed up as unrelated churn in a diff. That happened
+# twice while this branch was being written.
+#
+# Mirrors backend/pyproject.toml's [tool.ruff] so a formatter run here and one there agree.
+target-version = "py313"
+line-length = 120
+
+[format]
+quote-style = "single"
+indent-style = "space"

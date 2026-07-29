@@ -3,14 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
+  # NO `paths-ignore`. It used to drop 'docs/**' and '*.md', and a workflow-level
+  # filter takes the whole run with it — so a documentation-only PR ran no CI at
+  # all and `commitlint` never saw its commit messages. This edition's CI is two
+  # lean jobs, so the fix is simply to run them: a docs PR pays for one
+  # smoke-test rather than for a class of gate that silently does not apply.
+  #
   # WarmReach Pro's CI additionally runs a publication guard (`sync-leak`) that
   # scans the tree this repository is generated from before it is pushed here.
   # There is no counterpart job in this edition and there should not be: the

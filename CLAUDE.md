@@ -18,6 +18,15 @@ Community edition includes: LinkedIn automation, RAGStack integration, AI conten
 
 Pro adds: network graph visualization, relationship strength scoring, cluster detection, warm intro paths, message intelligence, reply probability, best time to send, advanced analytics, priority inference, the opportunity tracker and its autonomous agent, goal intelligence, the weekly digest, billing/tier management, and usage quotas.
 
+### How this repository is produced
+
+This edition is generated from a private repository: files that are pro-only are omitted, and a handful that differ between editions are replaced with community versions that keep the same interfaces. Two consequences are worth knowing when reading the code here.
+
+- **Some stubs exist purely for interface parity.** `shared_services/monetization.py` is the clearest case: its `QuotaService` and `FeatureFlagService` are no-ops where Pro meters and gates, so every `isinstance(e, QuotaExceededError)` check and every feature-flag call still type-checks and still runs. They are not dead code and should not be "cleaned up".
+- **Pull requests here are checked against this tree only.** Before a change is published, CI runs Prettier, ESLint, Ruff, both TypeScript checks, a frontend production build, both SPA test suites, the backend test suite and `cfn-lint` — all against exactly the tree you see, so a change that compiles only against the Pro version does not reach you. `.env.example` is the community template, not the Pro one. **`sam build` is NOT among those checks**, so a template change is validated for syntax by `cfn-lint` but is not packaged; verify it yourself before deploying.
+
+`docs/` describes this edition. Where a feature is Pro-only the docs say so rather than omitting it, so that an unexpected 404 or a disabled button has an explanation.
+
 Two corrections to what that list used to say. **Tone analysis is not Pro-only** — `analyze_tone` is routed by this edition's `llm` handler and its flag is enabled here (`docs/API_REFERENCE.md` says the same). And "managed Puppeteer" was never built in either edition; it is a rejected idea, because cloud IPs conflict with the detection-avoidance the automation depends on.
 
 The `shared_services/monetization.py` module contains no-op stubs. All Lambda code imports from this module. In Pro, it re-exports real quota/feature-flag/tier services; here it returns permissive defaults for core features only.
@@ -133,17 +142,17 @@ SAM template (`template.yaml`) defines:
 - **Cognito**: User pool with email-based auth
 - **Lambda Functions** (Python 3.13):
 
-| Function               | Purpose                                                                    |
-| ---------------------- | -------------------------------------------------------------------------- |
-| `command-dispatch`     | Command creation + WebSocket dispatch to the Electron agent                |
+| Function               | Purpose                                                                     |
+| ---------------------- | --------------------------------------------------------------------------- |
+| `command-dispatch`     | Command creation + WebSocket dispatch to the Electron agent                 |
 | `linkedin-action-gate` | `POST /linkedin-actions` gated LinkedIn action dispatch (claim-before-send) |
-| `dynamodb-api`         | User settings, profile CRUD, notifications                                 |
-| `edge-crud`            | Edge CRUD, notes, activity, lifecycle, tagging                             |
-| `ragstack-ops`         | RAGStack search, ingest, status proxy                                      |
-| `llm`                  | OpenAI AI operations                                                       |
-| `research-reconciler`  | Scheduled deep-research poll/reconcile (reuses `lambdas/llm/`)             |
-| `client-downloads`     | `GET /client-downloads` per-platform download URLs (public, no JWT auth)   |
-| `websocket-*`          | WebSocket lifecycle + message routing                                      |
+| `dynamodb-api`         | User settings, profile CRUD, notifications                                  |
+| `edge-crud`            | Edge CRUD, notes, activity, lifecycle, tagging                              |
+| `ragstack-ops`         | RAGStack search, ingest, status proxy                                       |
+| `llm`                  | OpenAI AI operations                                                        |
+| `research-reconciler`  | Scheduled deep-research poll/reconcile (reuses `lambdas/llm/`)              |
+| `client-downloads`     | `GET /client-downloads` per-platform download URLs (public, no JWT auth)    |
+| `websocket-*`          | WebSocket lifecycle + message routing                                       |
 
 Lambdas share code via `lambdas/shared/python/`. Every module that reaches this
 edition:
