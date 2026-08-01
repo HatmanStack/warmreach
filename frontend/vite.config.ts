@@ -2,6 +2,22 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react-swc'
 import path from "path"
 
+const VENDOR_CHUNKS: Record<string, string[]> = {
+  'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+  'vendor-query': ['@tanstack/react-query'],
+  'vendor-auth': ['amazon-cognito-identity-js'],
+  'vendor-ui': [
+    '@radix-ui/react-alert-dialog', '@radix-ui/react-checkbox',
+    '@radix-ui/react-dialog', '@radix-ui/react-label',
+    '@radix-ui/react-popover', '@radix-ui/react-progress',
+    '@radix-ui/react-scroll-area', '@radix-ui/react-select',
+    '@radix-ui/react-separator', '@radix-ui/react-slot',
+    '@radix-ui/react-tabs', '@radix-ui/react-toast',
+    '@radix-ui/react-tooltip',
+  ],
+  'vendor-markdown': ['react-markdown', 'remark-gfm'],
+}
+
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
   // Use root .env file for all environment variables
@@ -23,20 +39,14 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-query': ['@tanstack/react-query'],
-          'vendor-auth': ['amazon-cognito-identity-js'],
-          'vendor-ui': [
-            '@radix-ui/react-alert-dialog', '@radix-ui/react-checkbox',
-            '@radix-ui/react-dialog', '@radix-ui/react-label',
-            '@radix-ui/react-popover', '@radix-ui/react-progress',
-            '@radix-ui/react-scroll-area', '@radix-ui/react-select',
-            '@radix-ui/react-separator', '@radix-ui/react-slot',
-            '@radix-ui/react-tabs', '@radix-ui/react-toast',
-            '@radix-ui/react-tooltip',
-          ],
-          'vendor-markdown': ['react-markdown', 'remark-gfm'],
+        // Rollup 5 (vite 8) dropped the object form of manualChunks, so the
+        // same package -> chunk grouping is expressed as a lookup instead.
+        manualChunks: (id) => {
+          const pkg = id.split('node_modules/').pop()
+          if (!pkg || !id.includes('node_modules/')) return
+          for (const [chunk, packages] of Object.entries(VENDOR_CHUNKS)) {
+            if (packages.some((name) => pkg.startsWith(`${name}/`))) return chunk
+          }
         },
       },
     },
