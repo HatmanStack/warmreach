@@ -350,7 +350,10 @@ async function startServer(): Promise<void> {
       }
     }
 
-    httpServer = app.listen(config.port, () => {
+    // Bind loopback only. This server accepts commands that drive the user's
+    // authenticated LinkedIn session, so it must never be reachable from the
+    // local network. Without an explicit host, Express binds 0.0.0.0.
+    httpServer = app.listen(config.port, '127.0.0.1', () => {
       logger.info(`WarmReach Backend started`, {
         port: config.port,
         nodeEnv: config.nodeEnv,
