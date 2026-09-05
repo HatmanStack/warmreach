@@ -47,6 +47,21 @@ const NewPostTabInner = () => {
     }
   };
 
+  const handleResearchTopics = async (topics: string[]) => {
+    try {
+      await researchTopics(topics);
+    } catch (error) {
+      logger.error('Failed to research topics', { error });
+      toast({
+        title: 'Error',
+        // The backend explains refusals it expects a user to act on; a generic
+        // string here would discard that.
+        description: error instanceof Error ? error.message : 'Failed to research topics.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleClearResearch = async () => {
     try {
       await clearResearch();
@@ -156,7 +171,7 @@ const NewPostTabInner = () => {
       <div className="space-y-6">
         <PostAIAssistant
           onGenerateIdeas={handleGenerateIdeas}
-          onResearchTopics={researchTopics}
+          onResearchTopics={handleResearchTopics}
           onValidationError={handleValidationError}
           isGeneratingIdeas={isGeneratingIdeas}
           isResearching={isResearching}

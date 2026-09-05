@@ -196,19 +196,28 @@ These variables are set by the SAM template at deploy time, not in `.env`.
 > chosen over the cheaper `gpt-5.6-luna` ($1.00/$6.00) as a deliberate
 > quality-for-margin trade. At terra:
 >
-> | Tier        | Net revenue | LLM grant cost     | Headroom                     |
-> | ----------- | ----------- | ------------------ | ---------------------------- |
-> | Starter $39 | $37.57      | 1,000 ops → $12.50 | +$25.07                      |
-> | Pro $79     | $76.41      | 3,000 ops → $37.50 | +$38.91 before deep research |
+> | Tier        | Net revenue | LLM grant cost     | Gross margin |
+> | ----------- | ----------- | ------------------ | ------------ |
+> | Starter $39 | $37.57      | 1,000 ops → $12.50 | $25.07 (67%) |
+> | Pro $79     | $76.41      | 3,000 ops → $37.50 | $38.91 (51%) |
 >
-> Pro's remaining $38.91 has to cover 25 deep-research credits at $0.50–2.00
-> each. At the top of that range (25 × $2.00 = $50.00) a Pro subscriber who
-> exhausts **both** buckets is loss-making by about $11. Most users will not,
-> but the tail is real — either trim the deep-research grant, raise Pro, or
-> accept it knowingly. Revisit once token instrumentation reports actual usage.
+> Those figures are the whole story: no tier grants deep-research credits, so
+> neither plan carries a line item whose per-call cost is unbounded.
+> `monthly_deep_research` is 0 on every tier, and `deep_research` stays true on
+> Pro — that flag gates _access_, and runs are sold on demand rather than
+> included.
 >
-> `OPENAI_MODEL_DEEP_RESEARCH` retires **2026-10-23**; every kickoff logs a
-> countdown warning from 120 days out.
+> That is a deliberate change, not an omission. Deep research runs on a model
+> OpenAI reprices on its own schedule — `OPENAI_MODEL_DEEP_RESEARCH` retires
+> **2026-10-23**, and the drop-in `o3-deep-research` costs 5x — and a 25-credit
+> grant against Pro's $38.91 of headroom was already loss-making at the top of
+> the $0.50–2.00 range. Selling runs on demand moves the volatile cost outside
+> the flat price, where a model retirement reprices an add-on instead of
+> opening a hole in the plan. Every kickoff logs a retirement countdown from
+> 120 days out.
+>
+> Not in the table, and still undecided: the free tier grants 500 ops/month,
+> which is $6.25 of COGS per fully-consuming free user against no revenue.
 >
 > **Measuring it.** Every OpenAI call now records what it consumed. Two places
 > to look:
@@ -228,8 +237,9 @@ These variables are set by the SAM template at deploy time, not in `.env`.
 >    reports no usage — those lines carry `deferred: true` and write no cost
 >    row. The real consumption exists only when the job completes, and the
 >    polling path does not record it (doing so needs an idempotency guard so
->    polling and the reconciler cannot double-count). **Do not size the
->    deep-research credit grant from this data until that lands.**
+>    polling and the reconciler cannot double-count). **This is the blocker on
+>    pricing on-demand runs — there is no measured per-run cost to price
+>    against.**
 > 2. **Tool fees are excluded.** Lines for tool-augmented operations carry
 >    `excludes_tool_fees: true`: web-search and code-interpreter bill per call
 >    on top of tokens, so even a costed figure is a floor.
@@ -323,7 +333,7 @@ print a plausible-but-wrong table.
 | `bulk_operations`               | false | true    | true | Community feature; bulk connection/message operations.                                  |
 | `advanced_analytics`            | false | true    | true | Community feature; analytics dashboard aggregates.                                      |
 | `priority_support`              | false | true    | true | Community entitlement.                                                                  |
-| `deep_research`                 | false | false   | true | Community feature; deep-research LLM path. **Excluded on Starter** — see below.         |
+| `deep_research`                 | false | false   | true | Community feature; deep-research LLM path. **Pro-gated; runs sold on demand** — see below. |
 | `relationship_strength_scoring` | false | true    | true | Community feature.                                                                      |
 | `message_intelligence`          | false | true    | true | Community feature; messaging pattern analysis.                                          |
 | `tone_analysis`                 | —     | true    | true | Community feature. Not present on free tier defaults.                                   |
@@ -355,7 +365,7 @@ Flags marked `—` on the free side are not keys in `FREE_TIER_FEATURES`; caller
 
 `_STARTER_EXCLUDED_FEATURES` is `('deep_research', 'opportunity_agent')`, and those are the only two rows where the Starter and Pro columns differ. Both are features whose **cost is unbounded per use**, so a flat Starter price cannot contain them:
 
-- **`deep_research`** is billed per call — roughly USD 0.50–2.00 in tokens — plus per-call web-search and code-interpreter tool fees on top. Starter also carries `monthly_deep_research: 0`, so the quota is a second, independent stop behind the flag.
+- **`deep_research`** is billed per call — roughly USD 0.50–2.00 in tokens — plus per-call web-search and code-interpreter tool fees on top. **No tier includes it**: `monthly_deep_research` is 0 everywhere, so the flag gates access and the runs themselves are sold on demand. On Starter the flag is the stop; on Pro the flag admits the caller and the zero quota returns an on-demand notice rather than a "quota exceeded" error.
 - **`opportunity_agent`** dispatches real LinkedIn actions on a schedule without a human in the loop for each one.
 
 Everything else on the list is a fixed-cost read over data the user already has, which is why Starter gets all of it. If you are a Starter subscriber, deep research and the autonomous agent are the two things you do not have; `docs/API_REFERENCE.md` marks the affected `/llm` operations.

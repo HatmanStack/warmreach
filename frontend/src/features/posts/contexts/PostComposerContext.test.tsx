@@ -186,6 +186,28 @@ describe('PostComposerContext', () => {
       expect(mockRefreshUserProfile).toHaveBeenCalledTimes(1);
     });
 
+    it('researchTopics rethrows a failure so the caller can surface it', async () => {
+      mockResearchTopics.mockRejectedValue(new Error('no allowance'));
+      const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
+
+      // Logging alone left the user watching the spinner stop with nothing said.
+      await act(async () => {
+        await expect(result.current.researchTopics(['t1'])).rejects.toThrow('no allowance');
+      });
+    });
+
+    it('researchTopics still swallows an abort', async () => {
+      const aborted = new Error('Aborted');
+      aborted.name = 'AbortError';
+      mockResearchTopics.mockRejectedValue(aborted);
+      const { result } = renderHook(() => usePostComposer(), { wrapper: createWrapper() });
+
+      // A cancel is expected, not a failure, and must not raise a toast.
+      await act(async () => {
+        await expect(result.current.researchTopics(['t1'])).resolves.toBeUndefined();
+      });
+    });
+
     it('synthesizeResearch calls postsService and refreshes profile', async () => {
       mockUserProfile.value = {
         firstName: 'John',

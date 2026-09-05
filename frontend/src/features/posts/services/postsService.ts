@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { analyticsApiService } from '@/shared/services/analyticsApiService';
 import { httpClient } from '@/shared/utils/httpClient';
+import { ApiError } from '@/shared/utils/apiError';
 import { v4 as uuidv4 } from 'uuid';
 import type { UserProfile } from '@/types';
 import { createLogger } from '@/shared/utils/logger';
@@ -28,6 +29,10 @@ const GenerateIdeasResponseSchema = z.object({
 const ResearchStartResponseSchema = z.object({
   success: z.boolean(),
   error: z.string().optional(),
+  // The backend distinguishes *why* a request was refused (e.g. a usage cap vs
+  // a genuine fault) via `code`. Without it here zod strips the field and the
+  // caller cannot tell an actionable refusal from a server error.
+  code: z.string().optional(),
   data: z
     .object({
       job_id: z.string().optional(),
@@ -185,7 +190,14 @@ export const postsService = {
 
     const response = ResearchStartResponseSchema.parse(rawResponse);
     if (!response.success) {
-      throw new Error(response.error || 'Failed to research topics');
+      // An ApiError carries the backend's own wording and code onward. A refusal
+      // the user can act on ("you have no allowance for this") is useless once
+      // it has been flattened into a generic failure, which is what happened
+      // before: researchTopics replaced it and the caller only logged it.
+      throw new ApiError({
+        message: response.error || 'Failed to research topics',
+        code: response.code,
+      });
     }
 
     const jobId = response.data?.job_id ?? response.data?.jobId;
@@ -268,6 +280,7 @@ export const postsService = {
       jobId = await this.startResearch(topics, userProfile);
     } catch (error) {
       logger.error('Error starting research', { error, correlationId });
+      if (error instanceof ApiError) throw error;
       throw new Error('Failed to research topics');
     }
     options.onJobId?.(jobId);
@@ -289,6 +302,7 @@ export const postsService = {
         throw error;
       }
       logger.error('Error researching topics', { error, correlationId });
+      if (error instanceof ApiError) throw error;
       throw new Error('Failed to research topics');
     }
   },

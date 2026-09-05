@@ -144,15 +144,31 @@ describe('postsService', () => {
       );
     });
 
-    it('should throw on initial request failure', async () => {
+    it('preserves the backend message and code on a refusal', async () => {
       mockSendLLMRequest.mockResolvedValue({
         success: false,
-        error: 'Service unavailable',
+        error: 'Deep research is not included in your plan; runs are purchased on demand',
+        code: 'QUOTA_EXCEEDED',
       });
 
+      // Flattening this into a generic string is what left the user with no
+      // explanation at all: a caller can only display what it is handed.
       await expect(postsService.researchTopics(['topic'])).rejects.toThrow(
-        'Failed to research topics'
+        'Deep research is not included in your plan; runs are purchased on demand'
       );
+    });
+
+    it('carries the refusal code so a caller can distinguish it', async () => {
+      mockSendLLMRequest.mockResolvedValue({
+        success: false,
+        error: 'Monthly deep research quota exceeded',
+        code: 'QUOTA_EXCEEDED',
+      });
+
+      await expect(postsService.researchTopics(['topic'])).rejects.toMatchObject({
+        name: 'ApiError',
+        code: 'QUOTA_EXCEEDED',
+      });
     });
 
     it('should sanitize profile for research', async () => {

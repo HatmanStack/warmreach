@@ -209,9 +209,14 @@ export const PostComposerProvider = ({ children }: { children: ReactNode }) => {
           logger.warn('profile refresh after researchTopics failed', { error: err });
         });
       } catch (err) {
-        // Cancel/unmount aborts the poll — expected, not a failure.
+        // Cancel/unmount aborts the poll — expected, not a failure, and must
+        // stay swallowed.
         if (!(err instanceof Error && err.name === 'AbortError')) {
           logger.warn('researchTopics failed', { error: err });
+          // Rethrow so the caller can show it. Logging alone left the user
+          // watching the spinner stop with no explanation — indistinguishable
+          // from the feature silently doing nothing.
+          throw err;
         }
       } finally {
         // Only clean up if a newer research didn't take over the refs.
